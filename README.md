@@ -1,5 +1,7 @@
 # FlowEncode
 
+## Warning：本项目代码99%来源于AI
+
 FlowEncode 是一个面向 Windows x64 的桌面端编码工作流前端，围绕 `x264`、`x265`、`SVT-AV1`、`Av1an`、`FFmpeg`、`VapourSynth` 以及公开可用的辅助工具，提供统一的任务配置、队列执行、日志查看、模板复用能力。
 
 > 仅支持 Windows x64。
