@@ -364,8 +364,9 @@ public sealed partial class MainWindow : Window
         DashboardAutoCompressionButton.MinHeight = cardHeight;
         DashboardSettingsButton.MinHeight = cardHeight;
 
-        DashboardCardGrid.Height = double.NaN;
-        ConfigureDashboardRows(rowCount, false);
+        var stretchedCardGridHeight = ResolveDashboardCardGridHeight(rowCount, rowSpacing, cardHeight, columnCount, width);
+        DashboardCardGrid.Height = stretchedCardGridHeight ?? double.NaN;
+        ConfigureDashboardRows(rowCount, stretchedCardGridHeight.HasValue);
 
         ArrangeDashboardCard(DashboardDemuxButton, 0, columnCount);
         ArrangeDashboardCard(DashboardVapourSynthButton, 1, columnCount);
@@ -417,6 +418,37 @@ public sealed partial class MainWindow : Window
     {
         Grid.SetRow(card, index / columnCount);
         Grid.SetColumn(card, index % columnCount);
+    }
+
+    private double? ResolveDashboardCardGridHeight(
+        int rowCount,
+        double rowSpacing,
+        double cardMinHeight,
+        int columnCount,
+        double width)
+    {
+        if (columnCount == 1 || DashboardPanel.ActualHeight <= 0 || DashboardHeroCard.ActualHeight <= 0)
+        {
+            return null;
+        }
+
+        var verticalChrome = DashboardContentStack.Padding.Top
+            + DashboardContentStack.Padding.Bottom
+            + DashboardHeroCard.ActualHeight
+            + DashboardContentStack.Spacing;
+        var availableHeight = DashboardPanel.ActualHeight - verticalChrome;
+        var minimumGridHeight = (rowCount * cardMinHeight) + ((rowCount - 1) * rowSpacing);
+        if (availableHeight <= minimumGridHeight + 24)
+        {
+            return null;
+        }
+
+        var maxRowHeight = columnCount >= 3
+            ? width >= 1600 ? 328.0 : 304.0
+            : 276.0;
+        var maximumGridHeight = (rowCount * maxRowHeight) + ((rowCount - 1) * rowSpacing);
+
+        return Math.Min(availableHeight, maximumGridHeight);
     }
 
     private void ConfigureDashboardRows(int visibleRows, bool stretch)
