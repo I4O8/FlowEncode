@@ -23,7 +23,7 @@
 - 不写 UI 布局调整、视觉细节、首页卡片高度、内部逻辑整理、重构、打包脚本健壮性、构建流程或实现过程。
 - 不写构建命令、构建通过信息、测试结果、启动验证、内部 QA、校验日志、SHA256 或其他 checksum 信息。
 - 不写非开源、非授权、授权不清、需要用户自行私有取得或仅供本地实验的工具。
-- `Upgrade Notes` 只写用户升级所需的信息，例如系统范围、资产形态、缓存迁移、配置迁移或兼容性说明。
+- 不写 `Upgrade Notes` 段落，不写 Windows x64、安装资产、缓存迁移或配置迁移这类固定发布信息。
 
 ## Output Contract
 
@@ -56,7 +56,7 @@ artifacts\release\v<version>\
 ## Release Checklist
 
 - README 没有本地记忆、UI 调整、内部实现、构建验证或授权不清工具的公开表述。
-- Release notes 只保留功能性变更，不包含 UI、构建、验证、测试、SHA 或内部 QA 信息。
+- Release notes 只保留功能性变更，不包含 UI、构建、验证、测试、SHA、内部 QA 或 `Upgrade Notes` 信息。
 - `docs/THIRD_PARTY_LICENSES.md` 已覆盖公开支持范围内的第三方组件，作为仓库公开说明保留。
 - 安装资产不额外携带仓库 `LICENSE` 或 `THIRD_PARTY_LICENSES.md` 说明文件。
 - 资产名固定为 `FlowEncode-Setup.exe`，不附加版本号、`win-x64` 或其他 RID 后缀。
