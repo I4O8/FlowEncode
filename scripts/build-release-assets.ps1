@@ -66,6 +66,34 @@ function Remove-DirectoryIfExists {
     }
 }
 
+function Get-Sha256Hash {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $hashCommand = Get-Command Get-FileHash -ErrorAction SilentlyContinue
+    if ($null -ne $hashCommand) {
+        return (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToUpperInvariant()
+    }
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $bytes = $sha256.ComputeHash($stream)
+        }
+        finally {
+            $sha256.Dispose()
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+
+    return (-join ($bytes | ForEach-Object { $_.ToString("x2") })).ToUpperInvariant()
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $projectPath = Join-Path $repoRoot "FlowEncode\FlowEncode.csproj"
 $commonScript = Join-Path $repoRoot "scripts\release-artifact-common.ps1"
@@ -158,7 +186,7 @@ if (-not (Test-Path $installerArtifactPath)) {
     throw "Installer artifact was not generated: $installerArtifactPath"
 }
 
-$installerHash = (Get-FileHash -Path $installerArtifactPath -Algorithm SHA256).Hash
+$installerHash = Get-Sha256Hash -Path $installerArtifactPath
 
 [pscustomobject]@{
     Version = $resolvedVersion
