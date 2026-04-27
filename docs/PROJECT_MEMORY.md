@@ -72,6 +72,25 @@
 - 如果某个版本已经创建了错误的 GitHub Release，需要先删除现有 release 和远端 tag，再基于当前正确提交重新打 tag 和重发。
 - 重发时仍然沿用原版本号，除非用户明确要求改版本号。
 
+## Upstream Sync Memory
+
+- 后续默认以 FlowEncode 作为主要维护线。
+- 每次修改 FlowEncode 时，都要评估是否存在可同步回 CMCT 原项目的通用改动。
+- 应同步回 [CMCT_Encode](/D:/codex/CMCT_Encode) 的改动包括：
+  - 功能 bug 修复
+  - 交互行为修复
+  - 性能、稳定性、线程/异步、资源释放修复
+  - 测试补强
+  - 与品牌无关的构建、发布脚本健壮性改进
+- 不应同步回 CMCT 的 FlowEncode 专属改动包括：
+  - 产品名、命名空间、程序集名、进程名、安装器名
+  - 图标、banner、logo、品牌视觉资产
+  - GitHub 仓库地址、自动更新源、发布资产名
+  - AppId、AUMID、manifest identity、LocalAppData 目录名
+  - README、Release Notes 等只描述 FlowEncode 的文本
+- 同步方式必须以“等价功能补丁”为准，不能把 FlowEncode 文件整仓覆盖到 CMCT；涉及命名空间或路径时需要保留 CMCT 原有命名。
+- 如果某个改动是否应同步不明确，应在交付说明中明确列为“未同步原因/待确认”，不要静默跳过。
+
 ## VapourSynth Workspace Memory
 
 - 当前已确认要做一个独立的 VapourSynth 子项目，目标范围固定为：
