@@ -1,0 +1,882 @@
+using System.Diagnostics;
+using System.Text.RegularExpressions;
+using FlowEncode.Application;
+using FlowEncode.Domain;
+
+namespace FlowEncode.Infrastructure;
+
+public sealed class ProcessToolProbeService : IToolProbeService
+{
+    private const int ProbeTimeoutMilliseconds = 5000;
+    private const int VsrepoInstalledProbeTimeoutMilliseconds = 30000;
+
+    private readonly IToolRegistryService _toolRegistryService;
+    private readonly LocalAppPaths _paths;
+    private readonly IEncoderDiscoveryService _encoderDiscoveryService;
+
+    public ProcessToolProbeService(
+        IToolRegistryService toolRegistryService,
+        LocalAppPaths paths,
+        IEncoderDiscoveryService encoderDiscoveryService)
+    {
+        _toolRegistryService = toolRegistryService;
+        _paths = paths;
+        _encoderDiscoveryService = encoderDiscoveryService;
+    }
+
+    public Task<IReadOnlyList<ToolProbeResult>> ProbeAllAsync(CancellationToken cancellationToken = default)
+    {
+        return Task.Run<IReadOnlyList<ToolProbeResult>>(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var vsrepoInstalledCache = new Dictionary<string, VsrepoInstalledProbeResult>(StringComparer.OrdinalIgnoreCase);
+
+            return _toolRegistryService
+                .GetTools()
+                .Select(definition => Probe(definition, cancellationToken, vsrepoInstalledCache))
+                .ToList();
+        }, cancellationToken);
+    }
+
+    public Task<ToolProbeResult> ProbeAsync(RegisteredToolKind kind, CancellationToken cancellationToken = default)
+    {
+        return Task.Run(() =>
+        {
+            var definition = _toolRegistryService.GetTool(kind);
+            var vsrepoInstalledCache = new Dictionary<string, VsrepoInstalledProbeResult>(StringComparer.OrdinalIgnoreCase);
+            return Probe(definition, cancellationToken, vsrepoInstalledCache);
+        }, cancellationToken);
+    }
+
+    private ToolProbeResult Probe(
+        ToolDefinition definition,
+        CancellationToken cancellationToken,
+        IDictionary<string, VsrepoInstalledProbeResult> vsrepoInstalledCache)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return definition.ProbeMode switch
+        {
+            ToolProbeMode.EncoderBinary => ProbeEncoder(definition),
+            ToolProbeMode.ProcessVersion => ProbeCandidateTools(definition, ProbeWithProcessVersion),
+            ToolProbeMode.FileVersionInfo => ProbeCandidateTools(definition, ProbeWithFileVersion),
+            ToolProbeMode.ExistenceOnly => ProbeCandidateTools(definition, ProbeWithExistenceOnly),
+            ToolProbeMode.VsrepoInstalledPackage => ProbeCandidateTools(definition, (tool, candidate) =>
+                ProbeWithVsrepoInstalledPackage(tool, candidate, vsrepoInstalledCache)),
+            ToolProbeMode.PythonModuleImport => ProbeCandidateTools(definition, ProbeWithPythonModuleImport),
+            _ => CreateUnknownResult(definition, "Unsupported probe mode.")
+        };
+    }
+
+    private ToolProbeResult ProbeEncoder(ToolDefinition definition)
+    {
+        var encoderKind = definition.Kind switch
+        {
+            RegisteredToolKind.X264 => EncoderKind.X264,
+            RegisteredToolKind.X265 => EncoderKind.X265,
+            RegisteredToolKind.SvtAv1 => EncoderKind.SvtAv1,
+            _ => throw new ArgumentOutOfRangeException(nameof(definition), definition.Kind, null)
+        };
+
+        var resolved = _encoderDiscoveryService.ResolveEncoder(
+            encoderKind,
+            EncoderArchitecture.X64,
+            preferSystemEncoders: true);
+
+        if (resolved is null)
+        {
+            return CreateMissingResult(definition);
+        }
+
+        return new ToolProbeResult(
+            definition.Kind,
+            ReadinessState.Ready,
+            resolved.Source switch
+            {
+                EncoderBinarySource.LocalToolset => ToolDetectionSource.LocalToolset,
+                EncoderBinarySource.EnvironmentVariable => ToolDetectionSource.EnvironmentVariable,
+                EncoderBinarySource.Path => ToolDetectionSource.SystemEncoder,
+                _ => ToolDetectionSource.None
+            },
+            resolved.SourceLabel,
+            resolved.ExecutablePath,
+            resolved.DetectedVersion,
+            string.Empty,
+            definition.ReleaseUrl);
+    }
+
+    private ToolProbeResult ProbeCandidateTools(
+        ToolDefinition definition,
+        Func<ToolDefinition, ToolCandidate, ToolProbeResult> probeAction)
+    {
+        ToolProbeResult? fallbackFailure = null;
+
+        foreach (var candidate in EnumerateCandidates(definition))
+        {
+            var result = probeAction(definition, candidate);
+            if (result.State == ReadinessState.Ready)
+            {
+                return result;
+            }
+
+            fallbackFailure ??= result;
+        }
+
+        return fallbackFailure ?? CreateMissingResult(definition);
+    }
+
+    private ToolProbeResult ProbeWithProcessVersion(ToolDefinition definition, ToolCandidate candidate)
+    {
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = candidate.Path,
+                    Arguments = definition.VersionArguments,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                    WorkingDirectory = Path.GetDirectoryName(candidate.Path) ?? AppContext.BaseDirectory
+                }
+            };
+
+            VapourSynthRuntimePathResolver.EnrichProcessPath(process.StartInfo);
+
+            using var _ = ErrorDialogSuppression.Enter();
+            process.Start();
+            if (!process.WaitForExit(ProbeTimeoutMilliseconds))
+            {
+                process.Kill(true);
+                return CreateMisconfiguredResult(definition, candidate, "Version probe timed out.");
+            }
+
+            var output = string.Concat(
+                process.StandardOutput.ReadToEnd(),
+                Environment.NewLine,
+                process.StandardError.ReadToEnd()).Trim();
+
+            if (process.ExitCode != 0)
+            {
+                var failureReason = FirstMeaningfulLine(output);
+                return CreateMisconfiguredResult(
+                    definition,
+                    candidate,
+                    string.IsNullOrWhiteSpace(failureReason)
+                        ? $"Version probe failed with exit code {process.ExitCode}."
+                        : failureReason);
+            }
+
+            return CreateReadyResult(definition, candidate, ResolveVersionText(definition, candidate.Path, output));
+        }
+        catch (Exception ex)
+        {
+            return CreateMisconfiguredResult(definition, candidate, ex.Message);
+        }
+    }
+
+    private ToolProbeResult ProbeWithFileVersion(ToolDefinition definition, ToolCandidate candidate)
+    {
+        try
+        {
+            var version = ResolveVersionText(definition, candidate.Path, string.Empty);
+            return CreateReadyResult(definition, candidate, version);
+        }
+        catch (Exception ex)
+        {
+            return CreateMisconfiguredResult(definition, candidate, ex.Message);
+        }
+    }
+
+    private ToolProbeResult ProbeWithExistenceOnly(ToolDefinition definition, ToolCandidate candidate)
+    {
+        return CreateReadyResult(definition, candidate, "Present");
+    }
+
+    private ToolProbeResult ProbeWithVsrepoInstalledPackage(
+        ToolDefinition definition,
+        ToolCandidate candidate,
+        IDictionary<string, VsrepoInstalledProbeResult> vsrepoInstalledCache)
+    {
+        if (string.IsNullOrWhiteSpace(definition.ProbeValue))
+        {
+            return CreateUnknownResult(definition, "Missing VSRepo package probe value.");
+        }
+
+        try
+        {
+            var snapshot = GetVsrepoInstalledProbeResult(candidate, vsrepoInstalledCache);
+            if (snapshot.IsTimedOut)
+            {
+                return CreateMisconfiguredResult(definition, candidate, snapshot.FailureReason);
+            }
+
+            if (snapshot.IsMissingVsrepoModule)
+            {
+                return CreateMissingResult(definition);
+            }
+
+            if (!string.IsNullOrWhiteSpace(snapshot.FailureReason))
+            {
+                return CreateMisconfiguredResult(definition, candidate, snapshot.FailureReason);
+            }
+
+            if (!snapshot.PackageKeys.Contains(definition.ProbeValue))
+            {
+                return CreateMissingResult(definition);
+            }
+
+            return new ToolProbeResult(
+                definition.Kind,
+                ReadinessState.Ready,
+                ToolDetectionSource.None,
+                "vsrepo installed",
+                candidate.Path,
+                "Installed",
+                string.Empty,
+                definition.ReleaseUrl,
+                definition.ManagedExternalToolKind);
+        }
+        catch (Exception ex)
+        {
+            return CreateMisconfiguredResult(definition, candidate, ex.Message);
+        }
+    }
+
+    private VsrepoInstalledProbeResult GetVsrepoInstalledProbeResult(
+        ToolCandidate candidate,
+        IDictionary<string, VsrepoInstalledProbeResult> vsrepoInstalledCache)
+    {
+        if (vsrepoInstalledCache.TryGetValue(candidate.Path, out var cached))
+        {
+            return cached;
+        }
+
+        using var process = new Process
+        {
+            StartInfo = CreatePythonModuleProcessStartInfo(
+                candidate.Path,
+                ["-m", "vsrepo.vsrepo", "-t", GetVsrepoTarget(), "installed"])
+        };
+
+        using var _ = ErrorDialogSuppression.Enter();
+        process.Start();
+        var stdOutTask = process.StandardOutput.ReadToEndAsync();
+        var stdErrTask = process.StandardError.ReadToEndAsync();
+
+        VsrepoInstalledProbeResult result;
+        if (!process.WaitForExit(VsrepoInstalledProbeTimeoutMilliseconds))
+        {
+            process.Kill(true);
+            result = new VsrepoInstalledProbeResult(
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                true,
+                false,
+                "VSRepo installed probe timed out.");
+        }
+        else
+        {
+            var output = string.Concat(
+                stdOutTask.GetAwaiter().GetResult(),
+                Environment.NewLine,
+                stdErrTask.GetAwaiter().GetResult()).Trim();
+
+            if (process.ExitCode != 0)
+            {
+                result = ContainsMissingVsrepoModule(output)
+                    ? new VsrepoInstalledProbeResult(
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                        false,
+                        true,
+                        string.Empty)
+                    : new VsrepoInstalledProbeResult(
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                        false,
+                        false,
+                        string.IsNullOrWhiteSpace(FirstMeaningfulLine(output))
+                            ? $"VSRepo installed probe failed with exit code {process.ExitCode}."
+                            : FirstMeaningfulLine(output));
+            }
+            else
+            {
+                result = new VsrepoInstalledProbeResult(
+                    ParseVsrepoInstalledPackageKeys(output),
+                    false,
+                    false,
+                    string.Empty);
+            }
+        }
+
+        vsrepoInstalledCache[candidate.Path] = result;
+        return result;
+    }
+
+    private ToolProbeResult ProbeWithPythonModuleImport(ToolDefinition definition, ToolCandidate candidate)
+    {
+        if (string.IsNullOrWhiteSpace(definition.ProbeValue))
+        {
+            return CreateUnknownResult(definition, "Missing Python module probe value.");
+        }
+
+        var moduleNameLiteral = EscapePythonSingleQuotedString(definition.ProbeValue);
+        var distributionCandidates = GetPythonDistributionCandidates(definition)
+            .Select(EscapePythonSingleQuotedString)
+            .ToArray();
+        var distributionCandidatesLiteral = string.Join(", ", distributionCandidates.Select(static item => $"'{item}'"));
+        var script = string.Join(
+            "\n",
+            "import importlib.metadata, importlib.util, sys",
+            $"module_name = '{moduleNameLiteral}'",
+            $"distribution_names = [{distributionCandidatesLiteral}]",
+            "spec = importlib.util.find_spec(module_name)",
+            "if spec is None:",
+            "    print('missing')",
+            "    sys.exit(3)",
+            "for distribution_name in distribution_names:",
+            "    if not distribution_name:",
+            "        continue",
+            "    try:",
+            "        print(importlib.metadata.version(distribution_name))",
+            "        sys.exit(0)",
+            "    except importlib.metadata.PackageNotFoundError:",
+            "        pass",
+            "print('Detected')",
+            "sys.exit(0)");
+
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = CreatePythonModuleProcessStartInfo(candidate.Path, ["-c", script])
+            };
+
+            using var _ = ErrorDialogSuppression.Enter();
+            process.Start();
+            if (!process.WaitForExit(ProbeTimeoutMilliseconds))
+            {
+                process.Kill(true);
+                return CreateMisconfiguredResult(definition, candidate, "Python module probe timed out.");
+            }
+
+            var output = string.Concat(
+                process.StandardOutput.ReadToEnd(),
+                Environment.NewLine,
+                process.StandardError.ReadToEnd()).Trim();
+
+            return process.ExitCode switch
+            {
+                0 => new ToolProbeResult(
+                    definition.Kind,
+                    ReadinessState.Ready,
+                    ToolDetectionSource.None,
+                    "python import",
+                    candidate.Path,
+                    FirstMeaningfulLine(output, "Detected"),
+                    string.Empty,
+                    definition.ReleaseUrl,
+                    definition.ManagedExternalToolKind),
+                3 => CreateMissingResult(definition),
+                _ => CreateMisconfiguredResult(
+                    definition,
+                    candidate,
+                    string.IsNullOrWhiteSpace(FirstMeaningfulLine(output))
+                        ? $"Python module probe failed with exit code {process.ExitCode}."
+                        : FirstMeaningfulLine(output))
+            };
+        }
+        catch (Exception ex)
+        {
+            return CreateMisconfiguredResult(definition, candidate, ex.Message);
+        }
+    }
+
+    private static ProcessStartInfo CreatePythonModuleProcessStartInfo(string pythonPath, IReadOnlyList<string> arguments)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = pythonPath,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WorkingDirectory = Path.GetDirectoryName(pythonPath) ?? AppContext.BaseDirectory
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        VapourSynthRuntimePathResolver.EnrichProcessPath(startInfo);
+        return startInfo;
+    }
+
+    private ToolProbeResult CreateReadyResult(ToolDefinition definition, ToolCandidate candidate, string version)
+    {
+        return new ToolProbeResult(
+            definition.Kind,
+            ReadinessState.Ready,
+            candidate.Source,
+            candidate.SourceLabel,
+            candidate.Path,
+            version,
+            string.Empty,
+            definition.ReleaseUrl,
+            definition.ManagedExternalToolKind);
+    }
+
+    private ToolProbeResult CreateMissingResult(ToolDefinition definition)
+    {
+        return new ToolProbeResult(
+            definition.Kind,
+            ReadinessState.Missing,
+            ToolDetectionSource.None,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            definition.ReleaseUrl,
+            definition.ManagedExternalToolKind);
+    }
+
+    private ToolProbeResult CreateMisconfiguredResult(ToolDefinition definition, ToolCandidate candidate, string failureReason)
+    {
+        return new ToolProbeResult(
+            definition.Kind,
+            ReadinessState.Misconfigured,
+            candidate.Source,
+            candidate.SourceLabel,
+            candidate.Path,
+            string.Empty,
+            failureReason,
+            definition.ReleaseUrl,
+            definition.ManagedExternalToolKind);
+    }
+
+    private ToolProbeResult CreateUnknownResult(ToolDefinition definition, string failureReason)
+    {
+        return new ToolProbeResult(
+            definition.Kind,
+            ReadinessState.Unknown,
+            ToolDetectionSource.None,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            failureReason,
+            definition.ReleaseUrl,
+            definition.ManagedExternalToolKind);
+    }
+
+    private IEnumerable<ToolCandidate> EnumerateCandidates(ToolDefinition definition)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (definition.SearchLocations.HasFlag(ToolSearchLocation.LocalToolsRoot))
+        {
+            foreach (var fileName in definition.ExecutableNames)
+            {
+                var candidatePath = Path.Combine(_paths.ToolsRootPath, fileName);
+                if (File.Exists(candidatePath) && seen.Add(candidatePath))
+                {
+                    yield return new ToolCandidate(candidatePath, ToolDetectionSource.LocalTools, "tools");
+                }
+            }
+        }
+
+        foreach (var candidate in EnumerateEnvironmentVariableCandidates(definition))
+        {
+            if (seen.Add(candidate.Path))
+            {
+                yield return candidate;
+            }
+        }
+
+        if (definition.SearchLocations.HasFlag(ToolSearchLocation.ProgramFilesVapourSynth))
+        {
+            foreach (var root in EnumerateProgramFilesVapourSynthRoots())
+            {
+                foreach (var fileName in definition.ExecutableNames)
+                {
+                    var candidatePath = Path.Combine(root, fileName);
+                    if (File.Exists(candidatePath) && seen.Add(candidatePath))
+                    {
+                        yield return new ToolCandidate(candidatePath, ToolDetectionSource.SpecialLocation, root);
+                    }
+                }
+            }
+        }
+
+        if (definition.SearchLocations.HasFlag(ToolSearchLocation.PythonScripts))
+        {
+            foreach (var root in VapourSynthRuntimePathResolver.CollectPythonScriptDirectories())
+            {
+                foreach (var fileName in definition.ExecutableNames)
+                {
+                    var candidatePath = Path.Combine(root, fileName);
+                    if (File.Exists(candidatePath) && seen.Add(candidatePath))
+                    {
+                        yield return new ToolCandidate(candidatePath, ToolDetectionSource.SpecialLocation, root);
+                    }
+                }
+            }
+        }
+
+        foreach (var candidate in EnumeratePathCandidates(definition))
+        {
+            if (seen.Add(candidate.Path))
+            {
+                yield return candidate;
+            }
+        }
+    }
+
+    private IEnumerable<ToolCandidate> EnumerateEnvironmentVariableCandidates(ToolDefinition definition)
+    {
+        if (!definition.SearchLocations.HasFlag(ToolSearchLocation.EnvironmentVariables))
+        {
+            yield break;
+        }
+
+        foreach (var variableName in definition.EnvironmentVariableNames)
+        {
+            var value = Environment.GetEnvironmentVariable(variableName, EnvironmentVariableTarget.Process)
+                ?? Environment.GetEnvironmentVariable(variableName, EnvironmentVariableTarget.User)
+                ?? Environment.GetEnvironmentVariable(variableName, EnvironmentVariableTarget.Machine);
+
+            var resolved = ResolveFromInput(value, definition.ExecutableNames);
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                yield return new ToolCandidate(resolved, ToolDetectionSource.EnvironmentVariable, variableName);
+            }
+        }
+    }
+
+    private IEnumerable<ToolCandidate> EnumeratePathCandidates(ToolDefinition definition)
+    {
+        if (!definition.SearchLocations.HasFlag(ToolSearchLocation.Path))
+        {
+            yield break;
+        }
+
+        foreach (var root in EnumeratePathRoots())
+        {
+            foreach (var fileName in definition.ExecutableNames)
+            {
+                var candidatePath = Path.Combine(root, fileName);
+                if (File.Exists(candidatePath))
+                {
+                    yield return new ToolCandidate(candidatePath, ToolDetectionSource.Path, "PATH");
+                }
+            }
+
+            if (definition.SearchLocations.HasFlag(ToolSearchLocation.VspipeSidecar))
+            {
+                var sidecarCandidate = ResolvePythonSidecarVspipe(root);
+                if (!string.IsNullOrWhiteSpace(sidecarCandidate))
+                {
+                    yield return new ToolCandidate(sidecarCandidate, ToolDetectionSource.SpecialLocation, "Python sidecar");
+                }
+            }
+        }
+    }
+
+    private static string? ResolveFromInput(string? value, IReadOnlyList<string> executableNames)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim().Trim('"');
+        if (File.Exists(normalized))
+        {
+            return Path.GetFullPath(normalized);
+        }
+
+        if (Directory.Exists(normalized))
+        {
+            foreach (var fileName in executableNames)
+            {
+                var candidate = Path.Combine(normalized, fileName);
+                if (File.Exists(candidate))
+                {
+                    return Path.GetFullPath(candidate);
+                }
+            }
+
+            return null;
+        }
+
+        if (!normalized.Contains(Path.DirectorySeparatorChar)
+            && !normalized.Contains(Path.AltDirectorySeparatorChar))
+        {
+            foreach (var root in EnumeratePathRoots())
+            {
+                var candidate = Path.Combine(root, normalized);
+                if (File.Exists(candidate))
+                {
+                    return Path.GetFullPath(candidate);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> EnumerateProgramFilesVapourSynthRoots()
+    {
+        var roots = new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "VapourSynth"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "VapourSynth", "core64")
+        };
+
+        return roots.Where(Directory.Exists);
+    }
+
+    private static string? ResolvePythonSidecarVspipe(string root)
+    {
+        return VapourSynthRuntimePathResolver.ResolvePythonSidecarVspipe(root);
+    }
+
+    private static IEnumerable<string> EnumeratePathRoots()
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pathVariables = new[]
+        {
+            Environment.GetEnvironmentVariable("PATH"),
+            Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User),
+            Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine)
+        };
+
+        foreach (var pathVariable in pathVariables)
+        {
+            if (string.IsNullOrWhiteSpace(pathVariable))
+            {
+                continue;
+            }
+
+            foreach (var root in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (seen.Add(root))
+                {
+                    yield return root;
+                }
+            }
+        }
+    }
+
+    private static string ResolveVersionText(ToolDefinition definition, string executablePath, string processOutput)
+    {
+        var parsedVersion = TryResolveKnownProcessVersion(definition, processOutput);
+        if (!string.IsNullOrWhiteSpace(parsedVersion))
+        {
+            return parsedVersion;
+        }
+
+        var versionLine = FirstMeaningfulLine(processOutput);
+        if (!string.IsNullOrWhiteSpace(versionLine))
+        {
+            return versionLine;
+        }
+
+        var versionInfo = FileVersionInfo.GetVersionInfo(executablePath);
+        return versionInfo.ProductVersion
+            ?? versionInfo.FileVersion
+            ?? "Present";
+    }
+
+    private static string FirstMeaningfulLine(string output, string fallback = "")
+    {
+        return EnumerateMeaningfulLines(output).FirstOrDefault() ?? fallback;
+    }
+
+    private static IEnumerable<string> EnumerateMeaningfulLines(string output)
+    {
+        return output
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static line => !string.IsNullOrWhiteSpace(line));
+    }
+
+    private static string GetVsrepoTarget()
+    {
+        return Environment.Is64BitOperatingSystem ? "win64" : "win32";
+    }
+
+    private static string EscapePythonSingleQuotedString(string value)
+    {
+        return value.Replace("\\", "\\\\").Replace("'", "\\'");
+    }
+
+    private static IReadOnlyList<string> GetPythonDistributionCandidates(ToolDefinition definition)
+    {
+        var candidates = new List<string>();
+
+        void Add(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)
+                || candidates.Any(existing => string.Equals(existing, value, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            candidates.Add(value);
+        }
+
+        switch (definition.Kind)
+        {
+            case RegisteredToolKind.Vsrepo:
+                Add("vsrepo");
+                break;
+            case RegisteredToolKind.PythonModuleAwsmfunc:
+                Add("awsmfunc");
+                break;
+            case RegisteredToolKind.PythonModuleVsjetpack:
+                Add("vsjetpack");
+                break;
+        }
+
+        Add(definition.ProbeValue);
+
+        if (!string.IsNullOrWhiteSpace(definition.ProbeValue))
+        {
+            var rootModule = definition.ProbeValue.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+            Add(rootModule);
+        }
+
+        return candidates;
+    }
+
+    private static string TryResolveKnownProcessVersion(ToolDefinition definition, string processOutput)
+    {
+        return definition.Kind switch
+        {
+            RegisteredToolKind.Vspipe => TryExtractVapourSynthCoreVersion(processOutput),
+            RegisteredToolKind.OpusExt => TryExtractOpusEncoderVersion(processOutput),
+            _ => string.Empty
+        };
+    }
+
+    private static string TryExtractVapourSynthCoreVersion(string output)
+    {
+        foreach (var line in EnumerateMeaningfulLines(output))
+        {
+            var match = Regex.Match(line, @"\bCore\s+(R\d+(?:\.\d+)?)\b", RegexOptions.IgnoreCase);
+            if (match.Success)
+            {
+                return match.Groups[1].Value.ToUpperInvariant();
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string TryExtractOpusEncoderVersion(string output)
+    {
+        foreach (var line in EnumerateMeaningfulLines(output))
+        {
+            var opusToolsMatch = Regex.Match(line, @"\bopus-tools\s+(?<version>[^\s(]+)", RegexOptions.IgnoreCase);
+            if (opusToolsMatch.Success)
+            {
+                return opusToolsMatch.Groups["version"].Value;
+            }
+
+            var genericVersionMatch = Regex.Match(line, @"\b(?<version>\d+(?:\.\d+)+(?:-[^\s(]+)?)\b");
+            if (genericVersionMatch.Success)
+            {
+                return genericVersionMatch.Groups["version"].Value;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool ContainsMissingVsrepoModule(string output)
+    {
+        return output.Contains("No module named vsrepo", StringComparison.OrdinalIgnoreCase)
+               || output.Contains("No module named 'vsrepo'", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static HashSet<string> ParseVsrepoInstalledPackageKeys(string output)
+    {
+        var packageKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var rawLine in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.TrimEnd();
+            if (string.IsNullOrWhiteSpace(line)
+                || line.StartsWith("Name", StringComparison.OrdinalIgnoreCase)
+                || line.StartsWith("-", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!TryParseVsrepoInstalledLine(line, out var package))
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(package.DisplayName))
+            {
+                packageKeys.Add(package.DisplayName);
+            }
+
+            if (!string.IsNullOrWhiteSpace(package.Namespace))
+            {
+                packageKeys.Add(package.Namespace);
+            }
+
+            if (!string.IsNullOrWhiteSpace(package.Identifier))
+            {
+                packageKeys.Add(package.Identifier);
+            }
+        }
+
+        return packageKeys;
+    }
+
+    private static bool TryParseVsrepoInstalledLine(string line, out VsrepoInstalledLine package)
+    {
+        var parts = Regex.Split(line.Trim(), "\\s{2,}");
+        if (parts.Length < 3)
+        {
+            package = new VsrepoInstalledLine(string.Empty, string.Empty, string.Empty);
+            return false;
+        }
+
+        var displayName = parts[0].Trim().TrimStart('*', '+');
+        var packageNamespace = parts[1].Trim();
+        string identifier;
+
+        if (parts.Length >= 5)
+        {
+            identifier = parts[4].Trim();
+        }
+        else
+        {
+            var tailTokens = parts[2].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (tailTokens.Length < 3)
+            {
+                package = new VsrepoInstalledLine(string.Empty, string.Empty, string.Empty);
+                return false;
+            }
+
+            identifier = tailTokens[^1].Trim();
+        }
+
+        package = new VsrepoInstalledLine(displayName, packageNamespace, identifier);
+        return true;
+    }
+
+    private sealed record VsrepoInstalledProbeResult(
+        HashSet<string> PackageKeys,
+        bool IsTimedOut,
+        bool IsMissingVsrepoModule,
+        string FailureReason);
+
+    private sealed record VsrepoInstalledLine(string DisplayName, string Namespace, string Identifier);
+
+    private sealed record ToolCandidate(string Path, ToolDetectionSource Source, string SourceLabel);
+}

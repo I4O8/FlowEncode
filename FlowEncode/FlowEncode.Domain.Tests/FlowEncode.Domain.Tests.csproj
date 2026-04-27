@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="*" />
+    <PackageReference Include="MSTest.TestAdapter" Version="*" />
+    <PackageReference Include="MSTest.TestFramework" Version="*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FlowEncode.Domain\FlowEncode.Domain.csproj" />
+    <ProjectReference Include="..\FlowEncode.Application\FlowEncode.Application.csproj" />
+    <ProjectReference Include="..\FlowEncode.Infrastructure\FlowEncode.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

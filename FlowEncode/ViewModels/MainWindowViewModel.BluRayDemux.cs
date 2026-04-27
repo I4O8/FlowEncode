@@ -1,0 +1,1326 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using FlowEncode.Domain;
+using Microsoft.UI;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
+
+namespace FlowEncode.ViewModels;
+
+public partial class MainWindowViewModel
+{
+    private const int BluRayDemuxLogLimit = 160_000;
+    private const int BluRayDemuxStageLogLimit = 400;
+
+    private string _bluRayDemuxSourcePath = string.Empty;
+    private string _bluRayDemuxOutputPath = string.Empty;
+    private BluRayDemuxBackendOption? _selectedBluRayDemuxBackend;
+    private BluRayPlaylistItem? _selectedBluRayPlaylist;
+    private string _bluRayDemuxStatusText = string.Empty;
+    private string _bluRayDemuxCommandLine = string.Empty;
+    private string _bluRayDemuxLog = string.Empty;
+    private string _bluRayDiscSummaryText = string.Empty;
+    private string _bluRayPlaylistSummaryText = string.Empty;
+    private double _bluRayDemuxProgressPercent;
+    private bool _bluRayDemuxProgressIsIndeterminate;
+    private bool _isBluRayDiscScanning;
+    private bool _isBluRayPlaylistLoading;
+    private bool _isBluRayDemuxRunning;
+    private bool _isUpdatingBluRayOutputPath;
+    private bool _isBulkUpdatingBluRayTrackSelection;
+    private string? _lastBluRayOutputPath;
+    private Guid? _activeBluRayDemuxJobId;
+    private EncodingJobState? _bluRayDemuxDisplayState;
+    private CancellationTokenSource? _bluRayProbeCancellationTokenSource;
+    private CancellationTokenSource? _bluRayDemuxCancellationTokenSource;
+    private int _bluRayPlaylistLoadVersion;
+    private readonly StringBuilder _bluRayDemuxLogBuilder = new();
+    private readonly List<string> _bluRayDemuxLogStageLines = [];
+    private readonly Dictionary<string, BluRayPlaylistCacheEntry> _bluRayPlaylistTrackCache = new(StringComparer.OrdinalIgnoreCase);
+    private string _bluRayDemuxLastLogLine = string.Empty;
+    private string _bluRayDemuxLiveLogLine = string.Empty;
+    private string _bluRayDemuxLogPhaseMarker = string.Empty;
+
+    public ObservableCollection<BluRayDemuxBackendOption> BluRayDemuxBackendOptions { get; } = [];
+    public ObservableCollection<BluRayPlaylistItem> BluRayPlaylists { get; } = [];
+    public ObservableCollection<BluRayTrackItemViewModel> BluRayTracks { get; } = [];
+
+    public string BluRayDemuxSourcePath
+    {
+        get => _bluRayDemuxSourcePath;
+        set
+        {
+            if (SetProperty(ref _bluRayDemuxSourcePath, value))
+            {
+                TryPopulateBluRayOutputPathIfEmpty();
+                ResetBluRayScanState(clearStatus: false);
+                RaiseBluRayDemuxInputPropertyChanges();
+                RefreshBluRayDemuxCommandPreview();
+            }
+        }
+    }
+
+    public string BluRayDemuxOutputPath
+    {
+        get => _bluRayDemuxOutputPath;
+        set
+        {
+            if (SetProperty(ref _bluRayDemuxOutputPath, value))
+            {
+                if (!_isUpdatingBluRayOutputPath)
+                {
+                    _lastBluRayOutputPath = null;
+                }
+
+                RefreshBluRayTrackOutputPreviews();
+                RaiseBluRayDemuxInputPropertyChanges();
+                RefreshBluRayDemuxCommandPreview();
+            }
+        }
+    }
+
+    public BluRayDemuxBackendOption? SelectedBluRayDemuxBackend
+    {
+        get => _selectedBluRayDemuxBackend;
+        set
+        {
+            if (SetProperty(ref _selectedBluRayDemuxBackend, value))
+            {
+                ResetBluRayScanState(clearStatus: false);
+                RaiseBluRayDemuxEnvironmentPropertyChanges();
+                RefreshBluRayTrackOutputPreviews();
+                RefreshBluRayDemuxCommandPreview();
+            }
+        }
+    }
+
+    public BluRayPlaylistItem? SelectedBluRayPlaylist
+    {
+        get => _selectedBluRayPlaylist;
+        set
+        {
+            if (SetProperty(ref _selectedBluRayPlaylist, value))
+            {
+                if (!TryRestoreCachedBluRayPlaylistState(value, updateStatus: !_isBluRayDemuxRunning))
+                {
+                    ReplaceBluRayTrackItems([]);
+                    _bluRayPlaylistSummaryText = string.Empty;
+                }
+
+                OnPropertyChanged(nameof(BluRayPlaylistSummaryText));
+                RefreshBluRayTrackOutputPreviews();
+                RaiseBluRayDemuxInputPropertyChanges();
+                RefreshBluRayDemuxCommandPreview();
+            }
+        }
+    }
+
+    public string BluRayDemuxStatusText
+    {
+        get => _bluRayDemuxStatusText;
+        private set
+        {
+            if (SetProperty(ref _bluRayDemuxStatusText, value))
+            {
+                OnPropertyChanged(nameof(CanClearBluRayDemuxTask));
+                OnPropertyChanged(nameof(BluRayDemuxProgressSecondaryText));
+            }
+        }
+    }
+
+    public string BluRayDemuxCommandLine
+    {
+        get => _bluRayDemuxCommandLine;
+        private set
+        {
+            if (SetProperty(ref _bluRayDemuxCommandLine, value))
+            {
+                OnPropertyChanged(nameof(CanClearBluRayDemuxTask));
+            }
+        }
+    }
+
+    public string BluRayDemuxLog
+    {
+        get => _bluRayDemuxLog;
+        private set
+        {
+            if (SetProperty(ref _bluRayDemuxLog, value))
+            {
+                OnPropertyChanged(nameof(CanClearBluRayDemuxTask));
+            }
+        }
+    }
+
+    public double BluRayDemuxProgressPercent
+    {
+        get => _bluRayDemuxProgressPercent;
+        private set
+        {
+            var normalized = Math.Clamp(value, 0, 100);
+            if (SetProperty(ref _bluRayDemuxProgressPercent, normalized))
+            {
+                OnPropertyChanged(nameof(BluRayDemuxProgressValue));
+                OnPropertyChanged(nameof(BluRayDemuxProgressPercentText));
+                OnPropertyChanged(nameof(BluRayDemuxProgressLabel));
+            }
+        }
+    }
+
+    public bool BluRayDemuxProgressIsIndeterminate
+    {
+        get => _bluRayDemuxProgressIsIndeterminate;
+        private set
+        {
+            if (SetProperty(ref _bluRayDemuxProgressIsIndeterminate, value))
+            {
+                OnPropertyChanged(nameof(BluRayDemuxProgressPercentText));
+                OnPropertyChanged(nameof(BluRayDemuxProgressLabel));
+            }
+        }
+    }
+
+    public string BluRayDiscSummaryText => string.IsNullOrWhiteSpace(_bluRayDiscSummaryText) ? Texts.BluRayDiscSummaryPlaceholder : _bluRayDiscSummaryText;
+    public string BluRayPlaylistSummaryText => string.IsNullOrWhiteSpace(_bluRayPlaylistSummaryText) ? Texts.BluRayPlaylistSummaryPlaceholder : _bluRayPlaylistSummaryText;
+    public string BluRaySelectedTrackSummary => Texts.BluRayTrackSelectionSummary(BluRayTracks.Count(static track => track.IsSelected), BluRayTracks.Count);
+    public bool IsBluRayDiscScanning => _isBluRayDiscScanning;
+    public bool IsBluRayPlaylistLoading => _isBluRayPlaylistLoading;
+    public bool IsBluRayDemuxRunning => _isBluRayDemuxRunning;
+    public bool CanScanBluRayDisc => !_isBluRayDiscScanning && !_isBluRayPlaylistLoading && !_isBluRayDemuxRunning && SelectedBluRayDemuxBackend is not null && !string.IsNullOrWhiteSpace(BluRayDemuxSourcePath) && GetSelectedBluRayToolState() == ReadinessState.Ready;
+    public bool CanStartBluRayDemux => !_isBluRayDiscScanning && !_isBluRayPlaylistLoading && !_isBluRayDemuxRunning && SelectedBluRayDemuxBackend is not null && SelectedBluRayPlaylist is not null && BluRayTracks.Any(static track => track.IsSelected) && !string.IsNullOrWhiteSpace(BluRayDemuxSourcePath) && !string.IsNullOrWhiteSpace(BluRayDemuxOutputPath) && GetSelectedBluRayToolState() == ReadinessState.Ready;
+    public bool CanCancelBluRayDemux => _isBluRayDemuxRunning;
+    public bool CanClearBluRayDemuxTask => !_isBluRayDemuxRunning && (!string.IsNullOrWhiteSpace(BluRayDemuxSourcePath) || !string.IsNullOrWhiteSpace(BluRayDemuxOutputPath) || !string.IsNullOrWhiteSpace(BluRayDemuxCommandLine) || !string.IsNullOrWhiteSpace(BluRayDemuxLog) || BluRayPlaylists.Count > 0 || BluRayTracks.Count > 0 || !string.Equals(BluRayDemuxStatusText, Texts.BluRayDemuxIdleStatus, StringComparison.Ordinal));
+    public bool CanSelectAllBluRayTracks => BluRayTracks.Count > 0;
+    public bool CanInvertBluRayTrackSelection => BluRayTracks.Count > 0;
+    public string BluRayDemuxProgressLabel => BluRayDemuxProgressIsIndeterminate && _isBluRayDemuxRunning ? Texts.BluRayDemuxProgressActiveLabel : $"{BluRayDemuxProgressPercent:0.#}%";
+    public double BluRayDemuxProgressValue => BluRayDemuxProgressPercent / 100.0;
+    public string BluRayDemuxProgressPercentText => BluRayDemuxProgressIsIndeterminate && _isBluRayDemuxRunning && BluRayDemuxProgressPercent <= 0 ? "--" : $"{BluRayDemuxProgressPercent:0.#}%";
+    public string BluRayDemuxProgressSecondaryText => !string.IsNullOrWhiteSpace(_bluRayDemuxLastLogLine) ? _bluRayDemuxLastLogLine : BluRayDemuxStatusText;
+    public Visibility BluRayDemuxProgressSecondaryVisibility => string.IsNullOrWhiteSpace(BluRayDemuxProgressSecondaryText) ? Visibility.Collapsed : Visibility.Visible;
+    public Brush BluRayDemuxStatusPanelBorderBrush => ResolveTaskStatusPanelBorderBrush(_bluRayDemuxDisplayState);
+    public Brush BluRayDemuxProgressTrackBrush => ResolveBluRayDemuxProgressTrackBrush(_bluRayDemuxDisplayState);
+    public Brush BluRayDemuxProgressBorderBrush => ResolveBluRayDemuxProgressBorderBrush(_bluRayDemuxDisplayState);
+    public Brush BluRayDemuxProgressFillBrush => ResolveBluRayDemuxProgressFillBrush(_bluRayDemuxDisplayState);
+    public string BluRayDemuxOutputPreviewText => BuildOutputPreviewText(TryResolveBluRayOutputPreviewPath());
+    public string BluRayDemuxBackendNote => Texts.BluRayBackendNote(SelectedBluRayDemuxBackend?.Value ?? BluRayDemuxBackend.DgDemux);
+
+    public string BluRayToolSummary
+    {
+        get
+        {
+            var backend = SelectedBluRayDemuxBackend?.Value;
+            if (!backend.HasValue)
+            {
+                return Texts.BluRayToolPreparing;
+            }
+
+            var backendLabel = Texts.BluRayBackendLabel(backend.Value);
+            var tool = GetSelectedBluRayToolProbeResult();
+            if (tool is null)
+            {
+                return Texts.BluRayToolPreparing;
+            }
+
+            var detail = tool.State switch
+            {
+                ReadinessState.Ready => BuildToolProbeDetail(tool),
+                ReadinessState.Missing => Texts.ToolMissingDetail(tool.DisplayName),
+                ReadinessState.Unknown => Texts.ToolUnknownDetail(tool.DisplayName),
+                _ => string.IsNullOrWhiteSpace(tool.FailureReason) ? BuildToolProbeDetail(tool) : tool.FailureReason
+            };
+
+            return tool.State == ReadinessState.Ready
+                ? Texts.BluRayToolReadySummary(backendLabel, detail)
+                : Texts.BluRayToolUnavailableSummary(backendLabel, detail);
+        }
+    }
+
+    public string? ValidateBluRayDemuxForStart() => TryCreateBluRayDemuxRequest(requireSourceExists: true, out _, out var error) ? null : error;
+
+    public async Task ScanBluRayDiscAsync()
+    {
+        if (_isBluRayDiscScanning || _isBluRayPlaylistLoading || _isBluRayDemuxRunning)
+        {
+            return;
+        }
+
+        var backend = SelectedBluRayDemuxBackend?.Value ?? BluRayDemuxBackend.DgDemux;
+        var backendLabel = Texts.BluRayBackendLabel(backend);
+        var cancellationTokenSource = RenewBluRayProbeCancellation();
+        SetBluRayDiscScanningState(true);
+        _bluRayPlaylistTrackCache.Clear();
+        ReplaceItems(BluRayPlaylists, []);
+        SelectedBluRayPlaylist = null;
+        ReplaceBluRayTrackItems([]);
+        _bluRayDiscSummaryText = string.Empty;
+        _bluRayPlaylistSummaryText = string.Empty;
+        BluRayDemuxCommandLine = string.Empty;
+        BluRayDemuxStatusText = Texts.BluRayDiscScanStatus(backendLabel);
+        StatusText = BluRayDemuxStatusText;
+
+        try
+        {
+            var playlists = await _bluRayDiscProbeService.ScanDiscAsync(backend, NormalizeBluRayDiscRoot(BluRayDemuxSourcePath, requireExists: true), cancellationTokenSource.Token);
+            ReplaceItems(BluRayPlaylists, playlists);
+            _bluRayDiscSummaryText = Texts.BluRayDiscScanCompletedStatus(backendLabel, playlists.Count);
+            BluRayDemuxStatusText = _bluRayDiscSummaryText;
+            StatusText = BluRayDemuxStatusText;
+            OnPropertyChanged(nameof(BluRayDiscSummaryText));
+        }
+        catch (OperationCanceledException) when (cancellationTokenSource.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _bluRayDiscSummaryText = ex.Message;
+            BluRayDemuxStatusText = Texts.BluRayDiscScanFailedStatus(ex.Message);
+            StatusText = BluRayDemuxStatusText;
+            OnPropertyChanged(nameof(BluRayDiscSummaryText));
+        }
+        finally
+        {
+            SetBluRayDiscScanningState(false);
+            RaiseBluRayDemuxInputPropertyChanges();
+        }
+    }
+
+    public async Task LoadSelectedBluRayPlaylistAsync()
+    {
+        if (_isBluRayDiscScanning || SelectedBluRayPlaylist is null)
+        {
+            return;
+        }
+
+        if (TryRestoreCachedBluRayPlaylistState(SelectedBluRayPlaylist, updateStatus: !_isBluRayDemuxRunning))
+        {
+            RefreshBluRayTrackOutputPreviews();
+            RaiseBluRayDemuxInputPropertyChanges();
+            RefreshBluRayDemuxCommandPreview();
+            return;
+        }
+
+        if (_isBluRayDemuxRunning)
+        {
+            return;
+        }
+
+        var requestVersion = Interlocked.Increment(ref _bluRayPlaylistLoadVersion);
+        var selectedPlaylist = SelectedBluRayPlaylist;
+        var cancellationTokenSource = RenewBluRayProbeCancellation();
+        SetBluRayPlaylistLoadingState(true);
+        ReplaceBluRayTrackItems([]);
+        _bluRayPlaylistSummaryText = string.Empty;
+        BluRayDemuxStatusText = Texts.BluRayPlaylistLoadStatus(selectedPlaylist.DisplayName);
+        StatusText = BluRayDemuxStatusText;
+
+        try
+        {
+            var result = await _bluRayDiscProbeService.ScanPlaylistAsync(SelectedBluRayDemuxBackend?.Value ?? BluRayDemuxBackend.DgDemux, NormalizeBluRayDiscRoot(BluRayDemuxSourcePath, requireExists: true), selectedPlaylist, cancellationTokenSource.Token);
+            if (requestVersion != Volatile.Read(ref _bluRayPlaylistLoadVersion) || !ReferenceEquals(selectedPlaylist, SelectedBluRayPlaylist))
+            {
+                return;
+            }
+
+            var trackItems = result.Tracks.Select(static track => new BluRayTrackItemViewModel(track)).ToList();
+            StoreBluRayPlaylistCache(selectedPlaylist, result.Summary, trackItems);
+            ReplaceBluRayTrackItems(trackItems);
+            _bluRayPlaylistSummaryText = result.Summary;
+            BluRayDemuxStatusText = Texts.BluRayPlaylistLoadedStatus(selectedPlaylist.DisplayName, result.Tracks.Count);
+            StatusText = BluRayDemuxStatusText;
+            RefreshBluRayTrackOutputPreviews();
+            RaiseBluRayDemuxInputPropertyChanges();
+            RefreshBluRayDemuxCommandPreview();
+            OnPropertyChanged(nameof(BluRayPlaylistSummaryText));
+        }
+        catch (OperationCanceledException) when (cancellationTokenSource.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _bluRayPlaylistSummaryText = ex.Message;
+            BluRayDemuxStatusText = Texts.BluRayPlaylistLoadFailedStatus(ex.Message);
+            StatusText = BluRayDemuxStatusText;
+            OnPropertyChanged(nameof(BluRayPlaylistSummaryText));
+        }
+        finally
+        {
+            SetBluRayPlaylistLoadingState(false);
+        }
+    }
+
+    public async Task<string?> StartBluRayDemuxAsync()
+    {
+        if (_isBluRayDemuxRunning)
+        {
+            return Texts.BluRayDemuxAlreadyRunningError;
+        }
+
+        BluRayDemuxRequest request;
+        BluRayDemuxResult result;
+        var backendLabel = Texts.BluRayBackendLabel(SelectedBluRayDemuxBackend?.Value ?? BluRayDemuxBackend.DgDemux);
+
+        try
+        {
+            request = CreateBluRayDemuxRequest(requireSourceExists: true);
+            ResetBluRayDemuxLogState();
+            BluRayDemuxProgressPercent = 0;
+            BluRayDemuxProgressIsIndeterminate = true;
+            SetBluRayDemuxDisplayState(EncodingJobState.Running);
+            BluRayDemuxCommandLine = _bluRayDemuxRunner.BuildDisplayCommand(request);
+            BluRayDemuxStatusText = Texts.BluRayDemuxStartingStatus(backendLabel, request.Playlist.DisplayName);
+            StatusText = BluRayDemuxStatusText;
+            SetBluRayDemuxRunningState(true, request.JobId);
+            _bluRayDemuxCancellationTokenSource = new CancellationTokenSource();
+            result = await _bluRayDemuxRunner.RunAsync(request, new Progress<BluRayDemuxProgress>(ApplyBluRayDemuxProgress), _bluRayDemuxCancellationTokenSource.Token);
+        }
+        catch (Exception ex)
+        {
+            SetBluRayDemuxRunningState(false, null);
+            DisposeBluRayDemuxCancellation();
+            ClampBluRayDemuxProgressForTerminalState(EncodingJobState.Failed);
+            SetBluRayDemuxDisplayState(EncodingJobState.Failed);
+            AppendBluRayDemuxLogLine(ex.Message);
+            BluRayDemuxStatusText = Texts.BluRayDemuxFailedStatus(ex.Message);
+            StatusText = BluRayDemuxStatusText;
+            return ex.Message;
+        }
+
+        DisposeBluRayDemuxCancellation();
+        SetBluRayDemuxRunningState(false, null);
+        if (string.IsNullOrWhiteSpace(BluRayDemuxLog) && !string.IsNullOrWhiteSpace(result.Log))
+        {
+            BluRayDemuxLog = result.Log;
+        }
+
+        switch (result.State)
+        {
+            case EncodingJobState.Completed:
+                SetBluRayDemuxDisplayState(EncodingJobState.Completed);
+                ClampBluRayDemuxProgressForTerminalState(EncodingJobState.Completed);
+                BluRayDemuxStatusText = Texts.BluRayDemuxCompletedStatus(backendLabel);
+                StatusText = BluRayDemuxStatusText;
+                return null;
+            case EncodingJobState.Cancelled:
+                SetBluRayDemuxDisplayState(EncodingJobState.Cancelled);
+                ClampBluRayDemuxProgressForTerminalState(EncodingJobState.Cancelled);
+                BluRayDemuxStatusText = Texts.BluRayDemuxCancelledStatus(backendLabel);
+                StatusText = BluRayDemuxStatusText;
+                return null;
+            default:
+                SetBluRayDemuxDisplayState(EncodingJobState.Failed);
+                ClampBluRayDemuxProgressForTerminalState(EncodingJobState.Failed);
+                BluRayDemuxStatusText = Texts.BluRayDemuxFailedStatus(result.Summary);
+                StatusText = BluRayDemuxStatusText;
+                return result.Summary;
+        }
+    }
+
+    public void CancelBluRayDemux()
+    {
+        if (!_isBluRayDemuxRunning)
+        {
+            return;
+        }
+
+        var backendLabel = Texts.BluRayBackendLabel(SelectedBluRayDemuxBackend?.Value ?? BluRayDemuxBackend.DgDemux);
+        BluRayDemuxStatusText = Texts.BluRayDemuxCancellingStatus(backendLabel);
+        StatusText = BluRayDemuxStatusText;
+        _bluRayDemuxCancellationTokenSource?.Cancel();
+        if (_activeBluRayDemuxJobId is { } jobId)
+        {
+            _bluRayDemuxRunner.Abort(jobId, SelectedBluRayDemuxBackend?.Value ?? BluRayDemuxBackend.DgDemux);
+        }
+    }
+
+    public void SelectAllBluRayTracks()
+    {
+        UpdateBluRayTrackSelection(static _ => true);
+    }
+
+    public void InvertBluRayTrackSelection()
+    {
+        UpdateBluRayTrackSelection(static track => !track.IsSelected);
+    }
+
+    public void ToggleBluRayTrackSelection(BluRayTrackItemViewModel? track)
+    {
+        if (track is null)
+        {
+            return;
+        }
+
+        track.IsSelected = !track.IsSelected;
+    }
+
+    public void ClearBluRayDemuxTask()
+    {
+        if (_isBluRayDemuxRunning)
+        {
+            return;
+        }
+
+        DisposeBluRayProbeCancellation();
+        DisposeBluRayDemuxCancellation();
+        Interlocked.Increment(ref _bluRayPlaylistLoadVersion);
+        ReplaceItems(BluRayPlaylists, []);
+        ReplaceBluRayTrackItems([]);
+        _bluRayPlaylistTrackCache.Clear();
+        _selectedBluRayPlaylist = null;
+        _lastBluRayOutputPath = null;
+        _bluRayDiscSummaryText = string.Empty;
+        _bluRayPlaylistSummaryText = string.Empty;
+        _bluRayDemuxStatusText = Texts.BluRayDemuxIdleStatus;
+        _bluRayDemuxCommandLine = string.Empty;
+        ResetBluRayDemuxLogState();
+        _bluRayDemuxProgressPercent = 0;
+        _bluRayDemuxProgressIsIndeterminate = false;
+        _bluRayDemuxDisplayState = null;
+        SetBluRayDemuxRunningState(false, null);
+
+        OnPropertyChanged(nameof(SelectedBluRayPlaylist));
+        OnPropertyChanged(nameof(BluRayDiscSummaryText));
+        OnPropertyChanged(nameof(BluRayPlaylistSummaryText));
+        OnPropertyChanged(nameof(BluRaySelectedTrackSummary));
+        OnPropertyChanged(nameof(BluRayDemuxProgressPercentText));
+        OnPropertyChanged(nameof(BluRayDemuxProgressLabel));
+        OnPropertyChanged(nameof(BluRayDemuxProgressSecondaryText));
+        OnPropertyChanged(nameof(BluRayDemuxProgressSecondaryVisibility));
+        OnPropertyChanged(nameof(BluRayDemuxStatusPanelBorderBrush));
+        OnPropertyChanged(nameof(BluRayDemuxProgressTrackBrush));
+        OnPropertyChanged(nameof(BluRayDemuxProgressBorderBrush));
+        OnPropertyChanged(nameof(BluRayDemuxProgressFillBrush));
+
+        BluRayDemuxSourcePath = string.Empty;
+        BluRayDemuxOutputPath = string.Empty;
+        BluRayDemuxStatusText = Texts.BluRayTaskClearedStatus;
+        StatusText = BluRayDemuxStatusText;
+    }
+
+    partial void InitializeBluRayDemuxState()
+    {
+        ReplaceItems(BluRayDemuxBackendOptions, BuildBluRayDemuxBackendOptions());
+        _selectedBluRayDemuxBackend = BluRayDemuxBackendOptions.FirstOrDefault();
+        _bluRayDemuxStatusText = _texts.BluRayDemuxIdleStatus;
+    }
+
+    partial void DisposeBluRayDemuxState()
+    {
+        DisposeBluRayProbeCancellation();
+        CancelBluRayDemux();
+        DisposeBluRayDemuxCancellation();
+        _bluRayPlaylistTrackCache.Clear();
+        ReplaceBluRayTrackItems([]);
+    }
+
+    partial void HandleBluRayEnvironmentReadinessApplied()
+    {
+        RaiseBluRayDemuxEnvironmentPropertyChanges();
+    }
+
+    partial void ApplyBluRayDemuxLanguageState()
+    {
+        var backend = SelectedBluRayDemuxBackend?.Value ?? BluRayDemuxBackend.DgDemux;
+        ReplaceItems(BluRayDemuxBackendOptions, BuildBluRayDemuxBackendOptions());
+        _selectedBluRayDemuxBackend = BluRayDemuxBackendOptions.FirstOrDefault(option => option.Value == backend) ?? BluRayDemuxBackendOptions.FirstOrDefault();
+
+        if (!_isBluRayDemuxRunning)
+        {
+            SetBluRayDemuxDisplayState(null);
+            BluRayDemuxStatusText = Texts.BluRayDemuxIdleStatus;
+        }
+
+        OnPropertyChanged(nameof(SelectedBluRayDemuxBackend));
+        OnPropertyChanged(nameof(BluRayToolSummary));
+        OnPropertyChanged(nameof(BluRayDemuxBackendNote));
+        OnPropertyChanged(nameof(BluRayDiscSummaryText));
+        OnPropertyChanged(nameof(BluRayPlaylistSummaryText));
+        OnPropertyChanged(nameof(BluRaySelectedTrackSummary));
+        RaiseBluRayDemuxEnvironmentPropertyChanges();
+        RaiseBluRayDemuxInputPropertyChanges();
+        RefreshBluRayTrackOutputPreviews();
+        RefreshBluRayDemuxCommandPreview();
+    }
+
+    private IEnumerable<BluRayDemuxBackendOption> BuildBluRayDemuxBackendOptions()
+    {
+        return
+        [
+            new BluRayDemuxBackendOption(BluRayDemuxBackend.DgDemux, Texts.BluRayBackendLabel(BluRayDemuxBackend.DgDemux)),
+            new BluRayDemuxBackendOption(BluRayDemuxBackend.Eac3To, Texts.BluRayBackendLabel(BluRayDemuxBackend.Eac3To))
+        ];
+    }
+
+    private void ResetBluRayScanState(bool clearStatus)
+    {
+        DisposeBluRayProbeCancellation();
+        Interlocked.Increment(ref _bluRayPlaylistLoadVersion);
+        ReplaceItems(BluRayPlaylists, []);
+        ReplaceBluRayTrackItems([]);
+        _bluRayPlaylistTrackCache.Clear();
+        _selectedBluRayPlaylist = null;
+        _bluRayDiscSummaryText = string.Empty;
+        _bluRayPlaylistSummaryText = string.Empty;
+        BluRayDemuxCommandLine = string.Empty;
+
+        OnPropertyChanged(nameof(SelectedBluRayPlaylist));
+        OnPropertyChanged(nameof(BluRayDiscSummaryText));
+        OnPropertyChanged(nameof(BluRayPlaylistSummaryText));
+        OnPropertyChanged(nameof(BluRaySelectedTrackSummary));
+
+        if (clearStatus && !_isBluRayDemuxRunning)
+        {
+            BluRayDemuxStatusText = Texts.BluRayDemuxIdleStatus;
+        }
+    }
+
+    private CancellationTokenSource RenewBluRayProbeCancellation()
+    {
+        DisposeBluRayProbeCancellation();
+        _bluRayProbeCancellationTokenSource = new CancellationTokenSource();
+        return _bluRayProbeCancellationTokenSource;
+    }
+
+    private void ReplaceBluRayTrackItems(IEnumerable<BluRayTrackItemViewModel> source)
+    {
+        foreach (var track in BluRayTracks)
+        {
+            track.PropertyChanged -= BluRayTrackItem_PropertyChanged;
+        }
+
+        ReplaceItems(BluRayTracks, source);
+
+        foreach (var track in BluRayTracks)
+        {
+            track.PropertyChanged += BluRayTrackItem_PropertyChanged;
+        }
+
+        OnPropertyChanged(nameof(BluRaySelectedTrackSummary));
+        OnPropertyChanged(nameof(CanSelectAllBluRayTracks));
+        OnPropertyChanged(nameof(CanInvertBluRayTrackSelection));
+    }
+
+    private void BluRayTrackItem_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(BluRayTrackItemViewModel.IsSelected))
+        {
+            return;
+        }
+
+        if (_isBulkUpdatingBluRayTrackSelection)
+        {
+            return;
+        }
+
+        HandleBluRayTrackSelectionChanged();
+    }
+
+    private void UpdateBluRayTrackSelection(Func<BluRayTrackItemViewModel, bool> selector)
+    {
+        if (BluRayTracks.Count == 0)
+        {
+            return;
+        }
+
+        _isBulkUpdatingBluRayTrackSelection = true;
+        try
+        {
+            foreach (var track in BluRayTracks)
+            {
+                track.IsSelected = selector(track);
+            }
+        }
+        finally
+        {
+            _isBulkUpdatingBluRayTrackSelection = false;
+        }
+
+        HandleBluRayTrackSelectionChanged();
+    }
+
+    private void HandleBluRayTrackSelectionChanged()
+    {
+        OnPropertyChanged(nameof(BluRaySelectedTrackSummary));
+        OnPropertyChanged(nameof(CanStartBluRayDemux));
+        RefreshBluRayDemuxCommandPreview();
+    }
+
+    private void StoreBluRayPlaylistCache(
+        BluRayPlaylistItem playlist,
+        string summary,
+        IReadOnlyList<BluRayTrackItemViewModel> trackItems)
+    {
+        var key = TryCreateBluRayPlaylistCacheKey(playlist);
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return;
+        }
+
+        _bluRayPlaylistTrackCache[key] = new BluRayPlaylistCacheEntry(summary, trackItems);
+    }
+
+    private bool TryRestoreCachedBluRayPlaylistState(BluRayPlaylistItem? playlist, bool updateStatus)
+    {
+        if (playlist is null)
+        {
+            return false;
+        }
+
+        var key = TryCreateBluRayPlaylistCacheKey(playlist);
+        if (string.IsNullOrWhiteSpace(key) || !_bluRayPlaylistTrackCache.TryGetValue(key, out var entry))
+        {
+            return false;
+        }
+
+        ReplaceBluRayTrackItems(entry.TrackItems);
+        _bluRayPlaylistSummaryText = entry.Summary;
+
+        if (updateStatus)
+        {
+            BluRayDemuxStatusText = Texts.BluRayPlaylistLoadedStatus(playlist.DisplayName, entry.TrackItems.Count);
+            StatusText = BluRayDemuxStatusText;
+        }
+
+        OnPropertyChanged(nameof(BluRayPlaylistSummaryText));
+        return true;
+    }
+
+    private string? TryCreateBluRayPlaylistCacheKey(BluRayPlaylistItem playlist)
+    {
+        var backend = SelectedBluRayDemuxBackend?.Value;
+        if (!backend.HasValue || string.IsNullOrWhiteSpace(BluRayDemuxSourcePath))
+        {
+            return null;
+        }
+
+        return $"{backend.Value}|{ResolveBluRayDiscPathForCache()}|{playlist.Id}";
+    }
+
+    private string ResolveBluRayDiscPathForCache()
+    {
+        try
+        {
+            return NormalizeBluRayDiscRoot(BluRayDemuxSourcePath, requireExists: false);
+        }
+        catch
+        {
+            return Path.GetFullPath(BluRayDemuxSourcePath.Trim());
+        }
+    }
+
+    private void RefreshBluRayDemuxCommandPreview()
+    {
+        if (_isBluRayDemuxRunning)
+        {
+            return;
+        }
+
+        BluRayDemuxCommandLine = TryCreateBluRayDemuxRequest(requireSourceExists: false, out var request, out _)
+            ? _bluRayDemuxRunner.BuildDisplayCommand(request!)
+            : string.Empty;
+    }
+
+    private bool TryCreateBluRayDemuxRequest(bool requireSourceExists, out BluRayDemuxRequest? request, out string? error)
+    {
+        try
+        {
+            request = CreateBluRayDemuxRequest(requireSourceExists);
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            request = null;
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private BluRayDemuxRequest CreateBluRayDemuxRequest(bool requireSourceExists)
+    {
+        if (SelectedBluRayDemuxBackend is null)
+        {
+            throw new InvalidOperationException(Texts.BluRayToolPreparing);
+        }
+
+        if (string.IsNullOrWhiteSpace(BluRayDemuxSourcePath))
+        {
+            throw new InvalidOperationException(Texts.BluRayDiscSourceMissingError);
+        }
+
+        if (string.IsNullOrWhiteSpace(BluRayDemuxOutputPath))
+        {
+            throw new InvalidOperationException(Texts.BluRayOutputDirectoryMissingError);
+        }
+
+        if (SelectedBluRayPlaylist is null)
+        {
+            throw new InvalidOperationException(Texts.BluRayPlaylistMissingError);
+        }
+
+        var normalizedDiscRoot = NormalizeBluRayDiscRoot(BluRayDemuxSourcePath, requireSourceExists);
+        var normalizedOutputDirectory = Path.GetFullPath(BluRayDemuxOutputPath.Trim());
+        if (File.Exists(normalizedOutputDirectory))
+        {
+            throw new InvalidOperationException(Texts.BluRayOutputDirectoryInvalidError);
+        }
+
+        if (GetSelectedBluRayToolState() != ReadinessState.Ready)
+        {
+            throw new InvalidOperationException(Texts.BluRayToolMissingError(Texts.BluRayBackendLabel(SelectedBluRayDemuxBackend.Value)));
+        }
+
+        var selections = BluRayTracks
+            .Where(static track => track.IsSelected)
+            .Select(track => new BluRayTrackSelection(track.Track, ResolveBluRayTrackOutputPath(SelectedBluRayDemuxBackend.Value, normalizedOutputDirectory, SelectedBluRayPlaylist, track.Track)))
+            .ToList();
+
+        if (selections.Count == 0)
+        {
+            throw new InvalidOperationException(Texts.BluRayTrackSelectionMissingError);
+        }
+
+        return new BluRayDemuxRequest(Guid.NewGuid(), SelectedBluRayDemuxBackend.Value, normalizedDiscRoot, normalizedOutputDirectory, Path.Combine(normalizedOutputDirectory, SelectedBluRayPlaylist.Id), SelectedBluRayPlaylist, selections);
+    }
+
+    private string NormalizeBluRayDiscRoot(string rawPath, bool requireExists)
+    {
+        var normalized = Path.GetFullPath(rawPath.Trim());
+        if (requireExists && !Directory.Exists(normalized))
+        {
+            throw new DirectoryNotFoundException(Texts.BluRayDiscSourceMissingError);
+        }
+
+        if (Directory.Exists(Path.Combine(normalized, "BDMV", "PLAYLIST")))
+        {
+            return normalized;
+        }
+
+        if (Path.GetFileName(normalized).Equals("BDMV", StringComparison.OrdinalIgnoreCase) && Directory.Exists(Path.Combine(normalized, "PLAYLIST")))
+        {
+            return Directory.GetParent(normalized)?.FullName ?? throw new InvalidOperationException(Texts.BluRayDiscStructureInvalidError);
+        }
+
+        if (Path.GetFileName(normalized).Equals("PLAYLIST", StringComparison.OrdinalIgnoreCase))
+        {
+            var bdmvDirectory = Directory.GetParent(normalized);
+            if (bdmvDirectory is not null && bdmvDirectory.Name.Equals("BDMV", StringComparison.OrdinalIgnoreCase) && bdmvDirectory.Parent is not null)
+            {
+                return bdmvDirectory.Parent.FullName;
+            }
+        }
+
+        throw new InvalidOperationException(Texts.BluRayDiscStructureInvalidError);
+    }
+
+    private void TryPopulateBluRayOutputPathIfEmpty()
+    {
+        if (string.IsNullOrWhiteSpace(BluRayDemuxSourcePath))
+        {
+            return;
+        }
+
+        try
+        {
+            var discRoot = NormalizeBluRayDiscRoot(BluRayDemuxSourcePath, requireExists: false);
+            var discDirectory = Directory.GetParent(discRoot)?.FullName ?? discRoot;
+            var suggestedPath = Path.Combine(discDirectory, $"{Path.GetFileName(discRoot)}_demux");
+            if (!string.IsNullOrWhiteSpace(BluRayDemuxOutputPath) && !string.Equals(BluRayDemuxOutputPath, _lastBluRayOutputPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _isUpdatingBluRayOutputPath = true;
+            try
+            {
+                BluRayDemuxOutputPath = suggestedPath;
+                _lastBluRayOutputPath = suggestedPath;
+            }
+            finally
+            {
+                _isUpdatingBluRayOutputPath = false;
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private string? TryResolveBluRayOutputPreviewPath()
+    {
+        if (string.IsNullOrWhiteSpace(BluRayDemuxOutputPath))
+        {
+            return null;
+        }
+
+        return SelectedBluRayPlaylist is null
+            ? Path.GetFullPath(BluRayDemuxOutputPath.Trim())
+            : Path.Combine(Path.GetFullPath(BluRayDemuxOutputPath.Trim()), $"{SelectedBluRayPlaylist.Id}.*");
+    }
+
+    private void RefreshBluRayTrackOutputPreviews()
+    {
+        var backend = SelectedBluRayDemuxBackend?.Value;
+        var playlist = SelectedBluRayPlaylist;
+        var hasOutputPath = !string.IsNullOrWhiteSpace(BluRayDemuxOutputPath);
+
+        foreach (var track in BluRayTracks)
+        {
+            track.OutputPreview = backend.HasValue && playlist is not null && hasOutputPath
+                ? ResolveBluRayTrackOutputPath(backend.Value, Path.GetFullPath(BluRayDemuxOutputPath.Trim()), playlist, track.Track)
+                : string.Empty;
+        }
+
+        OnPropertyChanged(nameof(BluRayDemuxOutputPreviewText));
+    }
+
+    private static string ResolveBluRayTrackOutputPath(BluRayDemuxBackend backend, string outputDirectory, BluRayPlaylistItem playlist, BluRayTrackItem track)
+    {
+        if (backend == BluRayDemuxBackend.DgDemux)
+        {
+            return Path.Combine(outputDirectory, $"{playlist.Id}.*");
+        }
+
+        var baseName = $"{playlist.Id}_T{track.Order:00}_{GetTrackKindToken(track.Kind)}";
+        if (!string.IsNullOrWhiteSpace(track.Language))
+        {
+            baseName = $"{baseName}_{SanitizeFileToken(track.Language)}";
+        }
+
+        return track.Kind == BluRayTrackKind.Chapters ? Path.Combine(outputDirectory, $"{baseName}.txt") : Path.Combine(outputDirectory, $"{baseName}.*");
+    }
+
+    private static string GetTrackKindToken(BluRayTrackKind kind) => kind switch
+    {
+        BluRayTrackKind.Chapters => "chapters",
+        BluRayTrackKind.Video => "video",
+        BluRayTrackKind.Audio => "audio",
+        BluRayTrackKind.Subtitle => "subtitle",
+        _ => "track"
+    };
+
+    private static string SanitizeFileToken(string value)
+    {
+        var invalidCharacters = Path.GetInvalidFileNameChars();
+        var builder = new StringBuilder(value.Length);
+        foreach (var character in value.Trim())
+        {
+            if (!invalidCharacters.Contains(character))
+            {
+                builder.Append(char.IsWhiteSpace(character) ? '_' : char.ToLowerInvariant(character));
+            }
+        }
+
+        return builder.Length == 0 ? "track" : builder.ToString();
+    }
+
+    private ToolProbeResult? GetSelectedBluRayToolProbeResult()
+    {
+        var toolKind = SelectedBluRayDemuxBackend?.Value switch
+        {
+            BluRayDemuxBackend.DgDemux => RegisteredToolKind.DgDemux,
+            BluRayDemuxBackend.Eac3To => RegisteredToolKind.Eac3To,
+            _ => (RegisteredToolKind?)null
+        };
+
+        if (!toolKind.HasValue)
+        {
+            return null;
+        }
+
+        return _environmentReadinessReport?.Tools.FirstOrDefault(result => result.Kind == toolKind.Value)
+            ?? BuildCachedBluRayToolProbeResult(toolKind.Value);
+    }
+
+    private ReadinessState GetSelectedBluRayToolState() => GetSelectedBluRayToolProbeResult()?.State ?? ReadinessState.Unknown;
+
+    private ToolProbeResult? BuildCachedBluRayToolProbeResult(RegisteredToolKind kind)
+    {
+        if (_setupGuideStatusReport is null)
+        {
+            return null;
+        }
+
+        var status = ResolveCachedBluRayToolStatus(kind);
+        return new ToolProbeResult(
+            kind,
+            status.State,
+            string.IsNullOrWhiteSpace(status.ExecutablePath) ? ToolDetectionSource.None : ToolDetectionSource.SpecialLocation,
+            string.Empty,
+            status.ExecutablePath,
+            status.InstalledVersion,
+            status.Detail,
+            status.ReleaseUrl);
+    }
+
+    private SetupDependencyStatus ResolveCachedBluRayToolStatus(RegisteredToolKind kind)
+    {
+        var dependencyKind = kind switch
+        {
+            RegisteredToolKind.DgDemux => SetupDependencyKind.DgDemux,
+            RegisteredToolKind.Eac3To => SetupDependencyKind.Eac3To,
+            _ => throw new InvalidOperationException($"Unsupported cached Blu-ray tool mapping: {kind}.")
+        };
+
+        return ResolveSetupStatus(dependencyKind);
+    }
+
+    private void ApplyBluRayDemuxProgress(BluRayDemuxProgress update)
+    {
+        if (update.JobId != _activeBluRayDemuxJobId)
+        {
+            return;
+        }
+
+        AppendBluRayDemuxLogLine(update.DetailLine);
+        if (update.ProgressFraction.HasValue)
+        {
+            BluRayDemuxProgressIsIndeterminate = false;
+            BluRayDemuxProgressPercent = update.ProgressFraction.Value * 100.0;
+        }
+        else if (update.State == EncodingJobState.Running)
+        {
+            BluRayDemuxProgressIsIndeterminate = true;
+        }
+
+        var summary = ResolveBluRayDemuxRunningSummary(update);
+        if (!string.IsNullOrWhiteSpace(summary))
+        {
+            BluRayDemuxStatusText = summary;
+            StatusText = summary;
+        }
+    }
+
+    private void AppendBluRayDemuxLogLine(string line)
+    {
+        var normalized = string.IsNullOrWhiteSpace(line) ? string.Empty : line.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        if (!string.Equals(_bluRayDemuxLastLogLine, normalized, StringComparison.Ordinal))
+        {
+            _bluRayDemuxLastLogLine = normalized;
+            OnPropertyChanged(nameof(BluRayDemuxProgressSecondaryText));
+            OnPropertyChanged(nameof(BluRayDemuxProgressSecondaryVisibility));
+        }
+
+        if (!UsesCompactBluRayDemuxLog(SelectedBluRayDemuxBackend?.Value))
+        {
+            _bluRayDemuxLogBuilder.AppendLine(normalized);
+            if (_bluRayDemuxLogBuilder.Length > BluRayDemuxLogLimit)
+            {
+                _bluRayDemuxLogBuilder.Remove(0, _bluRayDemuxLogBuilder.Length - BluRayDemuxLogLimit);
+            }
+
+            BluRayDemuxLog = _bluRayDemuxLogBuilder.ToString().Trim();
+            return;
+        }
+
+        ReplaceCompactBluRayDemuxLog(ResolveBluRayDemuxLogPhaseLabel(normalized), normalized);
+    }
+
+    private void ResetBluRayDemuxLogState()
+    {
+        _bluRayDemuxLogBuilder.Clear();
+        _bluRayDemuxLogStageLines.Clear();
+        _bluRayDemuxLastLogLine = string.Empty;
+        _bluRayDemuxLiveLogLine = string.Empty;
+        _bluRayDemuxLogPhaseMarker = string.Empty;
+        BluRayDemuxLog = string.Empty;
+        OnPropertyChanged(nameof(BluRayDemuxProgressSecondaryText));
+        OnPropertyChanged(nameof(BluRayDemuxProgressSecondaryVisibility));
+    }
+
+    private string ResolveBluRayDemuxRunningSummary(BluRayDemuxProgress update)
+    {
+        if (update.State != EncodingJobState.Running)
+        {
+            return update.Summary;
+        }
+
+        var backend = SelectedBluRayDemuxBackend?.Value ?? BluRayDemuxBackend.DgDemux;
+        if (backend == BluRayDemuxBackend.Eac3To
+            && TryParseEac3ToAnalyzeProgress(update.DetailLine, out var analyzePercent))
+        {
+            return Texts.BluRayDemuxAnalyzingStatus(Texts.BluRayBackendLabel(backend), analyzePercent);
+        }
+
+        return update.Summary;
+    }
+
+    private void ReplaceCompactBluRayDemuxLog(string? phaseLabel, string line)
+    {
+        var normalized = string.IsNullOrWhiteSpace(line) ? string.Empty : line.Trim();
+        var normalizedPhase = string.IsNullOrWhiteSpace(phaseLabel) ? string.Empty : phaseLabel.Trim();
+        if (!string.Equals(_bluRayDemuxLogPhaseMarker, normalizedPhase, StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(normalizedPhase))
+        {
+            _bluRayDemuxLogPhaseMarker = normalizedPhase;
+            AppendBluRayDemuxStageLogLine(normalizedPhase);
+        }
+
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            RefreshCompactBluRayDemuxLogText();
+            return;
+        }
+
+        if (IsCompactBluRayDemuxLiveLine(SelectedBluRayDemuxBackend?.Value, normalized))
+        {
+            if (!string.Equals(_bluRayDemuxLiveLogLine, normalized, StringComparison.Ordinal))
+            {
+                _bluRayDemuxLiveLogLine = normalized;
+                RefreshCompactBluRayDemuxLogText();
+            }
+
+            return;
+        }
+
+        _bluRayDemuxLiveLogLine = string.Empty;
+        AppendBluRayDemuxStageLogLine(normalized);
+    }
+
+    private void AppendBluRayDemuxStageLogLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return;
+        }
+
+        if (_bluRayDemuxLogStageLines.Count > 0
+            && string.Equals(_bluRayDemuxLogStageLines[^1], line, StringComparison.Ordinal))
+        {
+            RefreshCompactBluRayDemuxLogText();
+            return;
+        }
+
+        _bluRayDemuxLogStageLines.Add(line);
+        if (_bluRayDemuxLogStageLines.Count > BluRayDemuxStageLogLimit)
+        {
+            _bluRayDemuxLogStageLines.RemoveAt(0);
+        }
+
+        RefreshCompactBluRayDemuxLogText();
+    }
+
+    private void RefreshCompactBluRayDemuxLogText()
+    {
+        var lines = new List<string>(_bluRayDemuxLogStageLines);
+        if (!string.IsNullOrWhiteSpace(_bluRayDemuxLiveLogLine))
+        {
+            lines.Add(_bluRayDemuxLiveLogLine);
+        }
+
+        BluRayDemuxLog = string.Join(Environment.NewLine, lines);
+    }
+
+    private string ResolveBluRayDemuxLogPhaseLabel(string line)
+    {
+        return SelectedBluRayDemuxBackend?.Value switch
+        {
+            BluRayDemuxBackend.Eac3To when IsEac3ToAnalyzeLine(line) => Texts.BluRayDemuxAnalyzePhaseLabel,
+            BluRayDemuxBackend.Eac3To when IsEac3ToProcessLine(line) => Texts.BluRayDemuxProcessPhaseLabel,
+            _ => string.Empty
+        };
+    }
+
+    private static bool UsesCompactBluRayDemuxLog(BluRayDemuxBackend? backend)
+    {
+        return backend is BluRayDemuxBackend.DgDemux or BluRayDemuxBackend.Eac3To;
+    }
+
+    private static bool IsCompactBluRayDemuxLiveLine(BluRayDemuxBackend? backend, string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        return backend switch
+        {
+            BluRayDemuxBackend.DgDemux => LooksLikeDgDemuxProgressLine(line),
+            BluRayDemuxBackend.Eac3To => IsEac3ToAnalyzeLine(line) || IsEac3ToProcessLine(line),
+            _ => false
+        };
+    }
+
+    private static bool LooksLikeDgDemuxProgressLine(string line)
+    {
+        var trimmed = line.Trim();
+        if (!trimmed.EndsWith('%'))
+        {
+            return false;
+        }
+
+        var numericPart = trimmed[..^1].Trim();
+        if (string.IsNullOrWhiteSpace(numericPart))
+        {
+            return false;
+        }
+
+        foreach (var character in numericPart)
+        {
+            if (!char.IsDigit(character) && character != '.')
+            {
+                return false;
+            }
+        }
+
+        return double.TryParse(numericPart, NumberStyles.Float, CultureInfo.InvariantCulture, out var percent)
+            && percent >= 0
+            && percent <= 100;
+    }
+
+    private static bool IsEac3ToAnalyzeLine(string line)
+    {
+        return line.StartsWith("analyze:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsEac3ToProcessLine(string line)
+    {
+        return line.StartsWith("process:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParseEac3ToAnalyzeProgress(string line, out double percent)
+    {
+        percent = 0;
+        if (!IsEac3ToAnalyzeLine(line))
+        {
+            return false;
+        }
+
+        var separatorIndex = line.IndexOf(':');
+        var percentIndex = line.LastIndexOf('%');
+        if (separatorIndex < 0 || percentIndex <= separatorIndex)
+        {
+            return false;
+        }
+
+        var numericText = line[(separatorIndex + 1)..percentIndex].Trim();
+        return double.TryParse(numericText, NumberStyles.Float, CultureInfo.InvariantCulture, out percent);
+    }
+
+    private void SetBluRayDiscScanningState(bool value)
+    {
+        if (_isBluRayDiscScanning == value)
+        {
+            return;
+        }
+
+        _isBluRayDiscScanning = value;
+        OnPropertyChanged(nameof(IsBluRayDiscScanning));
+        RaiseBluRayDemuxInputPropertyChanges();
+    }
+
+    private void SetBluRayPlaylistLoadingState(bool value)
+    {
+        if (_isBluRayPlaylistLoading == value)
+        {
+            return;
+        }
+
+        _isBluRayPlaylistLoading = value;
+        OnPropertyChanged(nameof(IsBluRayPlaylistLoading));
+        RaiseBluRayDemuxInputPropertyChanges();
+    }
+
+    private void SetBluRayDemuxRunningState(bool isRunning, Guid? jobId)
+    {
+        if (_isBluRayDemuxRunning == isRunning && _activeBluRayDemuxJobId == jobId)
+        {
+            return;
+        }
+
+        _isBluRayDemuxRunning = isRunning;
+        _activeBluRayDemuxJobId = jobId;
+        OnPropertyChanged(nameof(IsBluRayDemuxRunning));
+        RaiseBluRayDemuxInputPropertyChanges();
+    }
+
+    private void SetBluRayDemuxDisplayState(EncodingJobState? state)
+    {
+        if (_bluRayDemuxDisplayState == state)
+        {
+            return;
+        }
+
+        _bluRayDemuxDisplayState = state;
+        OnPropertyChanged(nameof(BluRayDemuxStatusPanelBorderBrush));
+        OnPropertyChanged(nameof(BluRayDemuxProgressTrackBrush));
+        OnPropertyChanged(nameof(BluRayDemuxProgressBorderBrush));
+        OnPropertyChanged(nameof(BluRayDemuxProgressFillBrush));
+    }
+
+    private void ClampBluRayDemuxProgressForTerminalState(EncodingJobState state)
+    {
+        BluRayDemuxProgressIsIndeterminate = false;
+        BluRayDemuxProgressPercent = state == EncodingJobState.Completed ? 100 : Math.Min(BluRayDemuxProgressPercent, 99.9);
+    }
+
+    private void DisposeBluRayProbeCancellation()
+    {
+        _bluRayProbeCancellationTokenSource?.Cancel();
+        _bluRayProbeCancellationTokenSource?.Dispose();
+        _bluRayProbeCancellationTokenSource = null;
+    }
+
+    private void DisposeBluRayDemuxCancellation()
+    {
+        _bluRayDemuxCancellationTokenSource?.Dispose();
+        _bluRayDemuxCancellationTokenSource = null;
+    }
+
+    private void RaiseBluRayDemuxInputPropertyChanges()
+    {
+        OnPropertyChanged(nameof(CanScanBluRayDisc));
+        OnPropertyChanged(nameof(CanStartBluRayDemux));
+        OnPropertyChanged(nameof(CanCancelBluRayDemux));
+        OnPropertyChanged(nameof(CanClearBluRayDemuxTask));
+        OnPropertyChanged(nameof(BluRayDiscSummaryText));
+        OnPropertyChanged(nameof(BluRayPlaylistSummaryText));
+        OnPropertyChanged(nameof(BluRaySelectedTrackSummary));
+        OnPropertyChanged(nameof(BluRayDemuxOutputPreviewText));
+    }
+
+    private void RaiseBluRayDemuxEnvironmentPropertyChanges()
+    {
+        OnPropertyChanged(nameof(CanScanBluRayDisc));
+        OnPropertyChanged(nameof(CanStartBluRayDemux));
+        OnPropertyChanged(nameof(BluRayToolSummary));
+        OnPropertyChanged(nameof(BluRayDemuxBackendNote));
+    }
+
+    private static Brush ResolveBluRayDemuxProgressTrackBrush(EncodingJobState? state) => state switch
+    {
+        EncodingJobState.Failed => ResolveBrush("AppErrorSoftBrush"),
+        EncodingJobState.Cancelled => ResolveBrush("AppNeutralSoftBrush"),
+        _ => ResolveBrush("QueueProgressSoftBrush")
+    };
+
+    private static Brush ResolveBluRayDemuxProgressBorderBrush(EncodingJobState? state) => state switch
+    {
+        EncodingJobState.Failed => ResolveBrush("AppErrorBrush"),
+        EncodingJobState.Cancelled => ResolveBrush("AppNeutralBrush"),
+        _ => ResolveBrush("QueueProgressFillBrush")
+    };
+
+    private static Brush ResolveBluRayDemuxProgressFillBrush(EncodingJobState? state) => state switch
+    {
+        EncodingJobState.Failed => ResolveBrush("AppErrorBrush"),
+        EncodingJobState.Cancelled => ResolveBrush("AppNeutralBrush"),
+        _ => ResolveBrush("QueueProgressAreaBrush")
+    };
+
+    private sealed record BluRayPlaylistCacheEntry(
+        string Summary,
+        IReadOnlyList<BluRayTrackItemViewModel> TrackItems);
+}

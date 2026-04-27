@@ -1,0 +1,127 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <WindowsPackageType>None</WindowsPackageType>
+    <OutputType>WinExe</OutputType>
+    <Version>1.6.1</Version>
+    <AssemblyVersion>1.6.1.0</AssemblyVersion>
+    <FileVersion>1.6.1.0</FileVersion>
+    <InformationalVersion>1.6.1</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <TargetFramework>net8.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>FlowEncode</RootNamespace>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <SatelliteResourceLanguages Condition="'$(SatelliteResourceLanguages)' == ''">en-US;zh-CN</SatelliteResourceLanguages>
+    <PublishProfile>win-$(Platform).pubxml</PublishProfile>
+    <UseWinUI>true</UseWinUI>
+    <WinUISDKReferences>false</WinUISDKReferences>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="Assets\AppIcon.ico" />
+    <Content Include="Assets\SetupIcon.ico" />
+    <Content Include="Assets\FlowEncodeHammer.png" />
+    <Content Include="Assets\LockScreenLogo*.png" />
+    <Content Include="Assets\SplashScreen*.png" />
+    <Content Include="Assets\Square150x150Logo*.png" />
+    <Content Include="Assets\Square44x44Logo*.png" />
+    <Content Include="Assets\StoreLogo.png" />
+    <Content Include="Assets\Wide310x150Logo*.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Remove="Assets\VapourSynthEditor\**\*" />
+    <None Remove="Assets\VapourSynthEditor\**\*" />
+    <None Include="Assets\VapourSynthEditor\**\*"
+          Exclude="Assets\VapourSynthEditor\**\__pycache__\**\*;Assets\VapourSynthEditor\**\*.pyc;Assets\VapourSynthEditor\**\*.pyo">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Content Update="Assets\FlowEncodeHammer.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Update="Assets\AppIcon.ico;Assets\SetupIcon.ico;Assets\LockScreenLogo*.png;Assets\SplashScreen*.png;Assets\Square150x150Logo*.png;Assets\Square44x44Logo*.png;Assets\StoreLogo.png;Assets\Wide310x150Logo*.png">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="FlowEncode.Domain\**\*.cs" />
+    <Compile Remove="FlowEncode.Application\**\*.cs" />
+    <Compile Remove="FlowEncode.Infrastructure\**\*.cs" />
+    <Compile Remove="FlowEncode.Domain.Tests\**\*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+  <!--
+    Defining the "Msix" ProjectCapability here allows the Single-project MSIX Packaging
+    Tools extension to be activated for this project even if the Windows App SDK Nuget
+    package has not yet been restored.
+  -->
+  <ItemGroup Condition="'$(DisableMsixProjectCapabilityAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
+    <ProjectCapability Include="Msix" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.6" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.1721" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="FlowEncode.Application\FlowEncode.Application.csproj" />
+    <ProjectReference Include="FlowEncode.Infrastructure\FlowEncode.Infrastructure.csproj" />
+  </ItemGroup>
+  <!--
+    Defining the "HasPackageAndPublishMenuAddedByProject" property here allows the Solution
+    Explorer "Package and Publish" context menu entry to be enabled for this project even if
+    the Windows App SDK Nuget package has not yet been restored.
+  -->
+  <PropertyGroup Condition="'$(DisableHasPackageAndPublishMenuAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
+    <HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>
+  </PropertyGroup>
+  <!-- Publish Properties -->
+  <PropertyGroup>
+    <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
+    <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
+    <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">False</PublishTrimmed>
+    <PublishTrimmed Condition="'$(Configuration)' != 'Debug'">False</PublishTrimmed>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)' == ''">
+    <Platform>x64</Platform>
+  </PropertyGroup>
+  <Target Name="ForceFrameworkXamlCompiler" BeforeTargets="MarkupCompilePass1;MarkupCompilePass2" Condition="'$(MSBuildRuntimeType)' != 'Core'">
+    <PropertyGroup>
+      <UseXamlCompilerExecutable>false</UseXamlCompilerExecutable>
+    </PropertyGroup>
+  </Target>
+  <Target Name="GuardDotnetWinUIBuild" BeforeTargets="MarkupCompilePass1;MarkupCompilePass2" Condition="'$(MSBuildRuntimeType)' == 'Core' and '$(AllowCoreWinUIBuild)' != 'true'">
+    <Error Text="Use Visual Studio 2026 MSBuild.exe for this WinUI project. dotnet build currently triggers Windows App SDK XAML compiler failures on this machine." />
+  </Target>
+  <Target Name="ExcludeVapourSynthEditorAssetsFromPri"
+          AfterTargets="GetPriOutputs"
+          BeforeTargets="_GenerateProjectPriConfigurationFiles">
+    <ItemGroup>
+      <_VapourSynthEditorPriOutputs Include="@(PriOutputs)"
+                                    Condition="$([System.String]::Copy('%(PriOutputs.TargetPath)').Replace('/','\\').StartsWith('Assets\\VapourSynthEditor\\')) or $([System.String]::Copy('%(PriOutputs.Identity)').Replace('/','\\').Contains('\\Assets\\VapourSynthEditor\\'))" />
+      <PriOutputs Remove="@(_VapourSynthEditorPriOutputs)" />
+    </ItemGroup>
+  </Target>
+  <Target Name="CleanPublishedRuntimeArtifacts" AfterTargets="Publish">
+    <ItemGroup>
+      <PublishedRuntimeArtifacts Include="$(PublishDir)data" />
+      <PublishedRuntimeArtifacts Include="$(PublishDir)downloads" />
+      <PublishedRuntimeArtifacts Include="$(PublishDir)encoders" />
+      <PublishedRuntimeArtifacts Include="$(PublishDir)tools" />
+      <PublishedRuntimeArtifacts Include="$(PublishDir)toolset" />
+    </ItemGroup>
+    <RemoveDir Directories="@(PublishedRuntimeArtifacts)" />
+  </Target>
+</Project>

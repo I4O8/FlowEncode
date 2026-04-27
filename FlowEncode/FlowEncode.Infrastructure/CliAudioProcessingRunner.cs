@@ -1,0 +1,1570 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
+using FlowEncode.Application;
+using FlowEncode.Domain;
+using Microsoft.Win32.SafeHandles;
+
+namespace FlowEncode.Infrastructure;
+
+public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
+{
+    private static readonly Regex AnsiEscapeRegex = new(@"\x1B\[[0-?]*[ -/]*[@-~]", RegexOptions.Compiled);
+    private static readonly Regex DeewStageProgressRegex = new(@"Stage progress:\s*(?<value>\d{1,3}(?:\.\d+)?)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex DeewDisplayProgressRegex = new(@"\[\s*(?<stage>DEE:[^\]]+)\]\s*[- ]*(?<value>\d{1,3}(?:\.\d+)?)\s*%", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex Eac3ToProcessProgressRegex = new(@"^\s*process:\s*(?<value>\d{1,3}(?:\.\d+)?)\s*%", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex OpusEncDisplayProgressRegex = new(@"^\[[\|/\\\- ]\]\s+\d{2}:\d{2}:\d{2}\.\d{2}\b", RegexOptions.Compiled);
+    private static readonly Regex Eac3ToAdditionalPassNeededRegex = new(@"(?<pass>\d+)(?:st|nd|rd|th)\s+pass\s+will\s+be\s+necessary", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex Eac3ToStartingPassRegex = new(@"Starting\s+(?<pass>\d+)(?:st|nd|rd|th)\s+pass", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex FfmpegOutTimeRegex = new(@"^\s*out_time=(?<value>\d{1,}:\d{2}:\d{2}\.\d+)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex FfmpegOutTimeMsRegex = new(@"^\s*out_time_ms=(?<value>\d+)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex FfmpegOutTimeUsRegex = new(@"^\s*out_time_us=(?<value>\d+)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex FfmpegSpeedRegex = new(@"^\s*speed=(?<value>\d{1,3}(?:\.\d+)?)x\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly TimeSpan ProgressReportInterval = TimeSpan.FromMilliseconds(750);
+    private static readonly TimeSpan ProgressFilePollInterval = TimeSpan.FromMilliseconds(200);
+    private const double SignificantProgressDelta = 0.01;
+    private const string DeewWarmupDisplayLine = "ffmpeg 处理中，请稍后...";
+
+    private readonly IToolProbeService _toolProbeService;
+    private readonly ConcurrentDictionary<Guid, ActiveExecution> _activeExecutions = new();
+
+    public CliAudioProcessingRunner(IToolProbeService toolProbeService)
+    {
+        _toolProbeService = toolProbeService;
+    }
+
+    public string BuildDisplayCommand(AudioProcessingRequest request)
+    {
+        return request.Mode switch
+        {
+            AudioProcessingMode.Eac3To => $"eac3to.exe {BuildEac3ToArguments(request)}",
+            AudioProcessingMode.Ddp => $"deew.exe -i {Quote(request.SourcePath)} -o {Quote(request.OutputPath)}",
+            AudioProcessingMode.Opus => BuildOpusCommand(request, "ffmpeg.exe", "opusenc.exe"),
+            _ => throw new ArgumentOutOfRangeException(nameof(request), request.Mode, null)
+        };
+    }
+
+    public void Abort(Guid jobId)
+    {
+        if (_activeExecutions.TryGetValue(jobId, out var execution))
+        {
+            execution.Terminate();
+        }
+    }
+
+    public async Task<AudioProcessingResult> RunAsync(
+        AudioProcessingRequest request,
+        IProgress<AudioProcessingProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!File.Exists(request.SourcePath))
+        {
+            throw new FileNotFoundException("未找到音频输入文件。", request.SourcePath);
+        }
+
+        return request.Mode switch
+        {
+            AudioProcessingMode.Eac3To => await RunEac3ToAsync(request, progress, cancellationToken),
+            AudioProcessingMode.Ddp => await RunDdpAsync(request, progress, cancellationToken),
+            AudioProcessingMode.Opus => await RunOpusAsync(request, progress, cancellationToken),
+            _ => throw new ArgumentOutOfRangeException(nameof(request), request.Mode, null)
+        };
+    }
+
+    private async Task<AudioProcessingResult> RunEac3ToAsync(
+        AudioProcessingRequest request,
+        IProgress<AudioProcessingProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var eac3toPath = await ResolveToolPathAsync(RegisteredToolKind.Eac3To, cancellationToken);
+        var arguments = BuildEac3ToArguments(request);
+        var command = $"{Quote(eac3toPath)} {arguments}";
+
+        return await RunProcessAsync(
+            request,
+            progress,
+            command,
+            new ProcessStartInfo
+            {
+                FileName = eac3toPath,
+                Arguments = arguments,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
+                CreateNoWindow = true
+            },
+            cancellationToken);
+    }
+
+    private async Task<AudioProcessingResult> RunDdpAsync(
+        AudioProcessingRequest request,
+        IProgress<AudioProcessingProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var deewPath = await ResolveToolPathAsync(RegisteredToolKind.Deew, cancellationToken);
+        var deePath = await ResolveToolPathAsync(RegisteredToolKind.Dee, cancellationToken);
+        var ffmpegPath = await ResolveToolPathAsync(RegisteredToolKind.Ffmpeg, cancellationToken);
+        var ffprobePath = await ResolveToolPathAsync(RegisteredToolKind.Ffprobe, cancellationToken);
+
+        var outputDirectory = string.IsNullOrWhiteSpace(request.OutputPath)
+            ? Environment.CurrentDirectory
+            : request.OutputPath;
+        Directory.CreateDirectory(outputDirectory);
+
+        var command = $"{Quote(deewPath)} -i {Quote(request.SourcePath)} -o {Quote(outputDirectory)}";
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = deewPath,
+            Arguments = $"-i {Quote(request.SourcePath)} -o {Quote(outputDirectory)}",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            CreateNoWindow = true
+        };
+
+        PrepareDeewEnvironment(startInfo, deewPath, deePath, ffmpegPath, ffprobePath);
+        return await RunProcessAsync(request, progress, command, startInfo, cancellationToken);
+    }
+
+    private async Task<AudioProcessingResult> RunOpusAsync(
+        AudioProcessingRequest request,
+        IProgress<AudioProcessingProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var ffmpegPath = await ResolveToolPathAsync(RegisteredToolKind.Ffmpeg, cancellationToken);
+        var progressFilePath = Path.Combine(
+            Path.GetTempPath(),
+            $"flowencode_opus_progress_{request.JobId:N}.log");
+
+        try
+        {
+            if (request.UseOpusMappingFamily1)
+            {
+                var displayArguments = BuildFfmpegLibOpusArguments(request);
+                var runArguments = BuildFfmpegLibOpusArguments(request, progressFilePath);
+                var command = $"{Quote(ffmpegPath)} {displayArguments}";
+
+                return await RunProcessAsync(
+                    request,
+                    progress,
+                    command,
+                    new ProcessStartInfo
+                    {
+                        FileName = ffmpegPath,
+                        Arguments = runArguments,
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        StandardOutputEncoding = Encoding.UTF8,
+                        StandardErrorEncoding = Encoding.UTF8,
+                        CreateNoWindow = true
+                    },
+                    cancellationToken,
+                    progressFilePath);
+            }
+
+            var opusEncoderPath = await ResolveToolPathAsync(RegisteredToolKind.OpusExt, cancellationToken);
+
+            var displayCommand = BuildOpusPipelineCommand(request, ffmpegPath, opusEncoderPath);
+            var runCommand = BuildOpusPipelineCommand(request, ffmpegPath, opusEncoderPath, progressFilePath);
+            var scriptPath = Path.Combine(
+                Path.GetTempPath(),
+                $"flowencode_opus_{request.JobId:N}.cmd");
+
+            await File.WriteAllTextAsync(
+                scriptPath,
+                $"@echo off{Environment.NewLine}{runCommand}{Environment.NewLine}",
+                Encoding.ASCII,
+                cancellationToken);
+
+            try
+            {
+                return await RunProcessAsync(
+                    request,
+                    progress,
+                    displayCommand,
+                    new ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = $"/d /c {Quote(scriptPath)}",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        StandardOutputEncoding = Encoding.UTF8,
+                        StandardErrorEncoding = Encoding.UTF8,
+                        CreateNoWindow = true
+                    },
+                    cancellationToken,
+                    progressFilePath);
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(scriptPath))
+                    {
+                        File.Delete(scriptPath);
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(progressFilePath))
+                {
+                    File.Delete(progressFilePath);
+                }
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private async Task<AudioProcessingResult> RunProcessAsync(
+        AudioProcessingRequest request,
+        IProgress<AudioProcessingProgress>? progress,
+        string displayCommand,
+        ProcessStartInfo startInfo,
+        CancellationToken cancellationToken,
+        string? supplementalProgressFilePath = null)
+    {
+        var outputDirectory = Path.GetDirectoryName(request.OutputPath);
+        if (!string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            Directory.CreateDirectory(outputDirectory);
+        }
+
+        var logBuilder = new StringBuilder();
+        var gate = new object();
+        var lastProgress = 0.0;
+        var hasKnownProgress = false;
+        var lastReportAt = DateTimeOffset.MinValue;
+        var lastReportedProgress = 0.0;
+        var hasReportedProgress = false;
+        var lastReportedLine = string.Empty;
+        var lastReportedDetailLine = string.Empty;
+        AudioProcessingTelemetry? lastReportedTelemetry = null;
+        var lastReportedPhaseLabel = string.Empty;
+        var lastLoggedLine = string.Empty;
+        var eac3ToProgressState = request.Mode == AudioProcessingMode.Eac3To
+            ? new Eac3ToProgressState()
+            : null;
+        var opusTelemetryState = request.Mode == AudioProcessingMode.Opus
+            ? new OpusTelemetryState(request.SourceDurationSeconds, request.OpusBitrateKbps, request.OutputPath)
+            : null;
+
+        void HandleLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                return;
+            }
+
+            AudioProcessingProgress? update = null;
+
+            lock (gate)
+            {
+                var now = DateTimeOffset.UtcNow;
+                var rawLine = line;
+                eac3ToProgressState?.Update(line);
+                opusTelemetryState?.Update(line);
+                var parsedProgress = ParseProgress(request, line);
+                if (parsedProgress.HasValue)
+                {
+                    if (eac3ToProgressState is not null)
+                    {
+                        parsedProgress = eac3ToProgressState.Normalize(parsedProgress.Value);
+                    }
+
+                    hasKnownProgress = true;
+                    var normalizedRunningProgress = NormalizeRunningProgress(parsedProgress.Value);
+                    lastProgress = request.Mode == AudioProcessingMode.Eac3To
+                        && eac3ToProgressState is not null
+                        && eac3ToProgressState.TotalPasses > 1
+                        ? Math.Clamp(normalizedRunningProgress, 0.0, 1.0)
+                        : Math.Clamp(Math.Max(lastProgress, normalizedRunningProgress), 0.0, 1.0);
+                }
+
+                var phaseLabel = eac3ToProgressState?.PhaseLabel ?? string.Empty;
+                var telemetry = opusTelemetryState?.Build(hasKnownProgress ? lastProgress : null);
+                var detailLine = NormalizeDetailLine(request, rawLine, parsedProgress);
+                line = NormalizeDisplayLine(request, rawLine, parsedProgress);
+                var telemetryChanged = !EqualityComparer<AudioProcessingTelemetry?>.Default.Equals(telemetry, lastReportedTelemetry);
+                var phaseChanged = !string.Equals(phaseLabel, lastReportedPhaseLabel, StringComparison.Ordinal);
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    if (request.Mode == AudioProcessingMode.Opus
+                        && telemetryChanged
+                        && now - lastReportAt >= ProgressReportInterval)
+                    {
+                        lastReportAt = now;
+                        if (hasKnownProgress)
+                        {
+                            hasReportedProgress = true;
+                            lastReportedProgress = lastProgress;
+                        }
+
+                        lastReportedTelemetry = telemetry;
+                        update = new AudioProcessingProgress(
+                            request.JobId,
+                            EncodingJobState.Running,
+                            hasKnownProgress ? lastProgress : null,
+                            BuildRunningSummary(request.Mode, lastProgress, hasKnownProgress, lastReportedLine, phaseLabel),
+                            lastReportedDetailLine,
+                            telemetry,
+                            phaseLabel);
+                    }
+                    else if (request.Mode == AudioProcessingMode.Eac3To
+                        && phaseChanged
+                        && now - lastReportAt >= ProgressReportInterval)
+                    {
+                        lastReportAt = now;
+                        if (hasKnownProgress)
+                        {
+                            hasReportedProgress = true;
+                            lastReportedProgress = lastProgress;
+                        }
+
+                        lastReportedPhaseLabel = phaseLabel;
+                        update = new AudioProcessingProgress(
+                            request.JobId,
+                            EncodingJobState.Running,
+                            hasKnownProgress ? lastProgress : null,
+                            BuildRunningSummary(request.Mode, lastProgress, hasKnownProgress, lastReportedLine, phaseLabel),
+                            lastReportedDetailLine,
+                            null,
+                            phaseLabel);
+                    }
+
+                    return;
+                }
+
+                var reachedReportWindow = now - lastReportAt >= ProgressReportInterval;
+                var progressAdvancedEnough = hasKnownProgress
+                    && (!hasReportedProgress || lastProgress - lastReportedProgress >= SignificantProgressDelta);
+                var lineChanged = !string.Equals(line, lastReportedLine, StringComparison.Ordinal);
+                var detailLineChanged = !string.Equals(detailLine, lastReportedDetailLine, StringComparison.Ordinal);
+                var immediateCliLine = ShouldReportImmediateCliLine(request.Mode, detailLine, detailLineChanged);
+                var shouldReport = request.Mode == AudioProcessingMode.Ddp
+                    ? ShouldReportDdpLine(detailLine, parsedProgress, reachedReportWindow, progressAdvancedEnough, detailLineChanged)
+                    : immediateCliLine
+                        || ShouldReportGenericLine(reachedReportWindow, progressAdvancedEnough, lineChanged)
+                        || (request.Mode == AudioProcessingMode.Opus && reachedReportWindow && (telemetryChanged || parsedProgress.HasValue))
+                        || (request.Mode == AudioProcessingMode.Eac3To && phaseChanged && reachedReportWindow);
+
+                if (ShouldAppendLogLine(request.Mode, detailLine, parsedProgress, ref lastLoggedLine))
+                {
+                    logBuilder.AppendLine(detailLine);
+                }
+
+                if (!shouldReport)
+                {
+                    return;
+                }
+
+                lastReportAt = now;
+                if (hasKnownProgress)
+                {
+                    hasReportedProgress = true;
+                    lastReportedProgress = lastProgress;
+                }
+
+                lastReportedLine = line;
+                lastReportedDetailLine = detailLine;
+                lastReportedTelemetry = telemetry;
+                lastReportedPhaseLabel = phaseLabel;
+                update = new AudioProcessingProgress(
+                    request.JobId,
+                    EncodingJobState.Running,
+                    hasKnownProgress ? lastProgress : null,
+                    BuildRunningSummary(request.Mode, lastProgress, hasKnownProgress, line, phaseLabel),
+                    detailLine,
+                    telemetry,
+                    phaseLabel);
+            }
+
+            if (update is not null)
+            {
+                progress?.Report(update);
+            }
+        }
+
+        Process? process = null;
+        ActiveExecution? activeExecution = null;
+        Task pumpOutput = Task.CompletedTask;
+        Task pumpError = Task.CompletedTask;
+        Task pumpSupplementalProgress = Task.CompletedTask;
+
+        progress?.Report(new AudioProcessingProgress(
+            request.JobId,
+            EncodingJobState.Running,
+            null,
+            BuildStartingSummary(request.Mode),
+            BuildStartingDetail(request.Mode),
+            null,
+            eac3ToProgressState?.PhaseLabel));
+
+        try
+        {
+            process = new Process { StartInfo = startInfo };
+            process.Start();
+            activeExecution = new ActiveExecution(process);
+            _activeExecutions[request.JobId] = activeExecution;
+
+            using var cancellationRegistration = cancellationToken.Register(static state =>
+            {
+                if (state is ActiveExecution execution)
+                {
+                    execution.Terminate();
+                }
+            }, activeExecution);
+
+            pumpOutput = PumpAsync(process.StandardOutput, HandleLine, cancellationToken);
+            pumpError = PumpAsync(process.StandardError, HandleLine, cancellationToken);
+            if (request.Mode == AudioProcessingMode.Opus
+                && !string.IsNullOrWhiteSpace(supplementalProgressFilePath))
+            {
+                pumpSupplementalProgress = PumpProgressFileAsync(process, supplementalProgressFilePath, HandleLine);
+            }
+
+            await process.WaitForExitAsync(cancellationToken);
+            await Task.WhenAll(pumpOutput, pumpError, pumpSupplementalProgress);
+
+            _activeExecutions.TryRemove(request.JobId, out _);
+
+            var log = logBuilder.ToString();
+            if (process.ExitCode == 0)
+            {
+                progress?.Report(new AudioProcessingProgress(
+                    request.JobId,
+                    EncodingJobState.Completed,
+                    1.0,
+                    BuildCompletedSummary(request.Mode),
+                    LastMeaningfulLine(log),
+                    null,
+                    eac3ToProgressState?.PhaseLabel));
+
+                return new AudioProcessingResult(
+                    request.JobId,
+                    EncodingJobState.Completed,
+                    0,
+                    BuildCompletedSummary(request.Mode),
+                    log,
+                    displayCommand);
+            }
+
+            var failureSummary = $"{BuildFailureSummary(request.Mode)}，退出代码 {process.ExitCode}";
+            progress?.Report(new AudioProcessingProgress(
+                request.JobId,
+                EncodingJobState.Failed,
+                null,
+                failureSummary,
+                LastMeaningfulLine(log),
+                null,
+                eac3ToProgressState?.PhaseLabel));
+
+            return new AudioProcessingResult(
+                request.JobId,
+                EncodingJobState.Failed,
+                process.ExitCode,
+                failureSummary,
+                log,
+                displayCommand);
+        }
+        catch (OperationCanceledException)
+        {
+            activeExecution?.Terminate();
+
+            try
+            {
+                await Task.WhenAll(pumpOutput, pumpError, pumpSupplementalProgress);
+            }
+            catch
+            {
+            }
+
+            return new AudioProcessingResult(
+                request.JobId,
+                EncodingJobState.Cancelled,
+                -1,
+                BuildCancelledSummary(request.Mode),
+                logBuilder.ToString(),
+                displayCommand);
+        }
+        finally
+        {
+            _activeExecutions.TryRemove(request.JobId, out _);
+            activeExecution?.Dispose();
+        }
+    }
+
+    private static string BuildOpusCommand(AudioProcessingRequest request, string ffmpegExecutable, string opusEncoderExecutable)
+    {
+        return request.UseOpusMappingFamily1
+            ? $"{Quote(ffmpegExecutable)} {BuildFfmpegLibOpusArguments(request)}"
+            : BuildOpusPipelineCommand(request, ffmpegExecutable, opusEncoderExecutable);
+    }
+
+    private static string BuildOpusPipelineCommand(
+        AudioProcessingRequest request,
+        string ffmpegExecutable,
+        string opusEncoderExecutable,
+        string? progressTarget = null)
+    {
+        var bitrateKbps = GetRequiredOpusBitrateKbps(request);
+        var progressArguments = BuildFfmpegProgressArguments(progressTarget);
+        return $"{Quote(ffmpegExecutable)} -hide_banner -nostats {progressArguments} -i {Quote(request.SourcePath)} -map 0:a:0 -vn -sn -dn -c:a pcm_s16le -ar 48000 -f wav - | {Quote(opusEncoderExecutable)} --bitrate {bitrateKbps} - {Quote(request.OutputPath)}";
+    }
+
+    private static string BuildFfmpegLibOpusArguments(AudioProcessingRequest request, string? progressTarget = null)
+    {
+        var bitrateKbps = GetRequiredOpusBitrateKbps(request);
+        return string.Join(' ',
+        [
+            "-hide_banner",
+            "-y",
+            "-nostats",
+            .. BuildFfmpegProgressArgumentParts(progressTarget),
+            "-i", Quote(request.SourcePath),
+            "-map", "0:a:0",
+            "-vn",
+            "-sn",
+            "-dn",
+            "-c:a", "libopus",
+            "-b:a", $"{bitrateKbps}k",
+            "-vbr", "on",
+            "-application", "audio",
+            "-ar", "48000",
+            "-mapping_family", "1",
+            Quote(request.OutputPath)
+        ]);
+    }
+
+    private static string BuildFfmpegProgressArguments(string? progressTarget)
+    {
+        return string.Join(' ', BuildFfmpegProgressArgumentParts(progressTarget));
+    }
+
+    private static IReadOnlyList<string> BuildFfmpegProgressArgumentParts(string? progressTarget)
+    {
+        var target = string.IsNullOrWhiteSpace(progressTarget)
+            ? "pipe:2"
+            : Quote(progressTarget);
+
+        return
+        [
+            "-progress",
+            target,
+            "-stats_period",
+            "0.5"
+        ];
+    }
+
+    private static string BuildEac3ToArguments(AudioProcessingRequest request)
+    {
+        var parts = new List<string>
+        {
+            Quote(request.SourcePath),
+            Quote(request.OutputPath)
+        };
+
+        if (request.Eac3ToAdditionalArguments.Count > 0)
+        {
+            parts.AddRange(request.Eac3ToAdditionalArguments);
+        }
+
+        parts.Add("-progressnumbers");
+        return string.Join(' ', parts);
+    }
+
+    private static int GetRequiredOpusBitrateKbps(AudioProcessingRequest request)
+    {
+        return request.OpusBitrateKbps
+            ?? throw new InvalidOperationException("未指定 Opus 码率。");
+    }
+
+    private async Task<string> ResolveToolPathAsync(RegisteredToolKind kind, CancellationToken cancellationToken)
+    {
+        var result = await _toolProbeService.ProbeAsync(kind, cancellationToken);
+        if (result.IsReady && !string.IsNullOrWhiteSpace(result.ExecutablePath))
+        {
+            return result.ExecutablePath;
+        }
+
+        throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.FailureReason)
+            ? $"未找到可用的 {kind.ToDisplayName()}。"
+            : result.FailureReason);
+    }
+
+    private static void PrepareDeewEnvironment(
+        ProcessStartInfo startInfo,
+        string deewPath,
+        string deePath,
+        string ffmpegPath,
+        string ffprobePath)
+    {
+        startInfo.Environment["PYTHONUTF8"] = "1";
+        startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
+        startInfo.Environment["FORCE_COLOR"] = "1";
+        startInfo.Environment["NO_COLOR"] = "1";
+
+        var pathEntries = new[]
+        {
+            Path.GetDirectoryName(deewPath),
+            Path.GetDirectoryName(deePath),
+            Path.GetDirectoryName(ffmpegPath),
+            Path.GetDirectoryName(ffprobePath),
+            Environment.GetEnvironmentVariable("PATH")
+        }
+        .Where(static entry => !string.IsNullOrWhiteSpace(entry))
+        .Select(static entry => entry!)
+        .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, pathEntries);
+    }
+
+    private static double? ParseProgress(AudioProcessingRequest request, string line)
+    {
+        return request.Mode switch
+        {
+            AudioProcessingMode.Ddp => ParseDeewProgress(line),
+            AudioProcessingMode.Eac3To => ParseEac3ToProgress(line),
+            AudioProcessingMode.Opus => ParseOpusProgress(line, request.SourceDurationSeconds),
+            _ => null
+        };
+    }
+
+    private static double? ParseDeewProgress(string line)
+    {
+        var stageMatch = DeewStageProgressRegex.Match(line);
+        if (stageMatch.Success
+            && double.TryParse(stageMatch.Groups["value"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var stageValue))
+        {
+            return Math.Clamp(stageValue / 100.0, 0.0, 1.0);
+        }
+
+        var displayMatch = DeewDisplayProgressRegex.Match(line);
+        if (!displayMatch.Success)
+        {
+            return null;
+        }
+
+        return double.TryParse(displayMatch.Groups["value"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var displayValue)
+            ? Math.Clamp(displayValue / 100.0, 0.0, 1.0)
+            : null;
+    }
+
+    private static double? ParseEac3ToProgress(string line)
+    {
+        var match = Eac3ToProcessProgressRegex.Match(line);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        return double.TryParse(match.Groups["value"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? Math.Clamp(value / 100.0, 0.0, 1.0)
+            : null;
+    }
+
+    private static double? ParseOpusProgress(string line, double? durationSeconds)
+    {
+        if (!durationSeconds.HasValue || durationSeconds.Value <= 0)
+        {
+            return null;
+        }
+
+        var processedSeconds = ParseFfmpegProcessedSeconds(line);
+        if (!processedSeconds.HasValue)
+        {
+            return null;
+        }
+
+        return Math.Clamp(processedSeconds.Value / durationSeconds.Value, 0.0, 1.0);
+    }
+
+    private static bool ShouldReportDdpLine(
+        string line,
+        double? parsedProgress,
+        bool reachedReportWindow,
+        bool progressAdvancedEnough,
+        bool lineChanged)
+    {
+        if (parsedProgress.HasValue)
+        {
+            return (reachedReportWindow || progressAdvancedEnough) && (lineChanged || progressAdvancedEnough);
+        }
+
+        if (LooksLikeDeewConsoleProgressLine(line))
+        {
+            return false;
+        }
+
+        return lineChanged;
+    }
+
+    private static bool ShouldReportGenericLine(
+        bool reachedReportWindow,
+        bool progressAdvancedEnough,
+        bool lineChanged)
+    {
+        if (!reachedReportWindow && !progressAdvancedEnough)
+        {
+            return false;
+        }
+
+        return lineChanged || progressAdvancedEnough;
+    }
+
+    private static bool ShouldReportImmediateCliLine(
+        AudioProcessingMode mode,
+        string line,
+        bool lineChanged)
+    {
+        if (!lineChanged || string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        return mode switch
+        {
+            AudioProcessingMode.Eac3To => !line.StartsWith("process:", StringComparison.OrdinalIgnoreCase),
+            AudioProcessingMode.Opus => !line.StartsWith("process:", StringComparison.OrdinalIgnoreCase)
+                && !LooksLikeOpusCliProgressLine(line),
+            _ => false
+        };
+    }
+
+    private static bool ShouldAppendLogLine(
+        AudioProcessingMode mode,
+        string line,
+        double? parsedProgress,
+        ref string lastLoggedLine)
+    {
+        var logLineChanged = !string.Equals(line, lastLoggedLine, StringComparison.Ordinal);
+        if (!logLineChanged)
+        {
+            return false;
+        }
+
+        if (mode == AudioProcessingMode.Eac3To
+            && line.StartsWith("process:", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (mode == AudioProcessingMode.Opus
+            && (line.StartsWith("process:", StringComparison.OrdinalIgnoreCase) || LooksLikeOpusCliProgressLine(line)))
+        {
+            return false;
+        }
+
+        if (mode == AudioProcessingMode.Ddp && parsedProgress.HasValue)
+        {
+            return false;
+        }
+
+        if (mode == AudioProcessingMode.Ddp && LooksLikeDeewConsoleProgressLine(line))
+        {
+            return false;
+        }
+
+        lastLoggedLine = line;
+        return true;
+    }
+
+    private static bool LooksLikeDeewConsoleProgressLine(string line)
+    {
+        return line.IndexOf('%') >= 0
+            && line.IndexOf('[') >= 0
+            && line.IndexOf(']') >= 0;
+    }
+
+    private static bool LooksLikeOpusCliProgressLine(string line)
+    {
+        return OpusEncDisplayProgressRegex.IsMatch(line);
+    }
+
+    private static string NormalizeDetailLine(AudioProcessingRequest request, string line, double? parsedProgress)
+    {
+        return request.Mode == AudioProcessingMode.Ddp
+            ? line
+            : NormalizeDisplayLine(request, line, parsedProgress);
+    }
+
+    private static string NormalizeDisplayLine(AudioProcessingRequest request, string line, double? parsedProgress)
+    {
+        if (request.Mode == AudioProcessingMode.Ddp)
+        {
+            if (parsedProgress.HasValue)
+            {
+                return $"process: {NormalizeRunningProgress(parsedProgress.Value) * 100:0.#}%";
+            }
+
+            return LooksLikeDeewWarmupLine(line)
+                ? DeewWarmupDisplayLine
+                : line;
+        }
+
+        if (request.Mode != AudioProcessingMode.Opus)
+        {
+            return line;
+        }
+
+        if (parsedProgress.HasValue)
+        {
+            return $"process: {NormalizeRunningProgress(parsedProgress.Value) * 100:0.##}%";
+        }
+
+        return LooksLikeFfmpegProgressMetadataLine(line)
+            ? string.Empty
+            : line;
+    }
+
+    private static bool LooksLikeFfmpegProgressMetadataLine(string line)
+    {
+        return line.StartsWith("bitrate=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("total_size=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("out_time_us=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("out_time_ms=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("out_time=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("dup_frames=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("drop_frames=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("speed=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("progress=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("maxrss=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("frame=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("fps=", StringComparison.OrdinalIgnoreCase)
+            || line.StartsWith("stream_", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeDeewWarmupLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line) || LooksLikeFailureLine(line))
+        {
+            return false;
+        }
+
+        return line.Contains("ffmpeg", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("starting", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("dee -x", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("[output]", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeFailureLine(string line)
+    {
+        return line.Contains("error", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("traceback", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("exception", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static double? ParseFfmpegProcessedSeconds(string line)
+    {
+        var outTimeMatch = FfmpegOutTimeRegex.Match(line);
+        if (outTimeMatch.Success
+            && TimeSpan.TryParse(outTimeMatch.Groups["value"].Value, CultureInfo.InvariantCulture, out var processed))
+        {
+            return processed.TotalSeconds;
+        }
+
+        var outTimeMsMatch = FfmpegOutTimeMsRegex.Match(line);
+        if (outTimeMsMatch.Success
+            && long.TryParse(outTimeMsMatch.Groups["value"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var milliseconds))
+        {
+            return milliseconds / 1_000_000d;
+        }
+
+        var outTimeUsMatch = FfmpegOutTimeUsRegex.Match(line);
+        if (outTimeUsMatch.Success
+            && long.TryParse(outTimeUsMatch.Groups["value"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var microseconds))
+        {
+            return microseconds / 1_000_000d;
+        }
+
+        return null;
+    }
+
+    private static double NormalizeRunningProgress(double value)
+    {
+        var clamped = Math.Clamp(value, 0.0, 1.0);
+        return clamped >= 1.0 ? 0.999 : clamped;
+    }
+
+    private sealed class Eac3ToProgressState
+    {
+        public int CurrentPass { get; private set; } = 1;
+
+        public int TotalPasses { get; private set; } = 1;
+
+        public string? PhaseLabel =>
+            TotalPasses > 1
+                ? $"Pass {CurrentPass}/{TotalPasses}"
+                : null;
+
+        public void Update(string line)
+        {
+            var additionalPassMatch = Eac3ToAdditionalPassNeededRegex.Match(line);
+            if (additionalPassMatch.Success
+                && int.TryParse(additionalPassMatch.Groups["pass"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var requiredPass)
+                && requiredPass > 1)
+            {
+                TotalPasses = Math.Max(TotalPasses, requiredPass);
+            }
+
+            var startingPassMatch = Eac3ToStartingPassRegex.Match(line);
+            if (startingPassMatch.Success
+                && int.TryParse(startingPassMatch.Groups["pass"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var currentPass)
+                && currentPass > 1)
+            {
+                CurrentPass = Math.Max(CurrentPass, currentPass);
+                TotalPasses = Math.Max(TotalPasses, currentPass);
+            }
+        }
+
+        public double Normalize(double rawProgress)
+        {
+            var normalizedRaw = Math.Clamp(rawProgress, 0.0, 1.0);
+            if (TotalPasses <= 1)
+            {
+                return normalizedRaw;
+            }
+
+            var currentPassIndex = Math.Clamp(CurrentPass - 1, 0, TotalPasses - 1);
+            return ((double)currentPassIndex + normalizedRaw) / TotalPasses;
+        }
+    }
+
+    private sealed class OpusTelemetryState
+    {
+        private readonly double? _sourceDurationSeconds;
+        private readonly int? _targetBitrateKbps;
+        private readonly string _outputPath;
+
+        private double? _processedSeconds;
+        private double? _speedMultiplier;
+        private double? _lastObservedProcessedSeconds;
+        private DateTimeOffset? _lastObservedProcessedAt;
+
+        public OpusTelemetryState(double? sourceDurationSeconds, int? targetBitrateKbps, string outputPath)
+        {
+            _sourceDurationSeconds = sourceDurationSeconds;
+            _targetBitrateKbps = targetBitrateKbps;
+            _outputPath = outputPath;
+        }
+
+        public void Update(string line)
+        {
+            var processedSeconds = ParseFfmpegProcessedSeconds(line);
+            if (processedSeconds.HasValue)
+            {
+                UpdateDerivedSpeed(processedSeconds.Value);
+                _processedSeconds = processedSeconds.Value;
+                return;
+            }
+
+            var speedMatch = FfmpegSpeedRegex.Match(line);
+            if (speedMatch.Success
+                && double.TryParse(speedMatch.Groups["value"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var speed))
+            {
+                _speedMultiplier = speed > 0 ? speed : null;
+            }
+        }
+
+        private void UpdateDerivedSpeed(double processedSeconds)
+        {
+            var observedAt = DateTimeOffset.UtcNow;
+            if (_lastObservedProcessedSeconds.HasValue
+                && _lastObservedProcessedAt.HasValue)
+            {
+                var processedDelta = processedSeconds - _lastObservedProcessedSeconds.Value;
+                var wallClockDelta = (observedAt - _lastObservedProcessedAt.Value).TotalSeconds;
+                if (processedDelta > 0 && wallClockDelta > 0.05)
+                {
+                    var derivedSpeed = processedDelta / wallClockDelta;
+                    if (derivedSpeed > 0)
+                    {
+                        _speedMultiplier = derivedSpeed;
+                    }
+                }
+            }
+
+            _lastObservedProcessedSeconds = processedSeconds;
+            _lastObservedProcessedAt = observedAt;
+        }
+
+        public AudioProcessingTelemetry? Build(double? progressFraction)
+        {
+            var estimatedOutputBytes = EstimateOutputBytes(progressFraction);
+            var bitrateKbps = ResolveBitrateKbps();
+            var remaining = EstimateRemaining();
+
+            if (_speedMultiplier is null
+                && bitrateKbps is null
+                && remaining is null
+                && estimatedOutputBytes is null)
+            {
+                return null;
+            }
+
+            return new AudioProcessingTelemetry(
+                _speedMultiplier,
+                bitrateKbps,
+                remaining,
+                estimatedOutputBytes);
+        }
+
+        private double? ResolveBitrateKbps()
+        {
+            var currentOutputBytes = TryGetOutputFileSize();
+            if (currentOutputBytes.HasValue
+                && _processedSeconds.HasValue
+                && _processedSeconds.Value > 0)
+            {
+                return currentOutputBytes.Value * 8d / _processedSeconds.Value / 1000d;
+            }
+
+            return _targetBitrateKbps;
+        }
+
+        private TimeSpan? EstimateRemaining()
+        {
+            if (!_sourceDurationSeconds.HasValue
+                || !_processedSeconds.HasValue)
+            {
+                return null;
+            }
+
+            var sourceRemainingSeconds = Math.Max(_sourceDurationSeconds.Value - _processedSeconds.Value, 0d);
+            if (sourceRemainingSeconds <= 0)
+            {
+                return TimeSpan.Zero;
+            }
+
+            if (_speedMultiplier.HasValue && _speedMultiplier.Value > 0)
+            {
+                return TimeSpan.FromSeconds(sourceRemainingSeconds / _speedMultiplier.Value);
+            }
+
+            return null;
+        }
+
+        private long? EstimateOutputBytes(double? progressFraction)
+        {
+            if (_sourceDurationSeconds.HasValue
+                && _sourceDurationSeconds.Value > 0
+                && _targetBitrateKbps.HasValue
+                && _targetBitrateKbps.Value > 0)
+            {
+                return (long)Math.Round(_targetBitrateKbps.Value * 1000d / 8d * _sourceDurationSeconds.Value);
+            }
+
+            var currentOutputBytes = TryGetOutputFileSize();
+            if (currentOutputBytes.HasValue
+                && progressFraction.HasValue
+                && progressFraction.Value > 0)
+            {
+                return (long)Math.Round(currentOutputBytes.Value / progressFraction.Value);
+            }
+
+            return null;
+        }
+
+        private long? TryGetOutputFileSize()
+        {
+            try
+            {
+                if (!File.Exists(_outputPath))
+                {
+                    return null;
+                }
+
+                return new FileInfo(_outputPath).Length;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
+    private sealed record OpusProgressFileSnapshot(
+        string ProgressTimeLine,
+        string? SpeedLine);
+
+    private static async Task PumpAsync(StreamReader reader, Action<string> onLine, CancellationToken cancellationToken)
+    {
+        var buffer = new char[512];
+        var segmentBuilder = new StringBuilder();
+
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = await reader.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            for (var i = 0; i < read; i++)
+            {
+                var character = buffer[i];
+                if (character is '\r' or '\n')
+                {
+                    FlushConsoleSegment(segmentBuilder, onLine);
+                    continue;
+                }
+
+                if (!char.IsControl(character) || character == '\t')
+                {
+                    segmentBuilder.Append(character);
+                }
+            }
+        }
+
+        FlushConsoleSegment(segmentBuilder, onLine);
+    }
+
+    private static async Task PumpProgressFileAsync(Process process, string path, Action<string> onLine)
+    {
+        OpusProgressFileSnapshot? lastSnapshot = null;
+
+        while (true)
+        {
+            var snapshot = await ReadOpusProgressFileSnapshotAsync(path);
+            if (snapshot is not null)
+            {
+                if (!string.Equals(snapshot.ProgressTimeLine, lastSnapshot?.ProgressTimeLine, StringComparison.Ordinal))
+                {
+                    onLine(snapshot.ProgressTimeLine);
+                }
+
+                if (!string.IsNullOrWhiteSpace(snapshot.SpeedLine)
+                    && !string.Equals(snapshot.SpeedLine, lastSnapshot?.SpeedLine, StringComparison.Ordinal))
+                {
+                    onLine(snapshot.SpeedLine);
+                }
+
+                lastSnapshot = snapshot;
+            }
+
+            if (process.HasExited)
+            {
+                break;
+            }
+
+            await Task.Delay(ProgressFilePollInterval);
+        }
+    }
+
+    private static async Task<OpusProgressFileSnapshot?> ReadOpusProgressFileSnapshotAsync(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 1024, leaveOpen: true);
+            var content = await reader.ReadToEndAsync();
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                return null;
+            }
+
+            string? outTimeLine = null;
+            string? outTimeMsLine = null;
+            string? outTimeUsLine = null;
+            string? speedLine = null;
+
+            var lines = content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var rawLine in lines)
+            {
+                if (rawLine.StartsWith("out_time=", StringComparison.OrdinalIgnoreCase))
+                {
+                    outTimeLine = rawLine;
+                    continue;
+                }
+
+                if (rawLine.StartsWith("out_time_ms=", StringComparison.OrdinalIgnoreCase))
+                {
+                    outTimeMsLine = rawLine;
+                    continue;
+                }
+
+                if (rawLine.StartsWith("out_time_us=", StringComparison.OrdinalIgnoreCase))
+                {
+                    outTimeUsLine = rawLine;
+                    continue;
+                }
+
+                if (rawLine.StartsWith("speed=", StringComparison.OrdinalIgnoreCase))
+                {
+                    speedLine = rawLine;
+                }
+            }
+
+            var progressTimeLine = outTimeLine ?? outTimeMsLine ?? outTimeUsLine;
+            if (string.IsNullOrWhiteSpace(progressTimeLine))
+            {
+                return null;
+            }
+
+            return new OpusProgressFileSnapshot(progressTimeLine, speedLine);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        return null;
+    }
+
+    private static void TryTerminate(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(true);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static string BuildStartingSummary(AudioProcessingMode mode)
+    {
+        return mode switch
+        {
+            AudioProcessingMode.Eac3To => "eac3to 转换已启动",
+            AudioProcessingMode.Ddp => DeewWarmupDisplayLine,
+            AudioProcessingMode.Opus => "Opus 转换已启动",
+            _ => "音频处理已启动"
+        };
+    }
+
+    private static string BuildStartingDetail(AudioProcessingMode mode)
+    {
+        return mode == AudioProcessingMode.Ddp
+            ? DeewWarmupDisplayLine
+            : string.Empty;
+    }
+
+    private static string BuildRunningSummary(
+        AudioProcessingMode mode,
+        double progress,
+        bool hasKnownProgress,
+        string line,
+        string? phaseLabel = null)
+    {
+        if (hasKnownProgress)
+        {
+            return mode switch
+            {
+                AudioProcessingMode.Eac3To => string.IsNullOrWhiteSpace(phaseLabel)
+                    ? $"eac3to 转换中 {progress * 100:0.#}%"
+                    : $"eac3to 转换中 {phaseLabel} · {progress * 100:0.#}%",
+                AudioProcessingMode.Ddp => $"DDP 转换中 {progress * 100:0.#}%",
+                AudioProcessingMode.Opus => $"Opus 转换中 {progress * 100:0.##}%",
+                _ => $"音频处理中 {progress * 100:0.#}%"
+            };
+        }
+
+        if (mode == AudioProcessingMode.Eac3To && !string.IsNullOrWhiteSpace(phaseLabel))
+        {
+            return $"eac3to 转换中 {phaseLabel}";
+        }
+
+        return string.IsNullOrWhiteSpace(line)
+            ? "音频处理中"
+            : line.Trim();
+    }
+
+    private static string BuildCompletedSummary(AudioProcessingMode mode)
+    {
+        return mode switch
+        {
+            AudioProcessingMode.Eac3To => "eac3to 转换完成",
+            AudioProcessingMode.Ddp => "DDP 转换完成",
+            AudioProcessingMode.Opus => "Opus 转换完成",
+            _ => "音频处理完成"
+        };
+    }
+
+    private static string BuildCancelledSummary(AudioProcessingMode mode)
+    {
+        return mode switch
+        {
+            AudioProcessingMode.Eac3To => "eac3to 转换已取消",
+            AudioProcessingMode.Ddp => "DDP 转换已取消",
+            AudioProcessingMode.Opus => "Opus 转换已取消",
+            _ => "音频处理已取消"
+        };
+    }
+
+    private static string BuildFailureSummary(AudioProcessingMode mode)
+    {
+        return mode switch
+        {
+            AudioProcessingMode.Eac3To => "eac3to 转换失败",
+            AudioProcessingMode.Ddp => "DDP 转换失败",
+            AudioProcessingMode.Opus => "Opus 转换失败",
+            _ => "音频处理失败"
+        };
+    }
+
+    private static string LastMeaningfulLine(string log)
+    {
+        return log
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .LastOrDefault(static line => !string.IsNullOrWhiteSpace(line))
+            ?? string.Empty;
+    }
+
+    private static string Quote(string value) => $"\"{value}\"";
+
+    private static void FlushConsoleSegment(StringBuilder segmentBuilder, Action<string> onLine)
+    {
+        if (segmentBuilder.Length == 0)
+        {
+            return;
+        }
+
+        var normalized = NormalizeConsoleSegment(segmentBuilder.ToString());
+        segmentBuilder.Clear();
+
+        if (!string.IsNullOrWhiteSpace(normalized))
+        {
+            onLine(normalized);
+        }
+    }
+
+    private static string NormalizeConsoleSegment(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var normalized = AnsiEscapeRegex.Replace(text, string.Empty).Trim();
+        return string.IsNullOrWhiteSpace(normalized) ? string.Empty : normalized;
+    }
+
+    private sealed class ActiveExecution : IDisposable
+    {
+        private readonly Process _process;
+        private readonly JobObjectHandle? _jobObjectHandle;
+        private int _disposed;
+
+        public ActiveExecution(Process process)
+        {
+            _process = process;
+            _jobObjectHandle = JobObjectHandle.TryAttach(process);
+        }
+
+        public void Terminate()
+        {
+            _jobObjectHandle?.Terminate();
+            TryTerminate(_process);
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
+            _jobObjectHandle?.Dispose();
+            _process.Dispose();
+        }
+    }
+
+    private sealed class JobObjectHandle : IDisposable
+    {
+        private readonly SafeJobHandle _handle;
+        private int _disposed;
+
+        private JobObjectHandle(SafeJobHandle handle)
+        {
+            _handle = handle;
+        }
+
+        public static JobObjectHandle? TryAttach(Process process)
+        {
+            SafeJobHandle? handle = null;
+
+            try
+            {
+                handle = CreateJobObject(IntPtr.Zero, null);
+                if (handle.IsInvalid)
+                {
+                    handle.Dispose();
+                    return null;
+                }
+
+                var limits = new JobObjectExtendedLimitInformation
+                {
+                    BasicLimitInformation = new JobObjectBasicLimitInformation
+                    {
+                        LimitFlags = JobObjectLimitFlags.KillOnJobClose
+                    }
+                };
+
+                if (!SetInformationJobObject(
+                        handle,
+                        JobObjectInfoClass.ExtendedLimitInformation,
+                        ref limits,
+                        (uint)Marshal.SizeOf<JobObjectExtendedLimitInformation>()))
+                {
+                    handle.Dispose();
+                    return null;
+                }
+
+                if (!AssignProcessToJobObject(handle, process.Handle))
+                {
+                    handle.Dispose();
+                    return null;
+                }
+
+                return new JobObjectHandle(handle);
+            }
+            catch
+            {
+                handle?.Dispose();
+                return null;
+            }
+        }
+
+        public void Terminate()
+        {
+            if (Interlocked.CompareExchange(ref _disposed, 0, 0) != 0)
+            {
+                return;
+            }
+
+            try
+            {
+                if (!_handle.IsInvalid)
+                {
+                    TerminateJobObject(_handle, 1);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
+            _handle.Dispose();
+        }
+    }
+
+    [Flags]
+    private enum JobObjectLimitFlags : uint
+    {
+        KillOnJobClose = 0x00002000
+    }
+
+    private enum JobObjectInfoClass
+    {
+        ExtendedLimitInformation = 9
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JobObjectBasicLimitInformation
+    {
+        public long PerProcessUserTimeLimit;
+        public long PerJobUserTimeLimit;
+        public JobObjectLimitFlags LimitFlags;
+        public nuint MinimumWorkingSetSize;
+        public nuint MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public nuint Affinity;
+        public uint PriorityClass;
+        public uint SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoCounters
+    {
+        public ulong ReadOperationCount;
+        public ulong WriteOperationCount;
+        public ulong OtherOperationCount;
+        public ulong ReadTransferCount;
+        public ulong WriteTransferCount;
+        public ulong OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JobObjectExtendedLimitInformation
+    {
+        public JobObjectBasicLimitInformation BasicLimitInformation;
+        public IoCounters IoInfo;
+        public nuint ProcessMemoryLimit;
+        public nuint JobMemoryLimit;
+        public nuint PeakProcessMemoryUsed;
+        public nuint PeakJobMemoryUsed;
+    }
+
+    private sealed class SafeJobHandle : SafeHandleZeroOrMinusOneIsInvalid
+    {
+        public SafeJobHandle()
+            : base(true)
+        {
+        }
+
+        protected override bool ReleaseHandle()
+        {
+            return CloseHandle(handle);
+        }
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeJobHandle CreateJobObject(IntPtr lpJobAttributes, string? lpName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetInformationJobObject(
+        SafeJobHandle hJob,
+        JobObjectInfoClass jobObjectInfoClass,
+        ref JobObjectExtendedLimitInformation lpJobObjectInfo,
+        uint cbJobObjectInfoLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AssignProcessToJobObject(SafeJobHandle job, IntPtr process);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool TerminateJobObject(SafeJobHandle job, uint exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr handle);
+}

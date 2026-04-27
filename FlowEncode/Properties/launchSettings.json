@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "FlowEncode (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "FlowEncode (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

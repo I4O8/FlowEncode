@@ -1,0 +1,293 @@
+using FlowEncode.Application;
+using FlowEncode.Infrastructure;
+using FlowEncode.ViewModels;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Windows.AppLifecycle;
+using Microsoft.UI.Xaml;
+using System;
+using System.IO;
+using System.IO.Pipes;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace FlowEncode;
+
+public partial class App : Microsoft.UI.Xaml.Application
+{
+    private const string AppUserModelId = "frankie1024.FlowEncode";
+    private const string SingleInstanceKey = "FlowEncode.Main";
+    private const string SingleInstancePipeName = "FlowEncode.VapourSynth.Open.v1";
+    private readonly ServiceProvider _services;
+    private AppInstance? _mainAppInstance;
+    private CancellationTokenSource? _singleInstancePipeCancellationTokenSource;
+    private Task? _singleInstancePipeServerTask;
+    private Window? _window;
+
+    public App()
+    {
+        InitializeComponent();
+        UnhandledException += App_UnhandledException;
+
+        _services = BuildServices();
+    }
+
+    public static T GetService<T>() where T : notnull
+    {
+        var app = (App)Microsoft.UI.Xaml.Application.Current;
+        return app._services.GetRequiredService<T>();
+    }
+
+    protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
+    {
+        TrySetProcessAppUserModelId();
+
+        if (!TryConfigureSingleInstance())
+        {
+            return;
+        }
+
+        var launchActivation = GetService<AppLaunchActivation>();
+        launchActivation.SetRequestedVapourSynthFilePath(ResolveRequestedVapourSynthFilePath());
+        _window = GetService<MainWindow>();
+        _window.Activate();
+    }
+
+    private void App_UnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
+    {
+        try
+        {
+            var paths = _services.GetService<LocalAppPaths>();
+            var crashRoot = paths?.LogsRootPath
+                ?? GetFallbackCrashRoot();
+            var crashPath = Path.Combine(crashRoot, "startup-crash.log");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(crashPath)!);
+            File.WriteAllText(crashPath, e.Exception.ToString());
+        }
+        catch
+        {
+        }
+    }
+
+    private static ServiceProvider BuildServices()
+    {
+        var services = new ServiceCollection();
+
+        services.AddSingleton<LocalAppPaths>();
+        services.AddSingleton<AppLaunchActivation>();
+        services.AddSingleton<IAppSettingsService, LocalAppSettingsService>();
+        services.AddSingleton<ISetupGuideCacheService, LocalSetupGuideCacheService>();
+        services.AddSingleton<IToolRegistryService, DefaultToolRegistryService>();
+        services.AddSingleton<IToolProbeService, ProcessToolProbeService>();
+        services.AddSingleton<IEnvironmentReadinessService, EnvironmentReadinessService>();
+        services.AddSingleton<IEncoderDiscoveryService, LocalEncoderDiscoveryService>();
+        services.AddSingleton<ISetupBootstrapService, SetupBootstrapService>();
+        services.AddSingleton<IEncoderToolchainService, LocalEncoderToolchainService>();
+        services.AddSingleton<IExternalToolService, LocalExternalToolService>();
+        services.AddSingleton<IAppUpdateService, GitHubAppUpdateService>();
+        services.AddSingleton<IAudioSourceInfoService, FfprobeAudioSourceInfoService>();
+        services.AddSingleton<IAudioProcessingRunner, CliAudioProcessingRunner>();
+        services.AddSingleton<IBluRayDemuxBackendAdapter, DgDemuxBackendAdapter>();
+        services.AddSingleton<IBluRayDemuxBackendAdapter, Eac3ToBackendAdapter>();
+        services.AddSingleton<IBluRayDiscProbeService, CliBluRayDiscProbeService>();
+        services.AddSingleton<IBluRayDemuxRunner, CliBluRayDemuxRunner>();
+        services.AddSingleton<IProfileLibraryService, LocalProfileLibraryService>();
+        services.AddSingleton<IEncodingJobRunner, LocalEncodingJobRunner>();
+        services.AddSingleton<IAutoCompressionRunner, Av1anAutoCompressionRunner>();
+        services.AddSingleton<IEncoderUpdateService, GitHubReleaseEncoderUpdateService>();
+        services.AddSingleton<IVapourSynthWorkspaceService, VapourSynthWorkspaceService>();
+        services.AddSingleton<IVapourSynthWorkspaceLanguageService, VapourSynthWorkspaceLanguageService>();
+        services.AddSingleton<IVapourSynthPreviewService, VapourSynthPreviewService>();
+        services.AddSingleton<MainWindowViewModel>();
+        services.AddSingleton<VapourSynthWorkspaceViewModel>();
+        services.AddTransient<VapourSynthPreviewWindowViewModel>();
+        services.AddTransient<VapourSynthPreviewWindow>();
+        services.AddSingleton<MainWindow>();
+
+        return services.BuildServiceProvider();
+    }
+
+    private bool TryConfigureSingleInstance()
+    {
+        _mainAppInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
+        if (_mainAppInstance.IsCurrent)
+        {
+            StartSingleInstancePipeServer();
+            return true;
+        }
+
+        TrySendExternalOpenRequest(ResolveRequestedVapourSynthFilePath());
+        Environment.Exit(0);
+        return false;
+    }
+
+    private static void TrySetProcessAppUserModelId()
+    {
+        try
+        {
+            SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
+        }
+        catch
+        {
+        }
+    }
+
+    private static string? ResolveRequestedVapourSynthFilePath()
+    {
+        return Environment.GetCommandLineArgs()
+            .Skip(1)
+            .Select(AppLaunchActivation.NormalizeSupportedScriptPath)
+            .FirstOrDefault(static path => !string.IsNullOrWhiteSpace(path));
+    }
+
+    private void StartSingleInstancePipeServer()
+    {
+        if (_singleInstancePipeServerTask is not null)
+        {
+            return;
+        }
+
+        _singleInstancePipeCancellationTokenSource = new CancellationTokenSource();
+        _singleInstancePipeServerTask = RunSingleInstancePipeServerAsync(_singleInstancePipeCancellationTokenSource.Token);
+    }
+
+    private async Task RunSingleInstancePipeServerAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                using var server = new NamedPipeServerStream(
+                    SingleInstancePipeName,
+                    PipeDirection.In,
+                    1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+
+                await server.WaitForConnectionAsync(cancellationToken);
+
+                using var reader = new StreamReader(server);
+                var filePath = (await reader.ReadToEndAsync()).Trim();
+                DispatchExternalOpenRequest(filePath);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                TryWriteActivationErrorLog(ex);
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    private void DispatchExternalOpenRequest(string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return;
+        }
+
+        if (_window is not MainWindow mainWindow)
+        {
+            GetService<AppLaunchActivation>().SetRequestedVapourSynthFilePath(filePath);
+            return;
+        }
+
+        mainWindow.DispatcherQueue.TryEnqueue(async () =>
+        {
+            try
+            {
+                await mainWindow.HandleExternalVapourSynthOpenAsync(filePath);
+            }
+            catch (Exception ex)
+            {
+                TryWriteActivationErrorLog(ex);
+            }
+        });
+    }
+
+    private static void TrySendExternalOpenRequest(string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return;
+        }
+
+        var normalizedPath = AppLaunchActivation.NormalizeSupportedScriptPath(filePath);
+        if (string.IsNullOrWhiteSpace(normalizedPath))
+        {
+            return;
+        }
+
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                using var client = new NamedPipeClientStream(
+                    ".",
+                    SingleInstancePipeName,
+                    PipeDirection.Out,
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+
+                client.Connect(200);
+
+                using var writer = new StreamWriter(client)
+                {
+                    AutoFlush = true
+                };
+
+                writer.Write(normalizedPath);
+                return;
+            }
+            catch (TimeoutException)
+            {
+                Thread.Sleep(150);
+            }
+            catch (IOException)
+            {
+                Thread.Sleep(150);
+            }
+        }
+    }
+
+    private void TryWriteActivationErrorLog(Exception exception)
+    {
+        try
+        {
+            var paths = _services.GetService<LocalAppPaths>();
+            var crashRoot = paths?.LogsRootPath
+                ?? GetFallbackCrashRoot();
+            var crashPath = Path.Combine(crashRoot, "activation-error.log");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(crashPath)!);
+            File.WriteAllText(crashPath, exception.ToString());
+        }
+        catch
+        {
+        }
+    }
+
+    private static string GetFallbackCrashRoot()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "FlowEncode",
+            "data",
+            "logs");
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int SetCurrentProcessExplicitAppUserModelID(string appID);
+}
