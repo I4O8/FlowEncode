@@ -1,8 +1,12 @@
 # FlowEncode
 
-FlowEncode 是一个面向 Windows x64 的桌面端编码工作流前端，围绕 `x264`、`x265`、`SVT-AV1`、`Av1an`、`ffmpeg`、`eac3to`、`deew` 以及 AviSynth / VapourSynth 脚本环境，提供统一的任务配置、队列执行、日志查看、模板复用能力。
+FlowEncode 是一个面向 Windows x64 的桌面端编码工作流前端，围绕 `x264`、`x265`、`SVT-AV1`、`Av1an`、`FFmpeg`、`VapourSynth` 以及公开可用的辅助工具，提供统一的任务配置、队列执行、日志查看、模板复用能力。
 
-> 仅支持 Windows x64。  
+> 仅支持 Windows x64。
+>
+> FlowEncode 的定位是工作流编排与环境管理前端，而不是将全部运行时、插件和第三方工具静态打包在一起的一体化整合包。
+
+![FlowEncode dashboard](./docs/assets/flowencode-dashboard.png)
 
 ## 项目概览
 
@@ -10,24 +14,21 @@ FlowEncode 面向需要图形化管理能力、同时又不希望放弃命令行
 
 项目当前覆盖的主要工作流包括：
 
-- 基于 `DGDemux`、`eac3to` 的蓝光解复用流程
-- 基于内置编辑器与独立预览窗口的 VapourSynth 脚本编辑、诊断与预览流程
+- VapourSynth 脚本编辑、诊断与预览流程
 - 基于 `x264`、`x265`、`SVT-AV1` 的常规视频编码任务
 - 基于 `Av1an` 的目标质量自动压制流程
-- 基于 `eac3to`、`deew`、`ffmpeg`、`opusenc` / `opusext` 的独立音频转码流程
+- 模板保存、载入、导入、导出与复用流程
 
 ## 核心能力
 
 | 模块 | 说明 |
 | --- | --- |
-| 解复用 | 用于扫描蓝光目录、选择播放列表与轨道，并导出视频、音频和字幕。 |
-| VapourSynth | 提供 `.vpy` / `.py` 脚本编辑、插件补全、基础诊断、`F5` 预览与预览日志查看能力。 |
+| VapourSynth | 提供 `.vpy` / `.py` 脚本编辑、插件补全、基础诊断、预览与预览日志查看能力。 |
 | 视频压制 | 用于配置常规编码任务，统一管理输入输出、编码参数、命令预览、任务队列与实时日志。 |
 | 自动压制 | 基于 `Av1an` 执行目标质量流程，支持 `VMAF`、探测次数、并行度与编码器附加参数配置。 |
-| 音频转码 | 面向 `FLAC`、`DDP`、`Opus` 等音频输出场景，调用对应命令行工具完成独立音频转码。 |
 | 模板库 | 模板文件保存、载入、导入、导出（`.profile`）、置顶、覆盖与复用，用于沉淀常用参数集。 |
-| 首启环境引导 | 检测、安装、更新和移除 Python、VapourSynth、插件、编码器及相关工具。 |
-| 设置与更新 | 提供程序更新入口，并集中展示环境、依赖、编码器和外部工具状态。 |
+| 首启环境引导 | 检测、安装、更新和移除公开支持的运行时、插件、编码器及相关工具。 |
+| 设置与更新 | 提供程序更新入口，并集中展示公开支持工具链的状态。 |
 
 ## 支持的工具链
 
@@ -35,15 +36,15 @@ FlowEncode 面向需要图形化管理能力、同时又不希望放弃命令行
 
 - 视频编码器：`x264`、`x265`、`SVT-AV1`
 - 自动压制：`Av1an`
-- 音频相关工具：`eac3to`、`deew`、`ffmpeg`、`ffprobe`、`opusenc` / `opusext`
-- 运行时与脚本环境：`Python 3.12`、`VapourSynth`、`vsrepo` 及相关 Python 包、必需插件
-- 脚本管线：适用于项目当前实现范围内的 AviSynth / VapourSynth 输入流程
+- 媒体探测与管线：`FFmpeg`、`FFprobe`
+- 运行时与脚本环境：`Python 3.12`、`VapourSynth`、`vsrepo` 及公开可用的 VapourSynth 插件
+- 输入桥接：`VSPipe`，以及用于既有 `.avs` 输入的 `Avs2PipeMod`
 
 对具体工具的支持深度会受到上游版本、运行时状态、插件完整性以及本机环境配置的影响。
 
 ## 发行与依赖
 
-- GitHub Releases 仅提供 Windows x64 构建
+- GitHub Releases 仅提供 Windows x64 安装资产
 - 当前仅提供安装版资产 `FlowEncode-Setup.exe`
 - 安装目录默认只放程序本体与静态资源，运行期可写数据不会落在安装目录内
 - 安装器会先检测 `Microsoft Visual C++ Redistributable x64`、`Windows App Runtime x64` 与 `WebView2 Runtime`；若缺失，会提示用户安装，用户也可以跳过并继续安装主程序，但这可能导致程序无法启动或部分功能不可用
@@ -71,4 +72,4 @@ FlowEncode 面向需要图形化管理能力、同时又不希望放弃命令行
 - 本仓库源码采用 `GNU General Public License v3.0`
 - 除非另有说明，本仓库按 `GPL-3.0-only` 处理
 - 完整许可证文本见 [LICENSE](./LICENSE)
-- 程序调用的第三方工具、运行时与插件仍分别遵循其各自的许可证条款
+- 程序调用或协作的第三方工具、运行时、插件与包仍分别遵循其各自许可证条款；公开支持范围与许可证说明见 [THIRD_PARTY_LICENSES.md](./docs/THIRD_PARTY_LICENSES.md)
