@@ -18,6 +18,10 @@ public static class EncodingLogLineClassifier
         @"\bframe=\s*\d+\b.*\bfps=\s*\d+(?:\.\d+)?\b",
         System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
+    private static readonly System.Text.RegularExpressions.Regex X26xPipeTickerRegex = new(
+        @"^(?:x26[45]\s+)?\d+\s+frames\s+@\s+\d+(?:\.\d+)?\s+fps\s*\|\s*\d+(?:\.\d+)?\s+kb\/s\b",
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
     private static readonly System.Text.RegularExpressions.Regex SvtLegacyFrameRegex = new(
         @"^Encoding\s+frame\s+\d+\b",
         System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
@@ -57,7 +61,8 @@ public static class EncodingLogLineClassifier
         return X26xBracketedProgressRegex.IsMatch(normalized)
             || X26xFrameTickerRegex.IsMatch(normalized)
             || X26xPrefixedProgressRegex.IsMatch(normalized)
-            || X26xFfmpegStyleTickerRegex.IsMatch(normalized);
+            || X26xFfmpegStyleTickerRegex.IsMatch(normalized)
+            || X26xPipeTickerRegex.IsMatch(normalized);
     }
 
     private static bool LooksLikeSvtProgress(string line)

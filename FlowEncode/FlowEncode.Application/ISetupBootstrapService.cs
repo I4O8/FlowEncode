@@ -13,6 +13,10 @@ public interface ISetupBootstrapService
         EnvironmentReadinessReport readiness,
         CancellationToken cancellationToken = default);
 
+    Task RefreshVsPluginPackageDefinitionsAsync(
+        EnvironmentReadinessReport? readiness = null,
+        CancellationToken cancellationToken = default);
+
     Task InstallAsync(
         SetupDependencyKind kind,
         IProgress<SetupInstallProgress>? progress = null,

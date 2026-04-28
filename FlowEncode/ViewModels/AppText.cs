@@ -421,6 +421,23 @@ public sealed class AppText
     public string EncoderSectionTitle => Pick("编码器", "Encoders");
     public string ToolSectionTitle => Pick("核心工具", "Core Tools");
     public string ManualSelectButton => Pick("手动选择", "Choose");
+    public string ClearManualPinButton => Pick("取消固定", "Clear Pin");
+    public string ManualPinnedLabel => Pick("手动固定", "Manual Pin");
+    public string ManualToolPinnedStatus(string dependencyLabel) =>
+        IsChinese
+            ? $"{dependencyLabel} 已固定为手动选择路径。"
+            : $"{dependencyLabel} was pinned to the selected path.";
+    public string ManualToolPinClearedStatus(string dependencyLabel) =>
+        IsChinese
+            ? $"{dependencyLabel} 已取消手动固定。"
+            : $"{dependencyLabel} manual pin was cleared.";
+    public string ManualToolSelectUnsupported => Pick("当前依赖不支持手动选择可执行文件。", "This dependency does not support manual executable selection.");
+    public string ManualToolInvalidSelection => Pick("请选择有效的可执行文件。", "Choose a valid executable file.");
+    public string ManualToolUpdateOverrideTitle => Pick("覆盖手动固定路径", "Override Manual Pin");
+    public string ManualToolUpdateOverrideMessage(string dependencyLabel) =>
+        IsChinese
+            ? $"{dependencyLabel} 当前使用手动固定路径。继续更新会取消手动固定，并改用程序自动安装/更新的版本。是否继续？"
+            : $"{dependencyLabel} currently uses a manually pinned path. Continuing will clear the manual pin and use the app-managed updated version. Continue?";
     public string ImportButton => Pick("导入", "Import");
     public string ExportButton => Pick("导出", "Export");
     public string InstallButton => Pick("安装", "Install");
@@ -838,6 +855,7 @@ public sealed class AppText
     public string ToolDetectionSourceLabel(ToolDetectionSource source, string sourceLabel) =>
         source switch
         {
+            ToolDetectionSource.ManualSelection => $"{Pick("手动固定", "Manual Pin")} · {sourceLabel}",
             ToolDetectionSource.LocalToolset => $"{Pick("本地工具链", "Local Toolset")} · {sourceLabel}",
             ToolDetectionSource.LocalTools => $"{Pick("本地工具目录", "Local Tools")} · {sourceLabel}",
             ToolDetectionSource.EnvironmentVariable => $"{Pick("环境变量", "Environment Variable")} · {sourceLabel}",
@@ -1271,6 +1289,7 @@ public sealed class AppText
     public string BinarySourceType(EncoderBinarySource source) =>
         source switch
         {
+            EncoderBinarySource.ManualSelection => Pick("手动固定", "Manual Pin"),
             EncoderBinarySource.EnvironmentVariable => Pick("环境变量", "Environment Variable"),
             EncoderBinarySource.Path => "PATH",
             EncoderBinarySource.LocalToolset => Pick("本地工具链", "Local Toolset"),

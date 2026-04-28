@@ -14,6 +14,7 @@ public sealed record DiscoveredEncoderBinary(
 
     public string SourceTypeLabel => Source switch
     {
+        EncoderBinarySource.ManualSelection => "手动固定",
         EncoderBinarySource.EnvironmentVariable => "环境变量",
         EncoderBinarySource.Path => "PATH",
         EncoderBinarySource.LocalToolset => "本地工具链",

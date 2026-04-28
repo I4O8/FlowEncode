@@ -283,6 +283,107 @@ public partial class MainWindowViewModel
             or SetupDependencyKind.OpusExt;
     }
 
+    public bool CanManuallySelectSetupDependency(SetupDependencyKind kind)
+    {
+        return GetManualPathKeys(kind).Count > 0;
+    }
+
+    public bool HasManualPinnedSetupDependency(SetupDependencyKind kind)
+    {
+        return GetManualPathKeys(kind).Any(key => _manualToolPaths.ContainsKey(key));
+    }
+
+    public string GetSetupDependencyDisplayName(SetupDependencyKind kind)
+    {
+        return GetSetupDependencyTitle(kind);
+    }
+
+    public async Task<string?> PinSetupDependencyBinaryAsync(SetupDependencyKind kind, string sourcePath)
+    {
+        var selectedCardIndex = SelectedSetupGuideCardIndex;
+        if (!CanManuallySelectSetupDependency(kind))
+        {
+            return Texts.ManualToolSelectUnsupported;
+        }
+
+        if (string.IsNullOrWhiteSpace(sourcePath)
+            || !File.Exists(sourcePath)
+            || !string.Equals(Path.GetExtension(sourcePath), ".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            return Texts.ManualToolInvalidSelection;
+        }
+
+        var normalizedPath = Path.GetFullPath(sourcePath);
+        var manualEntries = BuildManualPathEntries(kind, normalizedPath);
+        if (manualEntries.Count == 0)
+        {
+            return Texts.ManualToolInvalidSelection;
+        }
+
+        var updatedPaths = new Dictionary<string, string>(_manualToolPaths, StringComparer.OrdinalIgnoreCase);
+        foreach (var key in GetManualPathKeys(kind))
+        {
+            updatedPaths.Remove(key);
+        }
+
+        foreach (var entry in manualEntries)
+        {
+            updatedPaths[entry.Key] = entry.Value;
+        }
+
+        _manualToolPaths = updatedPaths;
+        var saveError = SaveSettings(updateStatusText: false);
+        if (!string.IsNullOrWhiteSpace(saveError))
+        {
+            return saveError;
+        }
+
+        var title = GetSetupDependencyTitle(kind);
+        await RefreshAsync(Texts.ManualToolPinnedStatus(title), includeUpdates: false);
+        await RefreshSetupGuideAfterDependencyMutationAsync();
+        RestoreSetupGuideCardSelection(selectedCardIndex);
+        return null;
+    }
+
+    public async Task<string?> ClearManualPinnedSetupDependencyAsync(SetupDependencyKind kind, bool refreshAfterClear = true)
+    {
+        var selectedCardIndex = SelectedSetupGuideCardIndex;
+        var keys = GetManualPathKeys(kind);
+        if (keys.Count == 0)
+        {
+            return Texts.ManualToolSelectUnsupported;
+        }
+
+        if (!keys.Any(key => _manualToolPaths.ContainsKey(key)))
+        {
+            return null;
+        }
+
+        var updatedPaths = new Dictionary<string, string>(_manualToolPaths, StringComparer.OrdinalIgnoreCase);
+        foreach (var key in keys)
+        {
+            updatedPaths.Remove(key);
+        }
+
+        _manualToolPaths = updatedPaths;
+        var saveError = SaveSettings(updateStatusText: false);
+        if (!string.IsNullOrWhiteSpace(saveError))
+        {
+            return saveError;
+        }
+
+        if (!refreshAfterClear)
+        {
+            return null;
+        }
+
+        var title = GetSetupDependencyTitle(kind);
+        await RefreshAsync(Texts.ManualToolPinClearedStatus(title), includeUpdates: false);
+        await RefreshSetupGuideAfterDependencyMutationAsync();
+        RestoreSetupGuideCardSelection(selectedCardIndex);
+        return null;
+    }
+
     public async Task<string?> ImportSetupDependencyBinaryAsync(SetupDependencyKind kind, string sourcePath)
     {
         var selectedCardIndex = SelectedSetupGuideCardIndex;
@@ -755,8 +856,9 @@ public partial class MainWindowViewModel
         var isInstalled = IsSetupDependencyInstalled(kind, status);
         var hasUpdateAvailable = HasSetupDependencyUpdate(kind, status);
         var canUninstall = CanUninstallSetupDependency(kind, status, isInstalled);
+        var isManualPinned = HasManualPinnedSetupDependency(kind);
         var statusText = BuildSetupStatusText(kind, status);
-        var warningText = BuildSetupWarningText(kind, status, isInstalled, canUninstall, hasUpdateAvailable);
+        var warningText = BuildSetupWarningText(kind, status, isInstalled, canUninstall, hasUpdateAvailable, isManualPinned);
         var primaryActionText = GetSetupPrimaryActionText(kind, isInstalled, hasUpdateAvailable);
 
         return new SetupGuideDependencyItemViewModel(
@@ -780,7 +882,9 @@ public partial class MainWindowViewModel
             ShouldShowSetupPrimaryAction(status, isInstalled, hasUpdateAvailable),
             IsSetupPrimaryActionEnabled(kind, status, isInstalled),
             isInstalled,
-            canUninstall);
+            canUninstall,
+            CanManuallySelectSetupDependency(kind),
+            isManualPinned);
     }
 
     private SetupGuideDependencyItemViewModel? FindSetupGuideDependency(SetupDependencyKind kind)
@@ -1019,35 +1123,42 @@ public partial class MainWindowViewModel
         SetupDependencyStatus status,
         bool isInstalled,
         bool canUninstall,
-        bool hasUpdateAvailable)
+        bool hasUpdateAvailable,
+        bool isManualPinned)
     {
+        var warnings = new List<string>();
+        if (isManualPinned)
+        {
+            warnings.Add(Texts.ManualToolPinnedStatus(GetSetupDependencyTitle(kind)));
+        }
+
         if (kind == SetupDependencyKind.Python312 && status.State == ReadinessState.Partial)
         {
-            return Texts.Pick(
+            warnings.Add(Texts.Pick(
                 "检测到更高版本的 Python，可能与当前引导目标存在兼容性差异。你可以保持现状，也可以并行安装 3.12.10。",
-                "A higher Python version was detected and may differ from the current guide target. You can keep the current setup or install 3.12.10 in parallel.");
+                "A higher Python version was detected and may differ from the current guide target. You can keep the current setup or install 3.12.10 in parallel."));
         }
 
         if (hasUpdateAvailable && !string.IsNullOrWhiteSpace(status.LatestVersion))
         {
-            return Texts.Pick(
+            warnings.Add(Texts.Pick(
                 $"检测到可用新版本：{status.LatestVersion}",
-                $"A newer version is available: {status.LatestVersion}");
+                $"A newer version is available: {status.LatestVersion}"));
         }
 
         if (status.IsInstallSupported && !status.IsInstallEnabled)
         {
-            return Texts.Pick(
+            warnings.Add(Texts.Pick(
                 "自动安装按钮已保留，但需要先准备 Python 3.12。",
-                "The install button is kept visible, but Python 3.12 must be ready first.");
+                "The install button is kept visible, but Python 3.12 must be ready first."));
         }
 
         if (isInstalled && !canUninstall && HasLocalManagedUninstallScope(kind))
         {
-            return Texts.SetupDependencyExternalLocationWarning;
+            warnings.Add(Texts.SetupDependencyExternalLocationWarning);
         }
 
-        return string.Empty;
+        return string.Join(Environment.NewLine, warnings);
     }
 
     private string GetSetupPrimaryActionText(
@@ -1399,6 +1510,98 @@ public partial class MainWindowViewModel
             },
             _ => Array.Empty<string>()
         };
+    }
+
+    private IReadOnlyList<string> GetManualPathKeys(SetupDependencyKind kind)
+    {
+        return kind switch
+        {
+            SetupDependencyKind.Python312 => [ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Python)],
+            SetupDependencyKind.VapourSynth => [ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Vspipe)],
+            SetupDependencyKind.FfmpegBundle =>
+            [
+                ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Ffmpeg),
+                ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Ffprobe)
+            ],
+            SetupDependencyKind.X264 => [ManualToolPathKeys.ForEncoder(EncoderKind.X264)],
+            SetupDependencyKind.X265 => [ManualToolPathKeys.ForEncoder(EncoderKind.X265)],
+            SetupDependencyKind.SvtAv1 => [ManualToolPathKeys.ForEncoder(EncoderKind.SvtAv1)],
+            SetupDependencyKind.Av1an => [ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Av1an)],
+            SetupDependencyKind.Avs2PipeMod => [ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Avs2PipeMod)],
+            SetupDependencyKind.DgDemux => [ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.DgDemux)],
+            SetupDependencyKind.Eac3To => [ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Eac3To)],
+            SetupDependencyKind.Deew => [ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Deew)],
+            SetupDependencyKind.Dee => [ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Dee)],
+            SetupDependencyKind.OpusExt => [ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.OpusExt)],
+            _ => []
+        };
+    }
+
+    private IReadOnlyDictionary<string, string> BuildManualPathEntries(SetupDependencyKind kind, string executablePath)
+    {
+        if (kind == SetupDependencyKind.FfmpegBundle)
+        {
+            return BuildFfmpegBundleManualPathEntries(executablePath);
+        }
+
+        var key = GetManualPathKeys(kind).FirstOrDefault();
+        return string.IsNullOrWhiteSpace(key)
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                [key] = executablePath
+            };
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildFfmpegBundleManualPathEntries(string executablePath)
+    {
+        var fileName = Path.GetFileName(executablePath);
+        var directory = Path.GetDirectoryName(executablePath);
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var entries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (fileName.Equals("ffmpeg.exe", StringComparison.OrdinalIgnoreCase)
+            || fileName.Equals("ffmpeg64.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            entries[ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Ffmpeg)] = executablePath;
+            var ffprobePath = ResolveSiblingExecutable(directory, "ffprobe.exe", "ffprobe64.exe");
+            if (!string.IsNullOrWhiteSpace(ffprobePath))
+            {
+                entries[ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Ffprobe)] = ffprobePath;
+            }
+
+            return entries;
+        }
+
+        if (fileName.Equals("ffprobe.exe", StringComparison.OrdinalIgnoreCase)
+            || fileName.Equals("ffprobe64.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            entries[ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Ffprobe)] = executablePath;
+            var ffmpegPath = ResolveSiblingExecutable(directory, "ffmpeg.exe", "ffmpeg64.exe");
+            if (!string.IsNullOrWhiteSpace(ffmpegPath))
+            {
+                entries[ManualToolPathKeys.ForRegisteredTool(RegisteredToolKind.Ffmpeg)] = ffmpegPath;
+            }
+        }
+
+        return entries;
+    }
+
+    private static string? ResolveSiblingExecutable(string directory, params string[] fileNames)
+    {
+        foreach (var fileName in fileNames)
+        {
+            var candidate = Path.Combine(directory, fileName);
+            if (File.Exists(candidate))
+            {
+                return Path.GetFullPath(candidate);
+            }
+        }
+
+        return null;
     }
 
     private static ReadinessState ResolveCompositeSetupState(ToolProbeResult primary, ToolProbeResult secondary)

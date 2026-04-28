@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using FlowEncode.Application;
+using FlowEncode.Domain;
 
 namespace FlowEncode.Infrastructure;
 
@@ -7,14 +9,22 @@ internal sealed class ExternalToolLocator
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(3);
 
     private readonly LocalAppPaths _paths;
+    private readonly IAppSettingsService? _settingsService;
 
-    public ExternalToolLocator(LocalAppPaths paths)
+    public ExternalToolLocator(LocalAppPaths paths, IAppSettingsService? settingsService = null)
     {
         _paths = paths;
+        _settingsService = settingsService;
     }
 
     public string ResolveVspipe()
     {
+        var manualVspipe = ResolveManual(RegisteredToolKind.Vspipe);
+        if (!string.IsNullOrWhiteSpace(manualVspipe) && IsUsableVspipe(manualVspipe))
+        {
+            return manualVspipe;
+        }
+
         foreach (var candidate in EnumerateVspipeCandidates())
         {
             if (IsUsableVspipe(candidate))
@@ -28,26 +38,43 @@ internal sealed class ExternalToolLocator
 
     public string ResolveAvs2PipeMod()
     {
-        return ResolveAny("avs2pipemod64.exe", "avs2pipemod.exe", "Avs2Pipemod.exe")
+        return ResolveManual(RegisteredToolKind.Avs2PipeMod)
+            ?? ResolveAny("avs2pipemod64.exe", "avs2pipemod.exe", "Avs2Pipemod.exe")
             ?? throw new InvalidOperationException("未找到 avs2pipemod。处理 .avs 输入前，请先安装 Avs2Pipemod，或把可执行文件放到 PATH / tools 目录。");
     }
 
     public string ResolveFfmpeg()
     {
-        return ResolveAny("ffmpeg.exe", "ffmpeg64.exe")
+        return ResolveManual(RegisteredToolKind.Ffmpeg)
+            ?? ResolveAny("ffmpeg.exe", "ffmpeg64.exe")
             ?? throw new InvalidOperationException("未找到 ffmpeg.exe。处理 .mkv / .mp4 / .m2ts / .avc 等媒体文件前，请先安装 FFmpeg，或把 ffmpeg.exe 放到 PATH / tools 目录。");
     }
 
     public string ResolveFfprobe()
     {
-        return ResolveAny("ffprobe.exe", "ffprobe64.exe")
+        return ResolveManual(RegisteredToolKind.Ffprobe)
+            ?? ResolveAny("ffprobe.exe", "ffprobe64.exe")
             ?? throw new InvalidOperationException("未找到 ffprobe.exe。探测媒体文件源信息前，请先安装 FFmpeg，或把 ffprobe.exe 放到 PATH / tools 目录。");
     }
 
     public string ResolveAv1an()
     {
-        return ResolveAny("av1an.exe", "Av1an.exe")
+        return ResolveManual(RegisteredToolKind.Av1an)
+            ?? ResolveAny("av1an.exe", "Av1an.exe")
             ?? throw new InvalidOperationException("未找到 av1an.exe。请先安装 Av1an 并确保它位于 PATH，或将 av1an.exe 放到 tools 目录。");
+    }
+
+    private string? ResolveManual(RegisteredToolKind kind)
+    {
+        var settings = _settingsService?.Load();
+        if (settings is null
+            || !settings.EffectiveManualToolPaths.TryGetValue(ManualToolPathKeys.ForRegisteredTool(kind), out var value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim().Trim('"');
+        return File.Exists(normalized) ? Path.GetFullPath(normalized) : null;
     }
 
     private string? ResolveAny(params string[] fileNames)

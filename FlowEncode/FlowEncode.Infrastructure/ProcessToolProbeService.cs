@@ -13,15 +13,18 @@ public sealed class ProcessToolProbeService : IToolProbeService
     private readonly IToolRegistryService _toolRegistryService;
     private readonly LocalAppPaths _paths;
     private readonly IEncoderDiscoveryService _encoderDiscoveryService;
+    private readonly IAppSettingsService _settingsService;
 
     public ProcessToolProbeService(
         IToolRegistryService toolRegistryService,
         LocalAppPaths paths,
-        IEncoderDiscoveryService encoderDiscoveryService)
+        IEncoderDiscoveryService encoderDiscoveryService,
+        IAppSettingsService settingsService)
     {
         _toolRegistryService = toolRegistryService;
         _paths = paths;
         _encoderDiscoveryService = encoderDiscoveryService;
+        _settingsService = settingsService;
     }
 
     public Task<IReadOnlyList<ToolProbeResult>> ProbeAllAsync(CancellationToken cancellationToken = default)
@@ -94,6 +97,7 @@ public sealed class ProcessToolProbeService : IToolProbeService
             resolved.Source switch
             {
                 EncoderBinarySource.LocalToolset => ToolDetectionSource.LocalToolset,
+                EncoderBinarySource.ManualSelection => ToolDetectionSource.ManualSelection,
                 EncoderBinarySource.EnvironmentVariable => ToolDetectionSource.EnvironmentVariable,
                 EncoderBinarySource.Path => ToolDetectionSource.SystemEncoder,
                 _ => ToolDetectionSource.None
@@ -473,6 +477,14 @@ public sealed class ProcessToolProbeService : IToolProbeService
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        foreach (var candidate in EnumerateManualCandidates(definition))
+        {
+            if (seen.Add(candidate.Path))
+            {
+                yield return candidate;
+            }
+        }
+
         if (definition.SearchLocations.HasFlag(ToolSearchLocation.LocalToolsRoot))
         {
             foreach (var fileName in definition.ExecutableNames)
@@ -529,6 +541,21 @@ public sealed class ProcessToolProbeService : IToolProbeService
             {
                 yield return candidate;
             }
+        }
+    }
+
+    private IEnumerable<ToolCandidate> EnumerateManualCandidates(ToolDefinition definition)
+    {
+        var settings = _settingsService.Load();
+        if (!settings.EffectiveManualToolPaths.TryGetValue(ManualToolPathKeys.ForRegisteredTool(definition.Kind), out var value))
+        {
+            yield break;
+        }
+
+        var resolved = ResolveFromInput(value, definition.ExecutableNames);
+        if (!string.IsNullOrWhiteSpace(resolved))
+        {
+            yield return new ToolCandidate(resolved, ToolDetectionSource.ManualSelection, "manual");
         }
     }
 

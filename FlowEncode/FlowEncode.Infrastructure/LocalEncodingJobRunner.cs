@@ -17,7 +17,8 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private static readonly Regex X265PipeMetricsRegex = new(@"^\[\s*(?<progress>\d{1,3}(?:\.\d+)?)\s*%\]\s+(?<current>\d+)\s*\/\s*(?<total>\d+)\s+Frames\s+@\s+(?<fps>\d+(?:\.\d+)?)\s+FPS\s+\|\s+(?<bitrate>\d+(?:\.\d+)?)\s+kb\/s\s+\|\s+(?<eta>\d+:\d{2}:\d{2})(?:\s+\[(?<remainingeta>-?\d+:\d{2}:\d{2})\])?\s+\|\s+(?<currentsize>\d+(?:\.\d+)?)\s*(?<currentunit>[KMGTP]?B)(?:\s+\[(?<size>\d+(?:\.\d+)?)\s*(?<unit>[KMGTP]?B)\])?\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex X26xMetricsRegex = new(@"\[?\s*(?<progress>\d{1,3}(?:\.\d+)?)\s*%\]?\s+(?:(?<current>\d+)\s*\/\s*(?<total>\d+)\s+frames|(?<framesonly>\d+)\s+frames:)\s*,?\s*(?<fps>\d+(?:\.\d+)?)\s+fps,\s*(?<bitrate>\d+(?:\.\d+)?)\s+kb/s(?:,\s*eta\s+(?<eta>\d+:\d{2}:\d{2}))?(?:,\s*est\.\s*file\s*size\s+(?<size>\d+(?:\.\d+)?)\s*(?<unit>[KMGTP]?B))?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex X26xFrameMetricsRegex = new(@"(?<current>\d+)\s+frames:\s*(?<fps>\d+(?:\.\d+)?)\s+fps,\s*(?<bitrate>\d+(?:\.\d+)?)\s+kb/s", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex X26xEncodedSummaryRegex = new(@"^encoded\s+(?<current>\d+)\s+frames,\s+(?<fps>\d+(?:\.\d+)?)\s+fps,\s+(?<bitrate>\d+(?:\.\d+)?)\s+kb/s$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex X26xPipeFrameMetricsRegex = new(@"^(?:x26[45]\s+)?(?<current>\d+)\s+frames\s+@\s+(?<fps>\d+(?:\.\d+)?)\s+fps\s*\|\s*(?<bitrate>\d+(?:\.\d+)?)\s+kb/s\s*\|\s*(?<currentsize>\d+(?:\.\d+)?)\s*(?<currentunit>[KMGTP]?B)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex X26xEncodedSummaryRegex = new(@"^encoded\s+(?<current>\d+)\s+frames(?:,\s+(?<fps>\d+(?:\.\d+)?)\s+fps|\s+in\s+\d+(?:\.\d+)?s\s+\((?<fpsparenthesized>\d+(?:\.\d+)?)\s+fps\)),\s+(?<bitrate>\d+(?:\.\d+)?)\s+kb/s(?:,\s*Avg\s+QP:\s*\d+(?:\.\d+)?)?$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex X26xFrameRatioRegex = new(@"(?<current>\d+)\s*\/\s*(?<total>\d+)\s+frames?\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex X26xFrameEqualsRegex = new(@"\bframe=\s*(?<current>\d+)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex X26xLooseFpsRegex = new(@"(?<fps>\d+(?:\.\d+)?)\s*fps\b", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -46,7 +47,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         IEncoderDiscoveryService discoveryService,
         IAppSettingsService settingsService)
     {
-        _toolLocator = new ExternalToolLocator(paths);
+        _toolLocator = new ExternalToolLocator(paths, settingsService);
         _sourceInfoProbe = new SourceVideoInfoProbe(_toolLocator);
         _discoveryService = discoveryService;
         _settingsService = settingsService;
@@ -786,9 +787,9 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         }
 
         var intervalElapsed = now - state.LastReportedAt >= TransientProgressReportInterval;
-        var hasMeaningfulProgressDelta = !state.LastProgressFraction.HasValue
-            || !currentProgressFraction.HasValue
-            || Math.Abs(currentProgressFraction.Value - state.LastProgressFraction.Value) >= 0.0025;
+        var hasMeaningfulProgressDelta = currentProgressFraction.HasValue
+            && (!state.LastProgressFraction.HasValue
+                || Math.Abs(currentProgressFraction.Value - state.LastProgressFraction.Value) >= 0.0025);
         var frameAdvanced = currentFrame != state.LastCurrentFrame;
 
         if (!frameAdvanced && !hasMeaningfulProgressDelta)
@@ -876,11 +877,31 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     new EncodingProgressSnapshot(currentFrame, totalFrames, fps, bitrate, eta, estimatedSizeBytes));
             }
 
+            var pipeFrameMetricsMatch = X26xPipeFrameMetricsRegex.Match(normalizedX26xLine);
+            if (pipeFrameMetricsMatch.Success)
+            {
+                var currentFrame = ParseInvariantLong(pipeFrameMetricsMatch.Groups["current"].Value);
+                var fps = ParseInvariantDoubleNullable(pipeFrameMetricsMatch.Groups["fps"].Value);
+                var bitrate = ParseInvariantDoubleNullable(pipeFrameMetricsMatch.Groups["bitrate"].Value);
+                var progressFraction = TryBuildProgressFraction(null, currentFrame, totalFrames);
+                var eta = currentFrame.HasValue && totalFrames is > 0 && fps is > 0
+                    ? (TimeSpan?)TimeSpan.FromSeconds(Math.Max(0, (totalFrames.Value - currentFrame.Value) / fps.Value))
+                    : null;
+                var estimatedSizeBytes = totalFrames is > 0 && sourceFramesPerSecond is > 0 && bitrate is > 0
+                    ? (long?)EstimateFileSizeBytes(totalFrames.Value, sourceFramesPerSecond.Value, bitrate.Value)
+                    : ParseSizeToBytes(pipeFrameMetricsMatch.Groups["currentsize"].Value, pipeFrameMetricsMatch.Groups["currentunit"].Value);
+
+                return new ParsedProgressSnapshot(
+                    progressFraction,
+                    new EncodingProgressSnapshot(currentFrame, totalFrames, fps, bitrate, eta, estimatedSizeBytes));
+            }
+
             var encodedSummaryMatch = X26xEncodedSummaryRegex.Match(normalizedX26xLine);
             if (encodedSummaryMatch.Success)
             {
                 var currentFrame = ParseInvariantLong(encodedSummaryMatch.Groups["current"].Value);
-                var fps = ParseInvariantDoubleNullable(encodedSummaryMatch.Groups["fps"].Value);
+                var fps = ParseInvariantDoubleNullable(encodedSummaryMatch.Groups["fps"].Value)
+                    ?? ParseInvariantDoubleNullable(encodedSummaryMatch.Groups["fpsparenthesized"].Value);
                 var bitrate = ParseInvariantDoubleNullable(encodedSummaryMatch.Groups["bitrate"].Value);
                 var progressFraction = TryBuildProgressFraction(null, currentFrame, totalFrames);
                 var estimatedSizeBytes = totalFrames is > 0 && sourceFramesPerSecond is > 0 && bitrate is > 0

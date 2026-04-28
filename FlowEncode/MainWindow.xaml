@@ -1473,6 +1473,18 @@
                                                                             </StackPanel>
 
                                                                             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Top">
+                                                                                <Button AutomationProperties.Name="{Binding DataContext.Texts.ManualSelectButton, ElementName=RootLayout}" Tag="{Binding Kind}" Click="ManualSelectSetupDependencyButton_Click" IsEnabled="{Binding ManualSelectEnabled}" Visibility="{Binding ManualSelectVisibility}" ToolTipService.ToolTip="{Binding DataContext.Texts.ManualSelectButton, ElementName=RootLayout}">
+                                                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                                                        <SymbolIcon Symbol="OpenFile" />
+                                                                                        <TextBlock Text="{Binding DataContext.Texts.ManualSelectButton, ElementName=RootLayout}" />
+                                                                                    </StackPanel>
+                                                                                </Button>
+                                                                                <Button AutomationProperties.Name="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}" Tag="{Binding Kind}" Click="ClearManualPinnedSetupDependencyButton_Click" IsEnabled="{Binding ClearManualPinEnabled}" Visibility="{Binding ClearManualPinVisibility}" ToolTipService.ToolTip="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}">
+                                                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                                                        <SymbolIcon Symbol="Cancel" />
+                                                                                        <TextBlock Text="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}" />
+                                                                                    </StackPanel>
+                                                                                </Button>
                                                                                 <Button AutomationProperties.Name="{Binding PrimaryActionText}" Tag="{Binding Kind}" Click="InstallSetupDependencyButton_Click" IsEnabled="{Binding PrimaryActionEnabled}" Visibility="{Binding PrimaryActionVisibility}" Style="{StaticResource AccentButtonStyle}" ToolTipService.ToolTip="{Binding PrimaryActionText}">
                                                                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                                                                         <SymbolIcon Symbol="Download" />
@@ -1636,6 +1648,18 @@
                                                                         </StackPanel>
 
                                                                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" VerticalAlignment="Top">
+                                                                            <Button AutomationProperties.Name="{Binding DataContext.Texts.ManualSelectButton, ElementName=RootLayout}" Tag="{Binding Kind}" Click="ManualSelectSetupDependencyButton_Click" IsEnabled="{Binding ManualSelectEnabled}" Visibility="{Binding ManualSelectVisibility}" ToolTipService.ToolTip="{Binding DataContext.Texts.ManualSelectButton, ElementName=RootLayout}">
+                                                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                                                    <SymbolIcon Symbol="OpenFile" />
+                                                                                    <TextBlock Text="{Binding DataContext.Texts.ManualSelectButton, ElementName=RootLayout}" />
+                                                                                </StackPanel>
+                                                                            </Button>
+                                                                            <Button AutomationProperties.Name="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}" Tag="{Binding Kind}" Click="ClearManualPinnedSetupDependencyButton_Click" IsEnabled="{Binding ClearManualPinEnabled}" Visibility="{Binding ClearManualPinVisibility}" ToolTipService.ToolTip="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}">
+                                                                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                                                                    <SymbolIcon Symbol="Cancel" />
+                                                                                    <TextBlock Text="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}" />
+                                                                                </StackPanel>
+                                                                            </Button>
                                                                             <Button AutomationProperties.Name="{Binding PrimaryActionText}" Tag="{Binding Kind}" Click="InstallSetupDependencyButton_Click" IsEnabled="{Binding PrimaryActionEnabled}" Visibility="{Binding PrimaryActionVisibility}" Style="{StaticResource AccentButtonStyle}" ToolTipService.ToolTip="{Binding PrimaryActionText}">
                                                                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                                                                     <SymbolIcon Symbol="Download" />

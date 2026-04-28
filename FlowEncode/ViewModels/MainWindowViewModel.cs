@@ -76,6 +76,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     private StringChoiceOption? _selectedOutputFormat;
     private bool _preferSystemEncoders;
     private bool _autoCheckUpdatesOnStartup;
+    private IReadOnlyDictionary<string, string> _manualToolPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    private bool _hasRunInitialVsPluginDependencyUpdate;
     private string _workspaceRootPath = string.Empty;
     private AppUpdateCheckResult? _lastAppUpdateResult;
     private string? _lastAppUpdateErrorMessage;
@@ -910,6 +912,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             includeUpdates: AutoCheckUpdatesOnStartup,
             refreshEnvironmentReadiness: !restoredSetupGuideSnapshot);
 
+        RunInitialVsPluginDependencyUpdateIfNeeded();
+
         if (!_hasCompletedSetupGuide)
         {
             await RefreshSetupGuideStatusAsync(
@@ -1147,7 +1151,9 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 CurrentThemePreference,
                 CurrentLanguagePreference,
                 _hasCompletedSetupGuide,
-                normalizedWorkspaceRootPath);
+                normalizedWorkspaceRootPath,
+                new Dictionary<string, string>(_manualToolPaths, StringComparer.OrdinalIgnoreCase),
+                _hasRunInitialVsPluginDependencyUpdate);
 
             _settingsService.Save(settings);
             WorkspaceRootPath = normalizedWorkspaceRootPath;
@@ -2712,8 +2718,33 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         AutoCheckUpdatesOnStartup = settings.AutoCheckUpdatesOnStartup;
         WorkspaceRootPath = _appPaths.RootPath;
         _hasCompletedSetupGuide = settings.HasSeenSetupGuide;
+        _manualToolPaths = new Dictionary<string, string>(settings.EffectiveManualToolPaths, StringComparer.OrdinalIgnoreCase);
+        _hasRunInitialVsPluginDependencyUpdate = settings.HasRunInitialVsPluginDependencyUpdate;
         SelectedTheme = ThemeOptions.FirstOrDefault(option => option.Value == settings.Theme) ?? ThemeOptions[0];
         SelectedLanguage = LanguageOptions.FirstOrDefault(option => option.Value == settings.Language) ?? LanguageOptions[0];
+    }
+
+    private void RunInitialVsPluginDependencyUpdateIfNeeded()
+    {
+        if (_hasRunInitialVsPluginDependencyUpdate)
+        {
+            return;
+        }
+
+        _hasRunInitialVsPluginDependencyUpdate = true;
+        SaveSettings(updateStatusText: false);
+
+        var readiness = _environmentReadinessReport;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _setupBootstrapService.RefreshVsPluginPackageDefinitionsAsync(readiness);
+            }
+            catch
+            {
+            }
+        });
     }
 
     public async Task<string?> PrepareWorkspaceRootChangeAsync(string proposedWorkspaceRootPath)

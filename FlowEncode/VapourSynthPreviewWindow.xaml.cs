@@ -1326,6 +1326,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
             CloseButtonText = ViewModel.Texts.CancelButton,
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = RootLayout.XamlRoot,
+            RequestedTheme = RootLayout.ActualTheme,
             Content = new StackPanel
             {
                 Spacing = 12,

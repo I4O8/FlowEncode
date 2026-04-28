@@ -20,10 +20,12 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
     };
 
     private readonly LocalAppPaths _paths;
+    private readonly IAppSettingsService _settingsService;
 
-    public LocalEncoderDiscoveryService(LocalAppPaths paths)
+    public LocalEncoderDiscoveryService(LocalAppPaths paths, IAppSettingsService settingsService)
     {
         _paths = paths;
+        _settingsService = settingsService;
     }
 
     public IReadOnlyList<DiscoveredEncoderBinary> DiscoverSystemBinaries()
@@ -33,6 +35,16 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
 
         foreach (var kind in Enum.GetValues<EncoderKind>())
         {
+            foreach (var resolvedPath in EnumerateManualMatches(kind))
+            {
+                if (!seen.Add($"{kind}:{resolvedPath}"))
+                {
+                    continue;
+                }
+
+                results.Add(CreateCandidate(kind, resolvedPath, EncoderBinarySource.ManualSelection, "manual"));
+            }
+
             foreach (var variableName in EnvironmentVariableNames[kind])
             {
                 var value = Environment.GetEnvironmentVariable(variableName, EnvironmentVariableTarget.Process)
@@ -71,6 +83,12 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
         EncoderArchitecture preferredArchitecture,
         bool preferSystemEncoders)
     {
+        var manualCandidate = PickBest(GetManualCandidates(kind), preferredArchitecture);
+        if (manualCandidate is not null)
+        {
+            return manualCandidate;
+        }
+
         var localCandidate = PickBest(GetLocalCandidates(kind), preferredArchitecture);
         if (localCandidate is not null)
         {
@@ -96,6 +114,14 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
             }
 
                 yield return CreateCandidate(kind, path, EncoderBinarySource.LocalToolset, "encoders");
+        }
+    }
+
+    private IEnumerable<DiscoveredEncoderBinary> GetManualCandidates(EncoderKind kind)
+    {
+        foreach (var path in EnumerateManualMatches(kind))
+        {
+            yield return CreateCandidate(kind, path, EncoderBinarySource.ManualSelection, "manual");
         }
     }
 
@@ -136,6 +162,21 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
                     yield return Path.GetFullPath(candidate);
                 }
             }
+        }
+    }
+
+    private IEnumerable<string> EnumerateManualMatches(EncoderKind kind)
+    {
+        var settings = _settingsService.Load();
+        if (!settings.EffectiveManualToolPaths.TryGetValue(ManualToolPathKeys.ForEncoder(kind), out var value))
+        {
+            yield break;
+        }
+
+        var resolvedPath = ResolveFromInput(value, kind);
+        if (!string.IsNullOrWhiteSpace(resolvedPath))
+        {
+            yield return resolvedPath;
         }
     }
 

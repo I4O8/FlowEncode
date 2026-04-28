@@ -21,6 +21,8 @@ public sealed class SetupGuideDependencyItemViewModel : CommunityToolkit.Mvvm.Co
                 OnPropertyChanged(nameof(ProgressVisibility));
                 OnPropertyChanged(nameof(PrimaryActionEnabled));
                 OnPropertyChanged(nameof(UninstallActionEnabled));
+                OnPropertyChanged(nameof(ManualSelectEnabled));
+                OnPropertyChanged(nameof(ClearManualPinEnabled));
             }
         }
     }
@@ -72,7 +74,9 @@ public sealed class SetupGuideDependencyItemViewModel : CommunityToolkit.Mvvm.Co
         bool isPrimaryActionVisible,
         bool isPrimaryActionEnabled,
         bool isUninstallVisible,
-        bool isUninstallEnabled)
+        bool isUninstallEnabled,
+        bool isManualSelectVisible,
+        bool isManualPinned)
     {
         Kind = kind;
         Title = title;
@@ -91,6 +95,8 @@ public sealed class SetupGuideDependencyItemViewModel : CommunityToolkit.Mvvm.Co
         IsPrimaryActionBaseEnabled = isPrimaryActionEnabled;
         IsUninstallVisible = isUninstallVisible;
         IsUninstallBaseEnabled = isUninstallEnabled;
+        IsManualSelectVisible = isManualSelectVisible;
+        IsManualPinned = isManualPinned;
         _installProgressText = string.Empty;
     }
 
@@ -128,6 +134,10 @@ public sealed class SetupGuideDependencyItemViewModel : CommunityToolkit.Mvvm.Co
 
     public bool IsUninstallBaseEnabled { get; }
 
+    public bool IsManualSelectVisible { get; }
+
+    public bool IsManualPinned { get; }
+
     public Visibility ReadyBadgeVisibility => State == ReadinessState.Ready ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility WarningBadgeVisibility => State is ReadinessState.Partial or ReadinessState.Unknown ? Visibility.Visible : Visibility.Collapsed;
@@ -148,6 +158,10 @@ public sealed class SetupGuideDependencyItemViewModel : CommunityToolkit.Mvvm.Co
 
     public Visibility UninstallVisibility => IsUninstallVisible ? Visibility.Visible : Visibility.Collapsed;
 
+    public Visibility ManualSelectVisibility => IsManualSelectVisible ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility ClearManualPinVisibility => IsManualPinned ? Visibility.Visible : Visibility.Collapsed;
+
     public Visibility ReleaseVisibility => string.IsNullOrWhiteSpace(ReleaseUrl) ? Visibility.Collapsed : Visibility.Visible;
 
     public Visibility ProgressVisibility => IsBusy ? Visibility.Visible : Visibility.Collapsed;
@@ -159,6 +173,10 @@ public sealed class SetupGuideDependencyItemViewModel : CommunityToolkit.Mvvm.Co
     public bool PrimaryActionEnabled => IsPrimaryActionBaseEnabled && !IsBusy;
 
     public bool UninstallActionEnabled => IsUninstallBaseEnabled && !IsBusy;
+
+    public bool ManualSelectEnabled => IsManualSelectVisible && !IsBusy;
+
+    public bool ClearManualPinEnabled => IsManualPinned && !IsBusy;
 
     public void BeginOperation()
     {

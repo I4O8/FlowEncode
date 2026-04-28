@@ -70,6 +70,23 @@ public sealed class SetupBootstrapService : ISetupBootstrapService, IDisposable
         return GetLocalStatusReportCoreAsync(readiness, previousReport, cancellationToken);
     }
 
+    public async Task RefreshVsPluginPackageDefinitionsAsync(
+        EnvironmentReadinessReport? readiness = null,
+        CancellationToken cancellationToken = default)
+    {
+        var installations = (await DiscoverPythonInstallationsAsync(readiness, cancellationToken))
+            .OrderByDescending(static item => item.Version.Major == 3 && item.Version.Minor == 12)
+            .ThenByDescending(static item => item.Version)
+            .ToList();
+        var pythonPath = installations.FirstOrDefault()?.ExecutablePath;
+        if (string.IsNullOrWhiteSpace(pythonPath))
+        {
+            return;
+        }
+
+        await TryUpdateVsrepoPackageDefinitionsAsync(pythonPath, cancellationToken);
+    }
+
     public Task InstallAsync(
         SetupDependencyKind kind,
         IProgress<SetupInstallProgress>? progress = null,

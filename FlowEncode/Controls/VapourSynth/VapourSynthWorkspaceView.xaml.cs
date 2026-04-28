@@ -933,7 +933,8 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
             Title = title,
             Content = message,
             CloseButtonText = ViewModel.Texts.OkButton,
-            XamlRoot = xamlRoot
+            XamlRoot = xamlRoot,
+            RequestedTheme = ActualTheme
         };
 
         await dialog.ShowAsync();
@@ -954,7 +955,8 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
             SecondaryButtonText = ViewModel.Texts.DontSaveButton,
             CloseButtonText = ViewModel.Texts.CancelButton,
             DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = xamlRoot
+            XamlRoot = xamlRoot,
+            RequestedTheme = ActualTheme
         };
 
         return await dialog.ShowAsync() switch

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace FlowEncode.Domain;
 
 public sealed record AppSettings(
@@ -6,7 +8,9 @@ public sealed record AppSettings(
     AppThemePreference Theme,
     AppLanguage Language,
     bool HasSeenSetupGuide = false,
-    string WorkspaceRootPath = "")
+    string WorkspaceRootPath = "",
+    IReadOnlyDictionary<string, string>? ManualToolPaths = null,
+    bool HasRunInitialVsPluginDependencyUpdate = false)
 {
     public static AppSettings Default { get; } = new(
         PreferSystemEncoders: true,
@@ -14,5 +18,11 @@ public sealed record AppSettings(
         Theme: AppThemePreference.Default,
         Language: AppLanguage.Chinese,
         HasSeenSetupGuide: false,
-        WorkspaceRootPath: string.Empty);
+        WorkspaceRootPath: string.Empty,
+        ManualToolPaths: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+        HasRunInitialVsPluginDependencyUpdate: false);
+
+    [JsonIgnore]
+    public IReadOnlyDictionary<string, string> EffectiveManualToolPaths =>
+        ManualToolPaths ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 }

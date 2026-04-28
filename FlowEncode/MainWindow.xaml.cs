@@ -920,12 +920,73 @@ public sealed partial class MainWindow : Window
         }
         else
         {
+            if (ViewModel.HasManualPinnedSetupDependency(kind))
+            {
+                var dependencyLabel = ViewModel.GetSetupDependencyDisplayName(kind);
+                var confirmed = await ShowConfirmationAsync(
+                    ViewModel.Texts.ManualToolUpdateOverrideTitle,
+                    ViewModel.Texts.ManualToolUpdateOverrideMessage(dependencyLabel),
+                    ViewModel.Texts.UpdateButton,
+                    ViewModel.Texts.CancelButton,
+                    ContentDialogButton.Close);
+                if (!confirmed)
+                {
+                    return;
+                }
+
+                error = await ViewModel.ClearManualPinnedSetupDependencyAsync(kind, refreshAfterClear: false);
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    await ShowMessageAsync(ViewModel.Texts.ErrorInstallFailedTitle, error);
+                    return;
+                }
+            }
+
             error = await ViewModel.InstallSetupDependencyAsync(kind);
         }
 
         if (!string.IsNullOrWhiteSpace(error))
         {
             await ShowMessageAsync(ViewModel.Texts.ErrorInstallFailedTitle, error);
+        }
+    }
+
+    private async void ManualSelectSetupDependencyButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: SetupDependencyKind kind })
+        {
+            return;
+        }
+
+        var picker = new FileOpenPicker();
+        picker.FileTypeFilter.Add(".exe");
+        picker.SuggestedStartLocation = PickerLocationId.ComputerFolder;
+        InitializeWithWindow.Initialize(picker, GetMainWindowHandle());
+
+        var file = await picker.PickSingleFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+
+        var error = await ViewModel.PinSetupDependencyBinaryAsync(kind, file.Path);
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            await ShowMessageAsync(ViewModel.Texts.ErrorSaveSettingsFailedTitle, error);
+        }
+    }
+
+    private async void ClearManualPinnedSetupDependencyButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: SetupDependencyKind kind })
+        {
+            return;
+        }
+
+        var error = await ViewModel.ClearManualPinnedSetupDependencyAsync(kind);
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            await ShowMessageAsync(ViewModel.Texts.ErrorSaveSettingsFailedTitle, error);
         }
     }
 
@@ -1185,7 +1246,8 @@ public sealed partial class MainWindow : Window
             PrimaryButtonText = ViewModel.Texts.LoadTemplateButton,
             CloseButtonText = ViewModel.Texts.CancelButton,
             DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = RootLayout.XamlRoot
+            XamlRoot = RootLayout.XamlRoot,
+            RequestedTheme = RootLayout.ActualTheme
         };
 
         if (await dialog.ShowAsync() != ContentDialogResult.Primary
@@ -1196,11 +1258,12 @@ public sealed partial class MainWindow : Window
 
         if (selectedTemplate.UserTemplate is not null)
         {
-            _selectionSyncInProgress = true;
-            OverviewTemplatePicker.SelectedItem = ViewModel.TemplateLibraryItems.FirstOrDefault(item =>
-                string.Equals(item.Key, selectedTemplate.Key, StringComparison.Ordinal));
-            SavedTemplatesQuickSelect.SelectedItem = selectedTemplate.UserTemplate;
-            _selectionSyncInProgress = false;
+            RunWithTemplateSelectionSync(() =>
+            {
+                OverviewTemplatePicker.SelectedItem = ViewModel.TemplateLibraryItems.FirstOrDefault(item =>
+                    string.Equals(item.Key, selectedTemplate.Key, StringComparison.Ordinal));
+                SavedTemplatesQuickSelect.SelectedItem = selectedTemplate.UserTemplate;
+            });
 
             await ViewModel.ApplyUserTemplateToEncodingDraftAsync(selectedTemplate.UserTemplate);
         }
@@ -1220,9 +1283,11 @@ public sealed partial class MainWindow : Window
 
         if (templateItem.UserTemplate is not null)
         {
-            _selectionSyncInProgress = true;
-            SavedTemplatesQuickSelect.SelectedItem = templateItem.UserTemplate;
-            _selectionSyncInProgress = false;
+            RunWithTemplateSelectionSync(() =>
+            {
+                SavedTemplatesQuickSelect.SelectedItem = templateItem.UserTemplate;
+            });
+
             await ViewModel.ApplyUserTemplateToEncodingDraftAsync(templateItem.UserTemplate);
         }
     }
@@ -1259,7 +1324,8 @@ public sealed partial class MainWindow : Window
             PrimaryButtonText = ViewModel.Texts.SaveButton,
             CloseButtonText = ViewModel.Texts.CancelButton,
             DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = RootLayout.XamlRoot
+            XamlRoot = RootLayout.XamlRoot,
+            RequestedTheme = RootLayout.ActualTheme
         };
 
         if (await dialog.ShowAsync() != ContentDialogResult.Primary)
@@ -1292,12 +1358,13 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _selectionSyncInProgress = true;
         var templateItem = ViewModel.TemplateLibraryItems
             .FirstOrDefault(item => string.Equals(item.TemplateId, template.Id, StringComparison.OrdinalIgnoreCase));
-        TemplateLibraryList.SelectedItem = templateItem;
-        OverviewTemplatePicker.SelectedItem = templateItem;
-        _selectionSyncInProgress = false;
+        RunWithTemplateSelectionSync(() =>
+        {
+            TemplateLibraryList.SelectedItem = templateItem;
+            OverviewTemplatePicker.SelectedItem = templateItem;
+        });
 
         await ViewModel.SelectUserTemplateAsync(template);
     }
@@ -1608,10 +1675,11 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _selectionSyncInProgress = true;
-        TemplateLibraryList.SelectedItem = null;
-        SavedTemplatesQuickSelect.SelectedItem = null;
-        _selectionSyncInProgress = false;
+        RunWithTemplateSelectionSync(() =>
+        {
+            TemplateLibraryList.SelectedItem = null;
+            SavedTemplatesQuickSelect.SelectedItem = null;
+        });
 
         ViewModel.BeginNewTemplateDraft();
     }
@@ -1823,7 +1891,8 @@ public sealed partial class MainWindow : Window
             PrimaryButtonText = primaryButtonText,
             CloseButtonText = closeButtonText,
             DefaultButton = defaultButton,
-            XamlRoot = RootLayout.XamlRoot
+            XamlRoot = RootLayout.XamlRoot,
+            RequestedTheme = RootLayout.ActualTheme
         };
 
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
@@ -1870,7 +1939,8 @@ public sealed partial class MainWindow : Window
             Title = title,
             Content = message,
             CloseButtonText = ViewModel.Texts.OkButton,
-            XamlRoot = RootLayout.XamlRoot
+            XamlRoot = RootLayout.XamlRoot,
+            RequestedTheme = RootLayout.ActualTheme
         };
 
         await dialog.ShowAsync();
@@ -1915,11 +1985,12 @@ public sealed partial class MainWindow : Window
             return null;
         }
 
-        _selectionSyncInProgress = true;
-        SavedTemplatesQuickSelect.SelectedItem = savedTemplate;
-        TemplateLibraryList.SelectedItem = ViewModel.TemplateLibraryItems.FirstOrDefault(item =>
-            string.Equals(item.TemplateId, savedTemplate.Id, StringComparison.OrdinalIgnoreCase));
-        _selectionSyncInProgress = false;
+        RunWithTemplateSelectionSync(() =>
+        {
+            SavedTemplatesQuickSelect.SelectedItem = savedTemplate;
+            TemplateLibraryList.SelectedItem = ViewModel.TemplateLibraryItems.FirstOrDefault(item =>
+                string.Equals(item.TemplateId, savedTemplate.Id, StringComparison.OrdinalIgnoreCase));
+        });
 
         return savedTemplate;
     }
@@ -1939,7 +2010,8 @@ public sealed partial class MainWindow : Window
             SecondaryButtonText = ViewModel.Texts.DontSaveButton,
             CloseButtonText = ViewModel.Texts.CancelButton,
             DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = RootLayout.XamlRoot
+            XamlRoot = RootLayout.XamlRoot,
+            RequestedTheme = RootLayout.ActualTheme
         };
 
         var result = await dialog.ShowAsync();
@@ -1953,18 +2025,17 @@ public sealed partial class MainWindow : Window
 
     private void RestoreCurrentTemplateSelection()
     {
-        _selectionSyncInProgress = true;
+        RunWithTemplateSelectionSync(() =>
+        {
+            var selectedItem = string.IsNullOrWhiteSpace(ViewModel.CurrentTemplateSelectionKey)
+                ? null
+                : ViewModel.TemplateLibraryItems.FirstOrDefault(item =>
+                    string.Equals(item.Key, ViewModel.CurrentTemplateSelectionKey, StringComparison.Ordinal));
+            TemplateLibraryList.SelectedItem = selectedItem;
+            OverviewTemplatePicker.SelectedItem = selectedItem;
 
-        var selectedItem = string.IsNullOrWhiteSpace(ViewModel.CurrentTemplateSelectionKey)
-            ? null
-            : ViewModel.TemplateLibraryItems.FirstOrDefault(item =>
-                string.Equals(item.Key, ViewModel.CurrentTemplateSelectionKey, StringComparison.Ordinal));
-        TemplateLibraryList.SelectedItem = selectedItem;
-        OverviewTemplatePicker.SelectedItem = selectedItem;
-
-        SavedTemplatesQuickSelect.SelectedItem = (TemplateLibraryList.SelectedItem as TemplateLibraryItemViewModel)?.UserTemplate;
-
-        _selectionSyncInProgress = false;
+            SavedTemplatesQuickSelect.SelectedItem = (TemplateLibraryList.SelectedItem as TemplateLibraryItemViewModel)?.UserTemplate;
+        });
     }
 
     private async Task SelectTemplateItemAsync(TemplateLibraryItemViewModel templateItem)
@@ -1991,11 +2062,26 @@ public sealed partial class MainWindow : Window
 
     private void SyncTemplateSelectors(TemplateLibraryItemViewModel? templateItem)
     {
+        RunWithTemplateSelectionSync(() =>
+        {
+            TemplateLibraryList.SelectedItem = templateItem;
+            OverviewTemplatePicker.SelectedItem = templateItem;
+            SavedTemplatesQuickSelect.SelectedItem = templateItem?.UserTemplate;
+        });
+    }
+
+    private void RunWithTemplateSelectionSync(Action action)
+    {
         _selectionSyncInProgress = true;
-        TemplateLibraryList.SelectedItem = templateItem;
-        OverviewTemplatePicker.SelectedItem = templateItem;
-        SavedTemplatesQuickSelect.SelectedItem = templateItem?.UserTemplate;
-        _selectionSyncInProgress = false;
+
+        try
+        {
+            action();
+        }
+        finally
+        {
+            _selectionSyncInProgress = false;
+        }
     }
 
     private string? PickTemplateImportFilePath()

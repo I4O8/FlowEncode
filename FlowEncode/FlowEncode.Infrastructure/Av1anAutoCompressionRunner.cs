@@ -18,9 +18,9 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
     private readonly ExternalToolLocator _toolLocator;
     private readonly ConcurrentDictionary<Guid, Process> _activeProcesses = new();
 
-    public Av1anAutoCompressionRunner(LocalAppPaths paths)
+    public Av1anAutoCompressionRunner(LocalAppPaths paths, IAppSettingsService settingsService)
     {
-        _toolLocator = new ExternalToolLocator(paths);
+        _toolLocator = new ExternalToolLocator(paths, settingsService);
     }
 
     public string BuildDisplayCommand(AutoCompressionRequest request)
