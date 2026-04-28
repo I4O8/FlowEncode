@@ -35,6 +35,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         @"^Encoding:\s*(?<current>\d+)\s*\/\s*(?<total>\d+)\s+Frames?\b.*?(?<fps>\d+(?:\.\d+)?)\s+fps\b.*?(?<bitrate>\d+(?:\.\d+)?)\s+kbps\b",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SvtMetricsRegex = new(@"Encoding\s+frame\s+(?<current>\d+)\s+(?<bitrate>\d+(?:\.\d+)?)\s+kbps\s+(?<fps>\d+(?:\.\d+)?)\s+fps", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex CommandLineTokenRegex = new("\"([^\"]*)\"|'([^']*)'|(\\S+)", RegexOptions.Compiled);
 
     private readonly ExternalToolLocator _toolLocator;
     private readonly SourceVideoInfoProbe _sourceInfoProbe;
@@ -332,7 +333,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         {
             InputPipelineKind.VapourSynth => $"{Quote(_toolLocator.ResolveVspipe())} {Quote(request.SourcePath)} - --container y4m",
             InputPipelineKind.AviSynth => $"{Quote(_toolLocator.ResolveAvs2PipeMod())} -y4mp {Quote(request.SourcePath)}",
-            InputPipelineKind.FfmpegPipe => $"{Quote(_toolLocator.ResolveFfmpeg())} -hide_banner -loglevel error -i {Quote(request.SourcePath)} -map 0:v:0 -an -sn -dn -f yuv4mpegpipe -",
+            InputPipelineKind.FfmpegPipe => $"{Quote(_toolLocator.ResolveFfmpeg())} -hide_banner -loglevel error -i {Quote(request.SourcePath)} -map 0:v:0 -an -sn -dn -strict -1 -f yuv4mpegpipe -",
             InputPipelineKind.RawYuvFile => string.Empty,
             InputPipelineKind.Y4mFile => string.Empty,
             _ => throw new InvalidOperationException("当前输入模式不支持管道执行。")
@@ -382,7 +383,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return request.Profile.Kind switch
         {
             EncoderKind.X264 or EncoderKind.X265 when request.Profile.RateControl == RateControlMode.TwoPass
-                => BuildX26xTwoPassSteps(request, encoderPath, sourceCommand, pipelineKind, includeX265UhdParameters, preset, tune, profileValue, statsPath!),
+                => BuildX26xTwoPassSteps(request, encoderPath, sourceCommand, pipelineKind, sourceInfo, includeX265UhdParameters, preset, tune, profileValue, statsPath!),
             EncoderKind.SvtAv1 when request.Profile.RateControl == RateControlMode.TwoPass
                 => BuildSvtTwoPassSteps(request, encoderPath, sourceCommand, pipelineKind, sourceInfo, preset, tune, profileValue, statsPath!),
             _ => BuildSinglePassSteps(request, encoderPath, sourceCommand, pipelineKind, sourceInfo, includeX265UhdParameters, preset, tune, profileValue, statsPath)
@@ -421,6 +422,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         string encoderPath,
         string sourceCommand,
         InputPipelineKind pipelineKind,
+        SourceVideoInfo? sourceInfo,
         bool includeX265UhdParameters,
         string preset,
         string tune,
@@ -431,7 +433,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             request,
             encoderPath,
             pipelineKind,
-            sourceInfo: null,
+            sourceInfo,
             includeX265UhdParameters,
             preset,
             tune,
@@ -443,7 +445,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             request,
             encoderPath,
             pipelineKind,
-            sourceInfo: null,
+            sourceInfo,
             includeX265UhdParameters,
             preset,
             tune,
@@ -558,6 +560,11 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             EncoderKind.SvtAv1 => BuildSvtDirectInputArguments(request.SourcePath, pipelineKind),
             _ => throw new ArgumentOutOfRangeException()
         };
+        var sourceMetadataArgs = BuildEncoderColorMetadataArguments(
+            profile.Kind,
+            sourceInfo,
+            profile.AdditionalArguments,
+            includeX265UhdParameters ? profile.UhdParameters : string.Empty);
 
         return profile.Kind switch
         {
@@ -568,6 +575,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 Optional("--tune", tune),
                 Optional("--profile", profileValue),
                 directInputArgs,
+                sourceMetadataArgs,
                 OptionalSegment(profile.AdditionalArguments),
                 outputArg),
             EncoderKind.X265 => JoinArguments(
@@ -577,6 +585,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 Optional("--tune", tune),
                 Optional("--profile", profileValue),
                 directInputArgs,
+                sourceMetadataArgs,
                 OptionalSegment(profile.AdditionalArguments),
                 OptionalSegment(includeX265UhdParameters ? profile.UhdParameters : string.Empty),
                 outputArg),
@@ -589,6 +598,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 "--progress 2",
                 sourceInfo is null ? string.Empty : BuildSvtSourceArguments(sourceInfo),
                 directInputArgs,
+                sourceMetadataArgs,
                 OptionalSegment(profile.AdditionalArguments),
                 outputArg),
             _ => throw new ArgumentOutOfRangeException()
@@ -761,6 +771,297 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             _ => string.Empty
         };
     }
+
+    internal static string BuildEncoderColorMetadataArguments(
+        EncoderKind kind,
+        SourceVideoInfo? sourceInfo,
+        string? additionalArguments,
+        string? x265UhdParameters)
+    {
+        if (sourceInfo is null)
+        {
+            return string.Empty;
+        }
+
+        return kind switch
+        {
+            EncoderKind.X264 => BuildX264ColorMetadataArguments(sourceInfo, [additionalArguments ?? string.Empty]),
+            EncoderKind.X265 => BuildX265ColorMetadataArguments(sourceInfo, [additionalArguments ?? string.Empty, x265UhdParameters ?? string.Empty]),
+            EncoderKind.SvtAv1 => BuildSvtColorMetadataArguments(sourceInfo, additionalArguments),
+            _ => string.Empty
+        };
+    }
+
+    private static string BuildX264ColorMetadataArguments(SourceVideoInfo sourceInfo, IReadOnlyList<string> manualArguments)
+    {
+        var parts = new List<string>();
+        AddStringMetadataOption(parts, "--range", MapX264Range(sourceInfo.ColorRange), manualArguments);
+        AddStringMetadataOption(parts, "--colorprim", NormalizeX26xColorValue(sourceInfo.ColorPrimaries, X26xColorPrimaries), manualArguments);
+        AddStringMetadataOption(parts, "--transfer", NormalizeX26xColorValue(sourceInfo.ColorTransfer, X26xColorTransfers), manualArguments);
+        AddStringMetadataOption(parts, "--colormatrix", NormalizeX26xColorValue(sourceInfo.ColorMatrix, X26xColorMatrices), manualArguments);
+        AddStringMetadataOption(parts, "--mastering-display", sourceInfo.MasteringDisplay, manualArguments);
+        return JoinArguments([.. parts]);
+    }
+
+    private static string BuildX265ColorMetadataArguments(SourceVideoInfo sourceInfo, IReadOnlyList<string> manualArguments)
+    {
+        var parts = new List<string>();
+        var hasVideoSignalPreset = ArgumentsContainAnyOption(manualArguments, "--video-signal-type-preset");
+        if (hasVideoSignalPreset)
+        {
+            return string.Empty;
+        }
+
+        AddStringMetadataOption(parts, "--range", MapX265Range(sourceInfo.ColorRange), manualArguments);
+        AddStringMetadataOption(parts, "--colorprim", NormalizeX26xColorValue(sourceInfo.ColorPrimaries, X26xColorPrimaries), manualArguments);
+        AddStringMetadataOption(parts, "--transfer", NormalizeX26xColorValue(sourceInfo.ColorTransfer, X26xColorTransfers), manualArguments);
+        AddStringMetadataOption(parts, "--colormatrix", NormalizeX26xColorValue(sourceInfo.ColorMatrix, X26xColorMatrices), manualArguments);
+        AddStringMetadataOption(parts, "--master-display", sourceInfo.MasteringDisplay, manualArguments);
+        AddStringMetadataOption(parts, "--max-cll", sourceInfo.ContentLightLevel, manualArguments);
+        return JoinArguments([.. parts]);
+    }
+
+    private static string BuildSvtColorMetadataArguments(SourceVideoInfo sourceInfo, string? manualArguments)
+    {
+        var parts = new List<string>();
+        var manualArgumentList = new[] { manualArguments ?? string.Empty };
+
+        AddStringMetadataOption(parts, "--color-range", MapSvtRange(sourceInfo.ColorRange), manualArgumentList);
+        AddStringMetadataOption(parts, "--color-primaries", MapSvtColorPrimaries(sourceInfo.ColorPrimaries), manualArgumentList);
+        AddStringMetadataOption(parts, "--transfer-characteristics", MapSvtColorTransfer(sourceInfo.ColorTransfer), manualArgumentList);
+        AddStringMetadataOption(parts, "--matrix-coefficients", MapSvtColorMatrix(sourceInfo.ColorMatrix), manualArgumentList);
+        AddStringMetadataOption(parts, "--chroma-sample-position", MapSvtChromaLocation(sourceInfo.ChromaLocation), manualArgumentList);
+        AddStringMetadataOption(parts, "--mastering-display", sourceInfo.MasteringDisplay, manualArgumentList);
+        AddStringMetadataOption(parts, "--content-light", sourceInfo.ContentLightLevel, manualArgumentList);
+        return JoinArguments([.. parts]);
+    }
+
+    private static void AddStringMetadataOption(ICollection<string> parts, string optionName, string? value, IReadOnlyList<string> manualArguments)
+    {
+        if (string.IsNullOrWhiteSpace(value) || ArgumentsContainAnyOption(manualArguments, optionName))
+        {
+            return;
+        }
+
+        parts.Add($"{optionName} {value}");
+    }
+
+    private static string? NormalizeX26xColorValue(string? value, IReadOnlySet<string> supportedValues)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return supportedValues.Contains(normalized) ? normalized : null;
+    }
+
+    private static string? MapX264Range(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "tv" or "limited" => "tv",
+            "pc" or "full" => "pc",
+            _ => null
+        };
+    }
+
+    private static string? MapX265Range(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "tv" or "limited" => "limited",
+            "pc" or "full" => "full",
+            _ => null
+        };
+    }
+
+    private static string? MapSvtRange(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "tv" or "limited" => "0",
+            "pc" or "full" => "1",
+            _ => null
+        };
+    }
+
+    private static string? MapSvtColorPrimaries(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "bt709" => "1",
+            "bt470m" => "4",
+            "bt470bg" => "5",
+            "smpte170m" => "6",
+            "smpte240m" => "7",
+            "film" => "8",
+            "bt2020" => "9",
+            "smpte428" => "10",
+            "smpte431" => "11",
+            "smpte432" => "12",
+            "ebu3213" or "jedec-p22" => "22",
+            _ => null
+        };
+    }
+
+    private static string? MapSvtColorTransfer(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "bt709" => "1",
+            "bt470m" => "4",
+            "bt470bg" => "5",
+            "smpte170m" => "6",
+            "smpte240m" => "7",
+            "linear" => "8",
+            "log100" => "9",
+            "log316" => "10",
+            "iec61966-2-4" => "11",
+            "bt1361e" => "12",
+            "iec61966-2-1" => "13",
+            "bt2020-10" => "14",
+            "bt2020-12" => "15",
+            "smpte2084" => "16",
+            "smpte428" => "17",
+            "arib-std-b67" => "18",
+            _ => null
+        };
+    }
+
+    private static string? MapSvtColorMatrix(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "gbr" or "rgb" => "0",
+            "bt709" => "1",
+            "fcc" => "4",
+            "bt470bg" => "5",
+            "smpte170m" => "6",
+            "smpte240m" => "7",
+            "ycgco" => "8",
+            "bt2020nc" => "9",
+            "bt2020c" => "10",
+            "smpte2085" => "11",
+            "chroma-derived-nc" => "12",
+            "chroma-derived-c" => "13",
+            "ictcp" => "14",
+            _ => null
+        };
+    }
+
+    private static string? MapSvtChromaLocation(string? value)
+    {
+        return value?.Trim().ToLowerInvariant() switch
+        {
+            "left" or "vertical" => "left",
+            "topleft" or "colocated" or "top-left" => "topleft",
+            _ => null
+        };
+    }
+
+    private static bool ArgumentsContainAnyOption(IReadOnlyList<string> arguments, params string[] optionNames)
+    {
+        foreach (var argument in arguments)
+        {
+            if (ArgumentsContainAnyOption(argument, optionNames))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ArgumentsContainAnyOption(string? arguments, params string[] optionNames)
+    {
+        if (string.IsNullOrWhiteSpace(arguments))
+        {
+            return false;
+        }
+
+        var options = new HashSet<string>(optionNames, StringComparer.OrdinalIgnoreCase);
+        foreach (var token in TokenizeCommandLine(arguments))
+        {
+            if (!token.StartsWith("--", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var optionName = token.Split('=', 2)[0];
+            if (options.Contains(optionName))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static IReadOnlyList<string> TokenizeCommandLine(string value)
+    {
+        return CommandLineTokenRegex
+            .Matches(value)
+            .Select(match => match.Groups[1].Success
+                ? match.Groups[1].Value
+                : match.Groups[2].Success
+                    ? match.Groups[2].Value
+                    : match.Groups[3].Value)
+            .Where(static token => !string.IsNullOrWhiteSpace(token))
+            .ToList();
+    }
+
+    private static readonly HashSet<string> X26xColorPrimaries = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bt709",
+        "bt470m",
+        "bt470bg",
+        "smpte170m",
+        "smpte240m",
+        "film",
+        "bt2020",
+        "smpte428",
+        "smpte431",
+        "smpte432"
+    };
+
+    private static readonly HashSet<string> X26xColorTransfers = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bt709",
+        "bt470m",
+        "bt470bg",
+        "smpte170m",
+        "smpte240m",
+        "linear",
+        "log100",
+        "log316",
+        "iec61966-2-4",
+        "bt1361e",
+        "iec61966-2-1",
+        "bt2020-10",
+        "bt2020-12",
+        "smpte2084",
+        "smpte428",
+        "arib-std-b67"
+    };
+
+    private static readonly HashSet<string> X26xColorMatrices = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "bt709",
+        "fcc",
+        "bt470bg",
+        "smpte170m",
+        "smpte240m",
+        "gbr",
+        "ycgco",
+        "bt2020nc",
+        "bt2020c",
+        "smpte2085",
+        "chroma-derived-nc",
+        "chroma-derived-c",
+        "ictcp"
+    };
 
     private static string BuildSvtSourceArguments(SourceVideoInfo sourceInfo)
     {

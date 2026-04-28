@@ -7,7 +7,14 @@ internal sealed record SourceVideoInfo(
     int BitDepth,
     int? FpsNumerator,
     int? FpsDenominator,
-    string PixelFormat)
+    string PixelFormat,
+    string? ColorRange = null,
+    string? ColorPrimaries = null,
+    string? ColorTransfer = null,
+    string? ColorMatrix = null,
+    string? ChromaLocation = null,
+    string? MasteringDisplay = null,
+    string? ContentLightLevel = null)
 {
     public double? FramesPerSecond =>
         FpsNumerator is > 0 && FpsDenominator is > 0

@@ -1373,6 +1373,7 @@
                                         <StackPanel Spacing="14">
                                             <ToggleSwitch x:Name="PreferSystemEncodersToggle" Header="{Binding Texts.PreferSystemEncodersHeader}" IsOn="{Binding PreferSystemEncoders, Mode=TwoWay}" OffContent="{Binding Texts.ToggleOffLabel}" OnContent="{Binding Texts.ToggleOnLabel}" Toggled="SettingsToggle_Toggled" />
                                             <ToggleSwitch x:Name="AutoCheckUpdatesToggle" Header="{Binding Texts.AutoCheckUpdatesHeader}" IsOn="{Binding AutoCheckUpdatesOnStartup, Mode=TwoWay}" OffContent="{Binding Texts.ToggleOffLabel}" OnContent="{Binding Texts.ToggleOnLabel}" Toggled="SettingsToggle_Toggled" />
+                                            <NumberBox x:Name="MaxConcurrentEncodingJobsBox" Header="{Binding Texts.MaxConcurrentEncodingJobsHeader}" Minimum="1" Maximum="8" SmallChange="1" SpinButtonPlacementMode="Inline" Value="{Binding MaxConcurrentEncodingJobs, Mode=TwoWay}" ValueChanged="MaxConcurrentEncodingJobsBox_ValueChanged" />
                                         </StackPanel>
                                     </Border>
 

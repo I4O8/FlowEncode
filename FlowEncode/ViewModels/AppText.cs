@@ -365,6 +365,7 @@ public sealed class AppText
     public string ToggleOffLabel => Pick("关", "Off");
     public string PreferSystemEncodersHeader => Pick("本地缺失时回退系统编码器", "Fallback to system encoders when local is missing");
     public string AutoCheckUpdatesHeader => Pick("启动时自动检查程序更新", "Check app updates on startup");
+    public string MaxConcurrentEncodingJobsHeader => Pick("同时编码任务数", "Concurrent Encode Jobs");
     public string AppUpdateSectionTitle => Pick("程序更新", "App Updates");
     public string CheckUpdatesButton => Pick("检查更新", "Check for Updates");
     public string CheckingUpdatesButton => Pick("检查中...", "Checking...");
@@ -1137,6 +1138,10 @@ public sealed class AppText
 
     public string StartJobMissingError => Pick("未找到要开始的任务。", "The job to start was not found.");
     public string StartJobInvalidError => Pick("只有排队中的任务才能开始。", "Only queued jobs can be started.");
+    public string ConcurrentEncodingLimitReached(int limit) =>
+        IsChinese
+            ? $"当前同时编码任务数已达到上限：{limit}。"
+            : $"The concurrent encode job limit has been reached: {limit}.";
 
     public string JobStartedManuallyStatus(string sourceFileName) =>
         IsChinese ? $"已手动开始：{sourceFileName}" : $"Started manually: {sourceFileName}";

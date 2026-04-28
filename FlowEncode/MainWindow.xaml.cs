@@ -1877,6 +1877,11 @@ public sealed partial class MainWindow : Window
         await PersistSettingsAsync(refreshTemplateLibrary: false);
     }
 
+    private async void MaxConcurrentEncodingJobsBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    {
+        await PersistSettingsAsync(refreshTemplateLibrary: false);
+    }
+
     private async Task<bool> ShowConfirmationAsync(
         string title,
         string message,

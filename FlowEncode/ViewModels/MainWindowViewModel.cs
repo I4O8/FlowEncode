@@ -23,6 +23,8 @@ namespace FlowEncode.ViewModels;
 public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.ObservableObject, IDisposable
 {
     private const string AppReleasePageUrl = "https://github.com/frankie1024/FlowEncode/releases";
+    private const int MinConcurrentEncodingJobs = 1;
+    private const int MaxConcurrentEncodingJobsLimit = 8;
     private readonly IEncoderToolchainService _toolchainService;
     private readonly IProfileLibraryService _profileLibraryService;
     private readonly IEncodingJobRunner _jobRunner;
@@ -77,6 +79,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     private StringChoiceOption? _selectedOutputFormat;
     private bool _preferSystemEncoders;
     private bool _autoCheckUpdatesOnStartup;
+    private double _maxConcurrentEncodingJobs = MinConcurrentEncodingJobs;
     private IReadOnlyDictionary<string, string> _manualToolPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private bool _hasRunInitialVsPluginDependencyUpdate;
     private string _workspaceRootPath = string.Empty;
@@ -671,6 +674,19 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
+    public double MaxConcurrentEncodingJobs
+    {
+        get => _maxConcurrentEncodingJobs;
+        set
+        {
+            var normalized = NormalizeConcurrentEncodingJobs(value);
+            if (SetProperty(ref _maxConcurrentEncodingJobs, normalized))
+            {
+                _ = ProcessQueueAsync();
+            }
+        }
+    }
+
     public string WorkspaceRootPath
     {
         get => _workspaceRootPath;
@@ -1164,7 +1180,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 _hasCompletedSetupGuide,
                 normalizedWorkspaceRootPath,
                 new Dictionary<string, string>(_manualToolPaths, StringComparer.OrdinalIgnoreCase),
-                _hasRunInitialVsPluginDependencyUpdate);
+                _hasRunInitialVsPluginDependencyUpdate,
+                GetMaxConcurrentEncodingJobCount());
 
             _settingsService.Save(settings);
             WorkspaceRootPath = normalizedWorkspaceRootPath;
@@ -1540,7 +1557,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     {
         try
         {
-            var hasRunningJob = Jobs.Any(static job => job.State == EncodingJobState.Running);
+            var hasRunningJob = GetRunningEncodingJobCount() >= GetMaxConcurrentEncodingJobCount();
             var request = CreateDraftRequest();
             var displayCommand = await BuildDisplayCommandAsync(request);
 
@@ -1690,6 +1707,11 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             return Texts.StartJobInvalidError;
         }
 
+        if (GetRunningEncodingJobCount() >= GetMaxConcurrentEncodingJobCount())
+        {
+            return Texts.ConcurrentEncodingLimitReached(GetMaxConcurrentEncodingJobCount());
+        }
+
         SelectedJob = job;
         StatusText = Texts.JobStartedManuallyStatus(job.SourceFileName);
         _ = RunJobAsync(job);
@@ -1716,11 +1738,11 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return MoveQueuedJob(job, MoveQueuedJobMode.Bottom);
     }
 
-    private async Task ProcessQueueAsync()
+    private Task ProcessQueueAsync()
     {
         if (_isQueueProcessing || _isShuttingDown)
         {
-            return;
+            return Task.CompletedTask;
         }
 
         _isQueueProcessing = true;
@@ -1739,19 +1761,47 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                     break;
                 }
 
+                if (GetRunningEncodingJobCount() >= GetMaxConcurrentEncodingJobCount())
+                {
+                    break;
+                }
+
                 var nextJob = Jobs.FirstOrDefault(static job => job.State == EncodingJobState.Queued);
                 if (nextJob is null)
                 {
                     break;
                 }
 
-                await RunJobAsync(nextJob);
+                _ = RunJobAsync(nextJob);
             }
         }
         finally
         {
             _isQueueProcessing = false;
         }
+
+        return Task.CompletedTask;
+    }
+
+    private int GetRunningEncodingJobCount()
+    {
+        return Jobs.Count(static job => job.State == EncodingJobState.Running);
+    }
+
+    private int GetMaxConcurrentEncodingJobCount()
+    {
+        return NormalizeConcurrentEncodingJobs(MaxConcurrentEncodingJobs);
+    }
+
+    private static int NormalizeConcurrentEncodingJobs(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value))
+        {
+            return MinConcurrentEncodingJobs;
+        }
+
+        var rounded = (int)Math.Round(value, MidpointRounding.AwayFromZero);
+        return Math.Clamp(rounded, MinConcurrentEncodingJobs, MaxConcurrentEncodingJobsLimit);
     }
 
     private async Task RunJobAsync(EncodingJobItemViewModel job)
@@ -2727,6 +2777,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         var settings = _settingsService.Load();
         PreferSystemEncoders = settings.PreferSystemEncoders;
         AutoCheckUpdatesOnStartup = settings.AutoCheckUpdatesOnStartup;
+        MaxConcurrentEncodingJobs = settings.MaxConcurrentEncodingJobs;
         WorkspaceRootPath = _appPaths.RootPath;
         _hasCompletedSetupGuide = settings.HasSeenSetupGuide;
         _manualToolPaths = new Dictionary<string, string>(settings.EffectiveManualToolPaths, StringComparer.OrdinalIgnoreCase);
