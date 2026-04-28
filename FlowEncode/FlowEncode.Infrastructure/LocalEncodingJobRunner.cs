@@ -85,6 +85,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         Task pumpOutput = Task.CompletedTask;
         Task pumpError = Task.CompletedTask;
         Process? activeProcess = null;
+        ProcessJobObject? activeProcessJob = null;
 
         if (!string.IsNullOrWhiteSpace(outputDirectory))
         {
@@ -139,6 +140,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 activeProcess = process;
 
                 process.Start();
+                activeProcessJob = ProcessJobObject.TryAttach(process);
                 _activeProcesses[request.JobId] = process;
 
                 void HandleLine(string line)
@@ -185,8 +187,11 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 pumpError = PumpAsync(process.StandardError, HandleLine, cancellationToken);
 
                 await process.WaitForExitAsync(cancellationToken);
+                activeProcessJob?.Terminate();
                 await Task.WhenAll(pumpOutput, pumpError);
                 _activeProcesses.TryRemove(request.JobId, out _);
+                activeProcessJob?.Dispose();
+                activeProcessJob = null;
                 activeProcess = null;
 
                 if (process.ExitCode != 0)
@@ -243,6 +248,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
             try
             {
+                activeProcessJob?.Terminate();
                 if (activeProcess is not null && !activeProcess.HasExited)
                 {
                     TryTerminateProcess(request.JobId, activeProcess);
@@ -276,6 +282,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         finally
         {
             _activeProcesses.TryRemove(request.JobId, out _);
+            activeProcessJob?.Dispose();
             CleanupPlanArtifacts(plan);
 
             if (!rawLogWriterClosed)

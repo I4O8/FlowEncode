@@ -119,6 +119,7 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         }
 
         Process? process = null;
+        ProcessJobObject? processJob = null;
         Task pumpOutput = Task.CompletedTask;
         Task pumpError = Task.CompletedTask;
 
@@ -126,12 +127,14 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         {
             process = CreateProcess(av1anPath, arguments);
             process.Start();
+            processJob = ProcessJobObject.TryAttach(process);
             _activeProcesses[request.JobId] = process;
 
             pumpOutput = PumpAsync(process.StandardOutput, HandleLine, cancellationToken);
             pumpError = PumpAsync(process.StandardError, HandleLine, cancellationToken);
 
             await process.WaitForExitAsync(cancellationToken);
+            processJob?.Terminate();
             await Task.WhenAll(pumpOutput, pumpError);
 
             _activeProcesses.TryRemove(request.JobId, out _);
@@ -172,6 +175,7 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         }
         catch (OperationCanceledException)
         {
+            processJob?.Terminate();
             if (process is not null && !process.HasExited)
             {
                 TryTerminateProcess(request.JobId, process);
@@ -204,6 +208,7 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         finally
         {
             _activeProcesses.TryRemove(request.JobId, out _);
+            processJob?.Dispose();
             CleanupJobTempDirectory(request);
         }
     }

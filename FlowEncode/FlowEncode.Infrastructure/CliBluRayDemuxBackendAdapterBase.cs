@@ -85,6 +85,7 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
         using var registration = cancellationToken.Register(() => TryKillProcess(process));
 
         process.Start();
+        using var processJob = ProcessJobObject.TryAttach(process);
         var stdOutTask = ReadLinesAsync(process.StandardOutput, outputBuilder, null, cancellationToken);
         var stdErrTask = ReadLinesAsync(process.StandardError, outputBuilder, null, cancellationToken);
 
@@ -95,6 +96,7 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            processJob?.Terminate();
             TryKillProcess(process);
             throw;
         }
@@ -153,6 +155,7 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
         }
 
         Process? process = null;
+        ProcessJobObject? processJob = null;
         Task pumpOutput = Task.CompletedTask;
         Task pumpError = Task.CompletedTask;
         var exitCode = -1;
@@ -177,15 +180,18 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
             using var registration = cancellationToken.Register(() => TryKillProcess(process));
 
             process.Start();
+            processJob = ProcessJobObject.TryAttach(process);
             pumpOutput = ReadLinesAsync(process.StandardOutput, null, HandleLine, cancellationToken);
             pumpError = ReadLinesAsync(process.StandardError, null, HandleLine, cancellationToken);
 
             await process.WaitForExitAsync(cancellationToken);
+            processJob?.Terminate();
             await Task.WhenAll(pumpOutput, pumpError);
             hasExitCode = TryGetExitCode(process, out exitCode);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            processJob?.Terminate();
             TryKillProcess(process);
             await Task.WhenAll(pumpOutput, pumpError);
             hasExitCode = TryGetExitCode(process, out exitCode);
@@ -212,6 +218,7 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
             if (process is not null)
             {
                 _activeProcesses.TryRemove(request.JobId, out _);
+                processJob?.Dispose();
                 process.Dispose();
             }
         }

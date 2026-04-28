@@ -15,6 +15,7 @@ using FlowEncode.Domain;
 using FlowEncode.Infrastructure;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 
 namespace FlowEncode.ViewModels;
@@ -231,6 +232,16 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 ? Texts.UpdateButton
                 : Texts.ReleasePageButton
             : Texts.CheckUpdatesButton;
+
+    public Symbol AppUpdateActionIcon => IsCheckingAppUpdates
+        ? Symbol.Refresh
+        : IsDownloadingAppUpdateInstaller
+            ? Symbol.Download
+            : IsAppUpdateAvailable
+                ? CanDownloadAppUpdateInstaller
+                    ? Symbol.Download
+                    : Symbol.Link
+                : Symbol.Refresh;
 
     public bool CanExecuteAppUpdateAction => !IsCheckingAppUpdates && !IsDownloadingAppUpdateInstaller;
 
@@ -3300,6 +3311,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         OnPropertyChanged(nameof(CanDownloadAppUpdateInstaller));
         OnPropertyChanged(nameof(HasAppUpdateError));
         OnPropertyChanged(nameof(AppUpdateActionText));
+        OnPropertyChanged(nameof(AppUpdateActionIcon));
         OnPropertyChanged(nameof(CanExecuteAppUpdateAction));
         OnPropertyChanged(nameof(AppUpdateProgressVisibility));
         OnPropertyChanged(nameof(AppUpdateReleaseUrl));

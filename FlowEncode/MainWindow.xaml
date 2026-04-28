@@ -44,7 +44,7 @@
                 <NavigationViewItem Content="{Binding Texts.NavOverview}" Icon="Video" Tag="overview" />
                 <NavigationViewItem Content="{Binding Texts.NavTemplates}" Icon="AllApps" Tag="templates" />
                 <NavigationViewItem Content="{Binding Texts.NavAudioProcessing}" Icon="Audio" Tag="audio-process" />
-                <NavigationViewItem Content="{Binding Texts.NavAutoCompression}" Icon="Video" Tag="auto-compress" />
+                <NavigationViewItem Content="{Binding Texts.NavAutoCompression}" Icon="Play" Tag="auto-compress" />
                 <NavigationViewItem Content="{Binding Texts.NavSettings}" Icon="Setting" Tag="settings" />
             </NavigationView.MenuItems>
 
@@ -1333,7 +1333,7 @@
                                     <ProgressRing Width="26" Height="26" IsActive="{Binding IsAppUpdateActionInProgress}" Visibility="{Binding AppUpdateProgressVisibility}" />
                                     <Button MinHeight="40" Padding="16,0" AutomationProperties.Name="{Binding AppUpdateActionText}" Click="CheckUpdatesButton_Click" IsEnabled="{Binding CanExecuteAppUpdateAction}" Style="{StaticResource AccentButtonStyle}" ToolTipService.ToolTip="{Binding AppUpdateActionText}">
                                         <StackPanel Orientation="Horizontal" Spacing="6">
-                                            <SymbolIcon Symbol="Refresh" />
+                                            <SymbolIcon Symbol="{Binding AppUpdateActionIcon}" />
                                             <TextBlock Text="{Binding AppUpdateActionText}" />
                                         </StackPanel>
                                     </Button>
@@ -1345,7 +1345,7 @@
                                     </Button>
                                     <Button MinHeight="40" Padding="16,0" AutomationProperties.Name="{Binding Texts.ToolDirectoryButton}" Click="OpenToolsetFolderButton_Click" ToolTipService.ToolTip="{Binding Texts.ToolDirectoryButton}">
                                         <StackPanel Orientation="Horizontal" Spacing="6">
-                                            <SymbolIcon Symbol="Folder" />
+                                            <SymbolIcon Symbol="OpenLocal" />
                                             <TextBlock Text="{Binding Texts.ToolDirectoryButton}" />
                                         </StackPanel>
                                     </Button>
@@ -1393,7 +1393,7 @@
                                             </Button>
                                             <Button Grid.Column="2" MinHeight="40" VerticalAlignment="Bottom" AutomationProperties.Name="{Binding Texts.AppFolderButton}" Tag="{Binding WorkspaceRootPath}" Click="OpenTaggedFolderButton_Click" ToolTipService.ToolTip="{Binding Texts.AppFolderButton}">
                                                 <StackPanel Orientation="Horizontal" Spacing="6">
-                                                    <SymbolIcon Symbol="OpenFile" />
+                                                    <SymbolIcon Symbol="OpenLocal" />
                                                     <TextBlock Text="{Binding Texts.AppFolderButton}" />
                                                 </StackPanel>
                                             </Button>
@@ -1427,7 +1427,7 @@
                                         </Button>
                                         <Button MinHeight="40" Padding="16,0" AutomationProperties.Name="{Binding SetupGuideUpdateCheckActionText}" Click="CheckSetupDependencyUpdatesButton_Click" IsEnabled="{Binding CanExecuteSetupGuideUpdateCheckAction}" ToolTipService.ToolTip="{Binding SetupGuideUpdateCheckActionText}">
                                             <StackPanel Orientation="Horizontal" Spacing="6">
-                                                <SymbolIcon Symbol="Download" />
+                                                <SymbolIcon Symbol="Find" />
                                                 <TextBlock Text="{Binding SetupGuideUpdateCheckActionText}" />
                                             </StackPanel>
                                         </Button>
@@ -1481,7 +1481,7 @@
                                                                                 </Button>
                                                                                 <Button AutomationProperties.Name="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}" Tag="{Binding Kind}" Click="ClearManualPinnedSetupDependencyButton_Click" IsEnabled="{Binding ClearManualPinEnabled}" Visibility="{Binding ClearManualPinVisibility}" ToolTipService.ToolTip="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}">
                                                                                     <StackPanel Orientation="Horizontal" Spacing="6">
-                                                                                        <SymbolIcon Symbol="Cancel" />
+                                                                                        <SymbolIcon Symbol="UnPin" />
                                                                                         <TextBlock Text="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}" />
                                                                                     </StackPanel>
                                                                                 </Button>
@@ -1499,7 +1499,7 @@
                                                                                 </Button>
                                                                                 <HyperlinkButton AutomationProperties.Name="{Binding DataContext.Texts.ReleasePageButton, ElementName=RootLayout}" Tag="{Binding ReleaseUrl}" Click="OpenUrlButton_Click" Visibility="{Binding ReleaseVisibility}" ToolTipService.ToolTip="{Binding DataContext.Texts.ReleasePageButton, ElementName=RootLayout}">
                                                                                     <StackPanel Orientation="Horizontal" Spacing="6">
-                                                                                        <SymbolIcon Symbol="OpenFile" />
+                                                                                        <SymbolIcon Symbol="Link" />
                                                                                         <TextBlock Text="{Binding DataContext.Texts.ReleasePageButton, ElementName=RootLayout}" />
                                                                                     </StackPanel>
                                                                                 </HyperlinkButton>
@@ -1594,13 +1594,13 @@
                                 </Button>
                                 <Button AutomationProperties.Name="{Binding SetupGuideUpdateCheckActionText}" Click="CheckSetupDependencyUpdatesButton_Click" IsEnabled="{Binding CanExecuteSetupGuideUpdateCheckAction}" ToolTipService.ToolTip="{Binding SetupGuideUpdateCheckActionText}">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <SymbolIcon Symbol="Download" />
+                                        <SymbolIcon Symbol="Find" />
                                         <TextBlock Text="{Binding SetupGuideUpdateCheckActionText}" />
                                     </StackPanel>
                                 </Button>
                                 <Button AutomationProperties.Name="{Binding Texts.SetupGuideCloseButton}" Click="CloseSetupGuideButton_Click" Style="{StaticResource AccentButtonStyle}" ToolTipService.ToolTip="{Binding Texts.SetupGuideCloseButton}">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <SymbolIcon Symbol="Cancel" />
+                                        <SymbolIcon Symbol="Forward" />
                                         <TextBlock Text="{Binding Texts.SetupGuideCloseButton}" />
                                     </StackPanel>
                                 </Button>
@@ -1656,7 +1656,7 @@
                                                                             </Button>
                                                                             <Button AutomationProperties.Name="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}" Tag="{Binding Kind}" Click="ClearManualPinnedSetupDependencyButton_Click" IsEnabled="{Binding ClearManualPinEnabled}" Visibility="{Binding ClearManualPinVisibility}" ToolTipService.ToolTip="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}">
                                                                                 <StackPanel Orientation="Horizontal" Spacing="6">
-                                                                                    <SymbolIcon Symbol="Cancel" />
+                                                                                    <SymbolIcon Symbol="UnPin" />
                                                                                     <TextBlock Text="{Binding DataContext.Texts.ClearManualPinButton, ElementName=RootLayout}" />
                                                                                 </StackPanel>
                                                                             </Button>
@@ -1674,7 +1674,7 @@
                                                                             </Button>
                                                                             <HyperlinkButton AutomationProperties.Name="{Binding DataContext.Texts.ReleasePageButton, ElementName=RootLayout}" Tag="{Binding ReleaseUrl}" Click="OpenUrlButton_Click" Visibility="{Binding ReleaseVisibility}" ToolTipService.ToolTip="{Binding DataContext.Texts.ReleasePageButton, ElementName=RootLayout}">
                                                                                 <StackPanel Orientation="Horizontal" Spacing="6">
-                                                                                    <SymbolIcon Symbol="OpenFile" />
+                                                                                    <SymbolIcon Symbol="Link" />
                                                                                     <TextBlock Text="{Binding DataContext.Texts.ReleasePageButton, ElementName=RootLayout}" />
                                                                                 </StackPanel>
                                                                             </HyperlinkButton>
