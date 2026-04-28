@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FlowEncode - Windows 视频压制与转码工作流前端</title>
+    <meta
+      name="description"
+      content="FlowEncode 是面向 Windows x64 的视频压制、转码与 VapourSynth 工作流前端，支持 x264、x265、SVT-AV1、Av1an、FFmpeg、VapourSynth 与 VMAF 目标质量流程。"
+    >
+    <meta
+      name="keywords"
+      content="FlowEncode, Windows 视频压制 GUI, 视频转码前端, Av1an GUI, VapourSynth 前端, FFmpeg 工作流, VMAF 目标质量, x264, x265, SVT-AV1"
+    >
+    <meta name="author" content="frankie1024">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://frankie1024.github.io/FlowEncode/">
+    <link rel="alternate" hreflang="zh-CN" href="https://frankie1024.github.io/FlowEncode/">
+    <link rel="alternate" hreflang="en" href="https://frankie1024.github.io/FlowEncode/en/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="FlowEncode">
+    <meta property="og:title" content="FlowEncode - Windows 视频压制与转码工作流前端">
+    <meta
+      property="og:description"
+      content="面向 Windows x64 的桌面 GUI，用于 FFmpeg、VapourSynth、Av1an、x264、x265、SVT-AV1 和 VMAF 目标质量压制工作流。"
+    >
+    <meta property="og:image" content="https://frankie1024.github.io/FlowEncode/assets/flowencode-dashboard.png">
+    <meta property="og:url" content="https://frankie1024.github.io/FlowEncode/">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="FlowEncode - Windows 视频压制与转码工作流前端">
+    <meta
+      name="twitter:description"
+      content="面向 Windows x64 的视频压制、转码与 VapourSynth 工作流前端。"
+    >
+    <meta name="twitter:image" content="https://frankie1024.github.io/FlowEncode/assets/flowencode-dashboard.png">
+    <script>
+      (() => {
+        const params = new URLSearchParams(window.location.search);
+        const requestedLanguage = params.get("lang");
+
+        if (requestedLanguage === "zh") {
+          window.localStorage.setItem("flowencode-language", "zh");
+          return;
+        }
+
+        if (requestedLanguage === "en") {
+          window.localStorage.setItem("flowencode-language", "en");
+          window.location.replace("./en/");
+          return;
+        }
+
+        const savedLanguage = window.localStorage.getItem("flowencode-language");
+        if (savedLanguage === "zh") {
+          return;
+        }
+
+        if (savedLanguage === "en") {
+          window.location.replace("./en/");
+          return;
+        }
+
+        const languages = navigator.languages?.length ? navigator.languages : [navigator.language || ""];
+        const prefersChinese = languages.some((language) => /^zh\b/i.test(language));
+
+        if (!prefersChinese) {
+          window.location.replace("./en/");
+        }
+      })();
+    </script>
+    <link rel="icon" href="./assets/flowencode-hammer.png">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="FlowEncode 首页">
+        <img src="./assets/flowencode-hammer.png" alt="" width="36" height="36">
+        <span>FlowEncode</span>
+      </a>
+      <nav class="nav" aria-label="主导航">
+        <a href="#features">功能</a>
+        <a href="#workflow">流程</a>
+        <a href="#toolchain">工具链</a>
+        <a href="https://github.com/frankie1024/FlowEncode/releases">下载</a>
+        <a href="https://github.com/frankie1024/FlowEncode">GitHub</a>
+        <a class="language-link active" href="./?lang=zh">中文</a>
+        <a class="language-link" href="./en/?lang=en">English</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Windows x64 视频压制工作流前端</p>
+          <h1>FlowEncode</h1>
+          <p class="lead">
+            面向 Windows x64 的桌面端视频压制、转码与 VapourSynth 工作流前端，
+            统一管理脚本、编码参数、队列执行、模板复用与实时日志。
+          </p>
+          <p class="lead chinese">
+            支持 x264、x265、SVT-AV1、Av1an、FFmpeg、VapourSynth 与 VMAF 目标质量流程。
+          </p>
+          <div class="actions" aria-label="主要操作">
+            <a class="button primary" href="https://github.com/frankie1024/FlowEncode/releases">
+              下载 Windows 版
+            </a>
+            <a class="button secondary" href="https://github.com/frankie1024/FlowEncode">
+              查看源码
+            </a>
+          </div>
+          <dl class="facts" aria-label="项目信息">
+            <div>
+              <dt>平台</dt>
+              <dd>Windows x64</dd>
+            </div>
+            <div>
+              <dt>许可证</dt>
+              <dd>GPL-3.0</dd>
+            </div>
+            <div>
+              <dt>工作流</dt>
+              <dd>FFmpeg, VapourSynth, Av1an</dd>
+            </div>
+          </dl>
+        </div>
+        <figure class="hero-media">
+          <img
+            src="./assets/flowencode-dashboard.png"
+            alt="FlowEncode 中文工作台界面，展示视频压制、VapourSynth、自动压制和设置模块"
+          >
+        </figure>
+      </section>
+
+      <section class="section intro" aria-labelledby="intro-title">
+        <div>
+          <p class="eyebrow">项目定位</p>
+          <h2 id="intro-title">用于稳定复用的编码工作流控制台</h2>
+        </div>
+        <p>
+          FlowEncode 面向需要图形化管理能力，同时又不希望放弃命令行编码器、
+          VapourSynth 脚本和 Av1an 自动压制灵活性的用户。它把输入输出、编码参数、
+          依赖状态、任务队列与日志组织到一个桌面工作流中。
+        </p>
+      </section>
+
+      <section id="features" class="section" aria-labelledby="features-title">
+        <div class="section-heading">
+          <p class="eyebrow">功能</p>
+          <h2 id="features-title">核心编码模块</h2>
+        </div>
+        <div class="feature-grid">
+          <article>
+            <h3>VapourSynth 工作区</h3>
+            <p>编辑 .vpy / .py 脚本，查看诊断信息，预览输出帧，并读取预览日志。</p>
+          </article>
+          <article>
+            <h3>视频压制队列</h3>
+            <p>配置 x264、x265、SVT-AV1 任务，管理输入输出、编码参数、命令预览和实时日志。</p>
+          </article>
+          <article>
+            <h3>Av1an 目标质量</h3>
+            <p>基于 Av1an 执行目标质量流程，支持 VMAF、探测次数、并行度和编码器附加参数。</p>
+          </article>
+          <article>
+            <h3>模板库</h3>
+            <p>保存、导入、导出、置顶和复用 .profile 模板，沉淀稳定的日常压制参数。</p>
+          </article>
+          <article>
+            <h3>首启环境引导</h3>
+            <p>检测、安装、更新或移除公开支持的运行时、编码器、插件和命令行工具。</p>
+          </article>
+          <article>
+            <h3>本地优先</h3>
+            <p>程序不主动上传源文件、输出文件、模板或本地路径，运行状态保存在本机目录。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="workflow" class="section band" aria-labelledby="workflow-title">
+        <div class="section-heading">
+          <p class="eyebrow">流程</p>
+          <h2 id="workflow-title">从脚本到队列执行</h2>
+        </div>
+        <ol class="steps">
+          <li>
+            <span>1</span>
+            <div>
+              <h3>准备源文件与脚本</h3>
+              <p>在受控工作目录中组织 FFmpeg、FFprobe、VSPipe 和 VapourSynth 相关资源。</p>
+            </div>
+          </li>
+          <li>
+            <span>2</span>
+            <div>
+              <h3>选择编码器与参数</h3>
+              <p>创建 x264、x265、SVT-AV1 或 Av1an 任务，并查看命令预览。</p>
+            </div>
+          </li>
+          <li>
+            <span>3</span>
+            <div>
+              <h3>执行并检查结果</h3>
+              <p>加入队列、观察日志、复用模板，让常用压制流程保持可重复。</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section id="toolchain" class="section" aria-labelledby="toolchain-title">
+        <div class="section-heading">
+          <p class="eyebrow">工具链</p>
+          <h2 id="toolchain-title">支持的编码生态</h2>
+        </div>
+        <div class="tool-list" aria-label="支持的工具">
+          <span>x264</span>
+          <span>x265</span>
+          <span>SVT-AV1</span>
+          <span>Av1an</span>
+          <span>FFmpeg</span>
+          <span>FFprobe</span>
+          <span>VapourSynth</span>
+          <span>VSPipe</span>
+          <span>Avs2PipeMod</span>
+          <span>Python 3.12</span>
+          <span>vsrepo</span>
+          <span>VMAF</span>
+        </div>
+      </section>
+
+      <section class="section compare" aria-labelledby="search-title">
+        <div>
+          <p class="eyebrow">关键词</p>
+          <h2 id="search-title">通过功能找到 FlowEncode</h2>
+        </div>
+        <p>
+          FlowEncode 是 Windows 视频压制 GUI、Av1an 图形前端、VapourSynth 工作流前端，
+          也是面向 x264、x265、SVT-AV1 和 VMAF 目标质量流程的 FFmpeg 桌面转码工具。
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>FlowEncode 是采用 GPL-3.0 许可证发布的开源软件。</p>
+      <div>
+        <a href="https://github.com/frankie1024/FlowEncode">GitHub 仓库</a>
+        <a href="https://github.com/frankie1024/FlowEncode/issues">Issues</a>
+        <a href="https://github.com/frankie1024/FlowEncode/releases">Releases</a>
+      </div>
+    </footer>
+  </body>
+</html>

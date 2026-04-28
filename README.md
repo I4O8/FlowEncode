@@ -1,74 +1,179 @@
-# FlowEncode
+<div align="center">
+  <img src="./docs/assets/flowencode-hammer.png" alt="FlowEncode" width="96" height="96">
 
-## Warning：本项目代码99%来源于AI
+  <h1>FlowEncode</h1>
 
-FlowEncode 是一个面向 Windows x64 的桌面端编码工作流前端，围绕 `x264`、`x265`、`SVT-AV1`、`Av1an`、`FFmpeg`、`VapourSynth` 以及公开可用的辅助工具，提供统一的任务配置、队列执行、日志查看、模板复用能力。
+  <p><strong>面向 Windows x64 的视频压制、转码与 VapourSynth 工作流前端</strong></p>
 
-> 仅支持 Windows x64。
->
+  <p>
+    <a href="./README.en.md">English</a> ·
+    <a href="https://frankie1024.github.io/FlowEncode/">官网</a> ·
+    <a href="https://github.com/frankie1024/FlowEncode/releases">下载</a> ·
+    <a href="https://github.com/frankie1024/FlowEncode/issues">问题反馈</a>
+  </p>
+
+  <p>
+    <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20x64-0078d4">
+    <img alt="Version" src="https://img.shields.io/badge/version-1.6.2-167a7f">
+    <img alt="Framework" src="https://img.shields.io/badge/.NET-8.0-512bd4">
+    <img alt="UI" src="https://img.shields.io/badge/UI-WinUI%203-0d6efd">
+    <img alt="License" src="https://img.shields.io/github/license/frankie1024/FlowEncode">
+  </p>
+</div>
+
+---
+
+FlowEncode 是一个面向 Windows x64 的桌面端编码工作流前端，围绕 `x264`、`x265`、`SVT-AV1`、`Av1an`、`FFmpeg`、`VapourSynth`、`VSPipe` 与相关公开工具链，提供统一的任务配置、脚本编辑、队列执行、日志查看和模板复用能力。
+
+它适合需要图形化管理日常压制流程，同时仍希望保留命令行编码器、VapourSynth 脚本和 Av1an 自动压制灵活性的用户。
+
+> [!IMPORTANT]
+> FlowEncode 当前仅支持 Windows x64。首次使用前建议先完成应用内的首启环境引导。
+
+> [!NOTE]
+> 透明说明：本项目大量使用 AI 辅助开发。实际功能、依赖边界与已知限制以源码、发布包和本文档描述为准。
 
 ![FlowEncode dashboard](./docs/assets/flowencode-dashboard.png)
 
-## 项目概览
+## 目录
 
-FlowEncode 面向需要图形化管理能力、同时又不希望放弃命令行编码器与脚本管线灵活性的使用场景。将编码参数、脚本环境、依赖状态、任务执行过程与日志输出组织到统一的桌面工作流中，以便进行稳定、可重复的日常压制与转码工作。
+- [核心定位](#核心定位)
+- [功能概览](#功能概览)
+- [工作流](#工作流)
+- [支持的工具链](#支持的工具链)
+- [安装与运行要求](#安装与运行要求)
+- [本地数据与隐私](#本地数据与隐私)
+- [开发与构建](#开发与构建)
+- [反馈与许可](#反馈与许可)
 
-项目当前覆盖的主要工作流包括：
+## 核心定位
 
-- VapourSynth 脚本编辑、诊断与预览流程
-- 基于 `x264`、`x265`、`SVT-AV1` 的常规视频编码任务
-- 基于 `Av1an` 的目标质量自动压制流程
-- 模板保存、载入、导入、导出与复用流程
+FlowEncode 不是单一编码器，也不是封装所有依赖的全家桶发行版。它更接近一个面向视频压制场景的工作流控制台：
 
-## 核心能力
-
-| 模块 | 说明 |
+| 目标 | 说明 |
 | --- | --- |
-| VapourSynth | 提供 `.vpy` / `.py` 脚本编辑、插件补全、基础诊断、预览与预览日志查看能力。 |
-| 视频压制 | 用于配置常规编码任务，统一管理输入输出、编码参数、命令预览、任务队列与实时日志。 |
-| 自动压制 | 基于 `Av1an` 执行目标质量流程，支持 `VMAF`、探测次数、并行度与编码器附加参数配置。 |
-| 模板库 | 模板文件保存、载入、导入、导出（`.profile`）、置顶、覆盖与复用，用于沉淀常用参数集。 |
-| 首启环境引导 | 检测、安装、更新和移除公开支持的运行时、插件、编码器及相关工具。 |
-| 设置与更新 | 提供程序更新入口，并集中展示公开支持工具链的状态。 |
+| 统一配置 | 将输入输出、编码器参数、脚本环境、任务队列与日志集中到一个桌面界面。 |
+| 保留灵活性 | 不替代 `x264`、`x265`、`SVT-AV1`、`Av1an`、`FFmpeg` 或 `VapourSynth`，而是协调它们参与工作流。 |
+| 降低重复劳动 | 通过模板库、命令预览、队列执行和环境引导减少日常压制中的重复配置。 |
+| 面向本地使用 | 默认围绕本机文件、本机依赖和本机工作目录运行，不主动上传源文件或模板。 |
+
+## 功能概览
+
+| 模块 | 能力 |
+| --- | --- |
+| 工作台 | 按流程进入解复用、VapourSynth、视频压制、音频转码、自动压制、模板库和设置等模块。 |
+| VapourSynth | 提供 `.vpy` / `.py` 脚本编辑、最近文件、基础诊断、预览、帧查看、裁剪辅助和预览日志。 |
+| 视频压制 | 配置常规编码任务，统一管理输入输出、编码参数、命令预览、任务队列和实时日志。 |
+| 自动压制 | 基于 `Av1an` 组织目标质量流程，支持 `VMAF`、探测次数、并行度和编码器附加参数。 |
+| 模板库 | 保存、载入、导入、导出、置顶和覆盖 `.profile` 模板，沉淀常用参数集。 |
+| 环境引导 | 检测、安装、更新和移除公开支持的运行时、插件、编码器和命令行工具。 |
+| 设置与更新 | 管理工作目录、主题、语言、依赖状态、应用更新和首启引导入口。 |
+
+## 工作流
+
+```mermaid
+flowchart LR
+  A["准备源文件"] --> B["编写或载入 VapourSynth 脚本"]
+  B --> C["选择编码器与模板"]
+  C --> D["预览命令与任务参数"]
+  D --> E["加入队列并执行"]
+  E --> F["查看日志与输出结果"]
+```
+
+常见使用方式：
+
+- 使用 VapourSynth 编辑器维护 `.vpy` 脚本，并通过预览窗口检查输出帧。
+- 使用 `x264`、`x265` 或 `SVT-AV1` 配置常规编码任务。
+- 使用 `Av1an` 进行基于 VMAF 的目标质量自动压制。
+- 将稳定参数保存为 `.profile` 模板，在后续任务中快速复用。
 
 ## 支持的工具链
 
-当前版本围绕以下组件组织工作流：
+| 类型 | 组件 |
+| --- | --- |
+| 视频编码器 | `x264`、`x265`、`SVT-AV1` |
+| 自动压制 | `Av1an`、`VMAF` |
+| 媒体探测与管线 | `FFmpeg`、`FFprobe` |
+| 脚本环境 | `Python 3.12`、`VapourSynth`、`vsrepo`、公开可用的 VapourSynth 插件 |
+| 输入桥接 | `VSPipe`、`Avs2PipeMod` |
+| 应用框架 | `.NET 8`、`WinUI 3`、`Windows App SDK` |
 
-- 视频编码器：`x264`、`x265`、`SVT-AV1`
-- 自动压制：`Av1an`
-- 媒体探测与管线：`FFmpeg`、`FFprobe`
-- 运行时与脚本环境：`Python 3.12`、`VapourSynth`、`vsrepo` 及公开可用的 VapourSynth 插件
-- 输入桥接：`VSPipe`，以及用于既有 `.avs` 输入的 `Avs2PipeMod`
+对具体工具的支持深度取决于上游版本、本机运行时状态、插件完整性和用户环境配置。FlowEncode 会尽量提供检测和引导，但不替代上游项目自身的安装说明和许可证。
 
-对具体工具的支持深度会受到上游版本、运行时状态、插件完整性以及本机环境配置的影响。
+## 安装与运行要求
 
-## 发行与依赖
+### 获取安装包
 
-- GitHub Releases 仅提供 Windows x64 安装资产
-- 当前仅提供安装版资产 `FlowEncode-Setup.exe`
-- 安装目录默认只放程序本体与静态资源，运行期可写数据不会落在安装目录内
-- 安装器会先检测 `Microsoft Visual C++ Redistributable x64`、`Windows App Runtime x64` 与 `WebView2 Runtime`；若缺失，会提示用户安装，用户也可以跳过并继续安装主程序，但这可能导致程序无法启动或部分功能不可用
-- 程序支持单独配置“工作目录”，用于承载 `downloads`、`tools`、`encoders` 等大体积运行内容
-- Python、VapourSynth 及其插件生态不与主程序静态绑定，仍按各自上游方式独立安装与维护
-- 首启环境引导用于降低部署门槛，但不替代上游项目自身的安装说明与文档
+前往 [GitHub Releases](https://github.com/frankie1024/FlowEncode/releases) 下载最新的 Windows x64 安装包。
+
+当前发布资产以安装版为主：
+
+```text
+FlowEncode-Setup.exe
+```
+
+### 运行前置依赖
+
+安装器会检测以下组件：
+
+| 依赖 | 作用 |
+| --- | --- |
+| Microsoft Visual C++ Redistributable x64 | WinUI 桌面应用运行依赖。 |
+| Windows App Runtime x64 | 未打包 Windows App SDK 应用运行依赖。 |
+| Microsoft Edge WebView2 Runtime | 内置 VapourSynth 编辑器界面依赖。 |
+
+如果缺失，安装器会提示安装。用户可以跳过并继续安装主程序，但这可能导致应用无法启动或部分功能不可用。
+
+### 工作目录
+
+FlowEncode 支持单独配置工作目录，用于承载：
+
+- `downloads`
+- `tools`
+- `encoders`
+- `Templates`
+
+程序安装目录默认只放程序本体和静态资源。运行期可写数据、大体积工具链和用户模板会放在应用数据目录或用户指定的工作目录中。
 
 ## 本地数据与隐私
 
-- 程序不会主动上传源文件、输出文件、模板内容或本地路径
-- 程序运行期会在 `%LocalAppData%\FlowEncode\data` 下维护轻量状态，例如设置、日志和首启引导缓存
-- 用户模板文件会保存在工作目录的 `Templates` 文件夹下，并自动从该目录加载 `.profile` 文件
-- `downloads`、`tools`、`encoders` 等大体积运行目录位于独立工作目录，可在程序设置中调整；默认优先选择非系统固定盘，若无可用目标则回退到用户文档目录
-- 对外分享日志、截图或缓存文件前，建议先进行人工检查与脱敏
+FlowEncode 默认面向本地工作流：
 
-## 获取与反馈
+- 不主动上传源文件、输出文件、模板内容或本地路径。
+- 运行期轻量状态保存在 `%LocalAppData%\FlowEncode\data`。
+- 用户模板保存在工作目录的 `Templates` 文件夹，并自动加载其中的 `.profile` 文件。
+- `downloads`、`tools`、`encoders` 等目录位于独立工作目录，可在设置中调整。
+- 对外分享日志、截图或缓存文件前，建议先人工检查并脱敏。
 
-- 新机器首次使用前，建议先完成首启环境引导，再投入正式工作流
-- 提交问题时，建议附带相关工具版本、工作流类型以及脱敏后的日志片段，以便定位问题
+## 开发与构建
 
-## 许可证
+项目主体是 WinUI 3 桌面应用：
 
-- 本仓库源码采用 `GNU General Public License v3.0`
-- 除非另有说明，本仓库按 `GPL-3.0-only` 处理
-- 完整许可证文本见 [LICENSE](./LICENSE)
-- 程序调用或协作的第三方工具、运行时、插件与包仍分别遵循其各自许可证条款；公开支持范围与许可证说明见 [THIRD_PARTY_LICENSES.md](./docs/THIRD_PARTY_LICENSES.md)
+| 项目 | 说明 |
+| --- | --- |
+| `FlowEncode` | WinUI 3 桌面入口与界面层。 |
+| `FlowEncode.Application` | 应用服务抽象。 |
+| `FlowEncode.Domain` | 编码配置、任务模型和领域规则。 |
+| `FlowEncode.Infrastructure` | 本地工具探测、运行器、缓存和外部集成。 |
+| `FlowEncode.Domain.Tests` | 领域层测试。 |
+
+构建注意事项：
+
+- 目标框架：`net8.0-windows10.0.26100.0`
+- 最低目标平台：`Windows 10.0.17763.0`
+- 平台：`x64`
+- UI：`WinUI 3` / `Windows App SDK`
+- 发布脚本位于 `scripts/`
+- 安装器脚本位于 `installer/`
+
+当前工程对 WinUI XAML 编译器有环境要求。若普通 `dotnet build` 在本机触发 Windows App SDK XAML 编译问题，请使用 Visual Studio 对应的 MSBuild 环境构建。
+
+## 反馈与许可
+
+- 问题反馈：[GitHub Issues](https://github.com/frankie1024/FlowEncode/issues)
+- 版本下载：[GitHub Releases](https://github.com/frankie1024/FlowEncode/releases)
+- 项目官网：[GitHub Pages](https://frankie1024.github.io/FlowEncode/)
+
+本仓库源码采用 `GNU General Public License v3.0`，按 `GPL-3.0-only` 处理。完整许可证文本见 [LICENSE](./LICENSE)。
+
+程序调用或协作的第三方工具、运行时、插件与包分别遵循其各自许可证条款。公开支持范围与许可证说明见 [THIRD_PARTY_LICENSES.md](./docs/THIRD_PARTY_LICENSES.md)。

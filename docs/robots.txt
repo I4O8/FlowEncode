@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://frankie1024.github.io/FlowEncode/sitemap.xml

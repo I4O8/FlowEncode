@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FlowEncode - Windows Video Encoding Workflow Frontend</title>
+    <meta
+      name="description"
+      content="FlowEncode is a Windows x64 desktop frontend for x264, x265, SVT-AV1, Av1an, FFmpeg, VapourSynth and VMAF-based video encoding workflows."
+    >
+    <meta
+      name="keywords"
+      content="FlowEncode, Windows video encoding GUI, video encoding frontend, Av1an GUI, VapourSynth frontend, FFmpeg workflow, VMAF target quality, x264, x265, SVT-AV1"
+    >
+    <meta name="author" content="frankie1024">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://frankie1024.github.io/FlowEncode/en/">
+    <link rel="alternate" hreflang="zh-CN" href="https://frankie1024.github.io/FlowEncode/">
+    <link rel="alternate" hreflang="en" href="https://frankie1024.github.io/FlowEncode/en/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="FlowEncode">
+    <meta property="og:title" content="FlowEncode - Windows Video Encoding Workflow Frontend">
+    <meta
+      property="og:description"
+      content="A Windows x64 desktop GUI for x264, x265, SVT-AV1, Av1an, FFmpeg, VapourSynth and VMAF target-quality encoding workflows."
+    >
+    <meta property="og:image" content="https://frankie1024.github.io/FlowEncode/assets/flowencode-dashboard-en.png">
+    <meta property="og:url" content="https://frankie1024.github.io/FlowEncode/en/">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="FlowEncode - Windows Video Encoding Workflow Frontend">
+    <meta
+      name="twitter:description"
+      content="A Windows x64 desktop GUI for FFmpeg, VapourSynth, Av1an, x264, x265, SVT-AV1 and VMAF-based encoding workflows."
+    >
+    <meta name="twitter:image" content="https://frankie1024.github.io/FlowEncode/assets/flowencode-dashboard-en.png">
+    <script>
+      (() => {
+        const params = new URLSearchParams(window.location.search);
+        const requestedLanguage = params.get("lang");
+        if (requestedLanguage === "en") {
+          window.localStorage.setItem("flowencode-language", "en");
+        }
+      })();
+    </script>
+    <link rel="icon" href="../assets/flowencode-hammer.png">
+    <link rel="stylesheet" href="../styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="FlowEncode home">
+        <img src="../assets/flowencode-hammer.png" alt="" width="36" height="36">
+        <span>FlowEncode</span>
+      </a>
+      <nav class="nav" aria-label="Primary navigation">
+        <a href="#features">Features</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#toolchain">Toolchain</a>
+        <a href="https://github.com/frankie1024/FlowEncode/releases">Download</a>
+        <a href="https://github.com/frankie1024/FlowEncode">GitHub</a>
+        <a class="language-link" href="../?lang=zh">中文</a>
+        <a class="language-link active" href="./?lang=en">English</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Windows x64 video encoding frontend</p>
+          <h1>FlowEncode</h1>
+          <p class="lead">
+            A desktop workflow frontend for x264, x265, SVT-AV1, Av1an, FFmpeg,
+            VapourSynth and VMAF-based target-quality encoding.
+          </p>
+          <p class="lead chinese">
+            Manage scripts, encoder parameters, queued jobs, reusable templates and real-time logs in one Windows desktop workflow.
+          </p>
+          <div class="actions" aria-label="Primary actions">
+            <a class="button primary" href="https://github.com/frankie1024/FlowEncode/releases">
+              Download for Windows
+            </a>
+            <a class="button secondary" href="https://github.com/frankie1024/FlowEncode">
+              View source
+            </a>
+          </div>
+          <dl class="facts" aria-label="Project facts">
+            <div>
+              <dt>Platform</dt>
+              <dd>Windows x64</dd>
+            </div>
+            <div>
+              <dt>License</dt>
+              <dd>GPL-3.0</dd>
+            </div>
+            <div>
+              <dt>Workflows</dt>
+              <dd>FFmpeg, VapourSynth, Av1an</dd>
+            </div>
+          </dl>
+        </div>
+        <figure class="hero-media">
+          <img
+            src="../assets/flowencode-dashboard-en.png"
+            alt="FlowEncode English dashboard showing video encoding tasks, workflow settings and runtime status"
+          >
+        </figure>
+      </section>
+
+      <section class="section intro" aria-labelledby="intro-title">
+        <div>
+          <p class="eyebrow">What it is</p>
+          <h2 id="intro-title">A GUI for repeatable encoding workflows</h2>
+        </div>
+        <p>
+          FlowEncode is built for users who want a graphical Windows video encoding GUI
+          without giving up the flexibility of command-line encoders, VapourSynth scripts
+          and Av1an automation. It organizes input/output paths, encoder parameters,
+          dependency state, queued jobs and logs into one desktop workflow.
+        </p>
+      </section>
+
+      <section id="features" class="section" aria-labelledby="features-title">
+        <div class="section-heading">
+          <p class="eyebrow">Features</p>
+          <h2 id="features-title">Core encoding modules</h2>
+        </div>
+        <div class="feature-grid">
+          <article>
+            <h3>VapourSynth workspace</h3>
+            <p>Edit .vpy and .py scripts, inspect diagnostics, preview scripts and review preview logs.</p>
+          </article>
+          <article>
+            <h3>Video encoding queue</h3>
+            <p>Configure x264, x265 and SVT-AV1 tasks with input/output paths, encoder parameters, command previews and real-time logs.</p>
+          </article>
+          <article>
+            <h3>Av1an target quality</h3>
+            <p>Run Av1an-based target-quality workflows with VMAF settings, probe counts, parallelism controls and extra encoder arguments.</p>
+          </article>
+          <article>
+            <h3>Template library</h3>
+            <p>Save, import, export, pin and reuse .profile templates for repeatable encoding presets.</p>
+          </article>
+          <article>
+            <h3>First-run environment guide</h3>
+            <p>Check, install, update or remove supported runtimes, encoders, plugins and workflow tools.</p>
+          </article>
+          <article>
+            <h3>Local data by default</h3>
+            <p>FlowEncode does not actively upload source files, output files, templates or local paths.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="workflow" class="section band" aria-labelledby="workflow-title">
+        <div class="section-heading">
+          <p class="eyebrow">Workflow</p>
+          <h2 id="workflow-title">From script to queued encode</h2>
+        </div>
+        <ol class="steps">
+          <li>
+            <span>1</span>
+            <div>
+              <h3>Prepare sources and scripts</h3>
+              <p>Use FFmpeg, FFprobe, VSPipe and VapourSynth assets in a managed workspace.</p>
+            </div>
+          </li>
+          <li>
+            <span>2</span>
+            <div>
+              <h3>Choose encoder settings</h3>
+              <p>Build x264, x265, SVT-AV1 or Av1an jobs with visible command previews.</p>
+            </div>
+          </li>
+          <li>
+            <span>3</span>
+            <div>
+              <h3>Run and inspect</h3>
+              <p>Execute queued jobs, watch logs, reuse templates and keep workflows reproducible.</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <section id="toolchain" class="section" aria-labelledby="toolchain-title">
+        <div class="section-heading">
+          <p class="eyebrow">Toolchain</p>
+          <h2 id="toolchain-title">Supported encoding ecosystem</h2>
+        </div>
+        <div class="tool-list" aria-label="Supported tools">
+          <span>x264</span>
+          <span>x265</span>
+          <span>SVT-AV1</span>
+          <span>Av1an</span>
+          <span>FFmpeg</span>
+          <span>FFprobe</span>
+          <span>VapourSynth</span>
+          <span>VSPipe</span>
+          <span>Avs2PipeMod</span>
+          <span>Python 3.12</span>
+          <span>vsrepo</span>
+          <span>VMAF</span>
+        </div>
+      </section>
+
+      <section class="section compare" aria-labelledby="search-title">
+        <div>
+          <p class="eyebrow">Search terms</p>
+          <h2 id="search-title">Find FlowEncode by what it does</h2>
+        </div>
+        <p>
+          FlowEncode is a Windows video encoding GUI, an Av1an GUI for target-quality
+          encoding, a VapourSynth workflow frontend and an FFmpeg-based desktop
+          transcoding tool for repeatable x264, x265 and SVT-AV1 workflows.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>FlowEncode is open-source software released under GPL-3.0.</p>
+      <div>
+        <a href="https://github.com/frankie1024/FlowEncode">GitHub repository</a>
+        <a href="https://github.com/frankie1024/FlowEncode/issues">Issues</a>
+        <a href="https://github.com/frankie1024/FlowEncode/releases">Releases</a>
+      </div>
+    </footer>
+  </body>
+</html>
