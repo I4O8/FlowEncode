@@ -118,13 +118,28 @@ public sealed class GitHubReleaseEncoderUpdateService : IEncoderUpdateService
 
             var sourceDirectory = Path.GetDirectoryName(extractedExe)!;
             var targetDirectory = _paths.GetBinaryDirectory(package.Kind, package.Architecture);
-            CopyDirectoryContents(sourceDirectory, targetDirectory);
-
             var expectedBinaryPath = _paths.GetBinaryPath(package.Kind, package.Architecture);
-            var extractedBinaryPath = Path.Combine(targetDirectory, executableName);
-            if (!string.Equals(extractedBinaryPath, expectedBinaryPath, StringComparison.OrdinalIgnoreCase))
+            var expectedBinaryName = Path.GetFileName(expectedBinaryPath);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            ManagedDirectoryInstaller.ReplaceDirectoryContents(sourceDirectory, targetDirectory, stagingDirectory =>
             {
-                File.Copy(extractedBinaryPath, expectedBinaryPath, true);
+                var stagedBinaryPath = Path.Combine(stagingDirectory, executableName);
+                if (!File.Exists(stagedBinaryPath))
+                {
+                    throw new FileNotFoundException($"压缩包内未找到 {executableName}。");
+                }
+
+                var stagedExpectedBinaryPath = Path.Combine(stagingDirectory, expectedBinaryName);
+                if (!string.Equals(stagedBinaryPath, stagedExpectedBinaryPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    File.Copy(stagedBinaryPath, stagedExpectedBinaryPath, true);
+                }
+            });
+
+            if (!File.Exists(expectedBinaryPath))
+            {
+                throw new FileNotFoundException($"安装完成后未找到 {expectedBinaryName}。", expectedBinaryPath);
             }
 
             return expectedBinaryPath;
@@ -178,28 +193,6 @@ public sealed class GitHubReleaseEncoderUpdateService : IEncoderUpdateService
             using var entryStream = entry.OpenEntryStream();
             using var fileStream = File.Open(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
             entryStream.CopyTo(fileStream);
-        }
-    }
-
-    private static void CopyDirectoryContents(string sourceDirectory, string targetDirectory)
-    {
-        foreach (var directory in Directory.EnumerateDirectories(sourceDirectory, "*", SearchOption.AllDirectories))
-        {
-            var relativePath = Path.GetRelativePath(sourceDirectory, directory);
-            Directory.CreateDirectory(Path.Combine(targetDirectory, relativePath));
-        }
-
-        foreach (var file in Directory.EnumerateFiles(sourceDirectory, "*", SearchOption.AllDirectories))
-        {
-            var relativePath = Path.GetRelativePath(sourceDirectory, file);
-            var destination = Path.Combine(targetDirectory, relativePath);
-            var destinationDirectory = Path.GetDirectoryName(destination);
-            if (!string.IsNullOrWhiteSpace(destinationDirectory))
-            {
-                Directory.CreateDirectory(destinationDirectory);
-            }
-
-            File.Copy(file, destination, true);
         }
     }
 

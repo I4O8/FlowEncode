@@ -174,49 +174,14 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
             var displayCommand = BuildOpusPipelineCommand(request, ffmpegPath, opusEncoderPath);
             var runCommand = BuildOpusPipelineCommand(request, ffmpegPath, opusEncoderPath, progressFilePath);
-            var scriptPath = Path.Combine(
-                Path.GetTempPath(),
-                $"flowencode_opus_{request.JobId:N}.cmd");
 
-            await File.WriteAllTextAsync(
-                scriptPath,
-                $"@echo off{Environment.NewLine}{runCommand}{Environment.NewLine}",
-                Encoding.ASCII,
-                cancellationToken);
-
-            try
-            {
-                return await RunProcessAsync(
-                    request,
-                    progress,
-                    displayCommand,
-                    new ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = $"/d /c {Quote(scriptPath)}",
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        StandardOutputEncoding = Encoding.UTF8,
-                        StandardErrorEncoding = Encoding.UTF8,
-                        CreateNoWindow = true
-                    },
-                    cancellationToken,
-                    progressFilePath);
-            }
-            finally
-            {
-                try
-                {
-                    if (File.Exists(scriptPath))
-                    {
-                        File.Delete(scriptPath);
-                    }
-                }
-                catch
-                {
-                }
-            }
+            return await RunProcessAsync(
+                request,
+                progress,
+                displayCommand,
+                CreateOpusPipelineShellStartInfo(runCommand),
+                cancellationToken,
+                progressFilePath);
         }
         finally
         {
@@ -526,7 +491,22 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
     {
         var bitrateKbps = GetRequiredOpusBitrateKbps(request);
         var progressArguments = BuildFfmpegProgressArguments(progressTarget);
-        return $"{Quote(ffmpegExecutable)} -hide_banner -nostats {progressArguments} -i {Quote(request.SourcePath)} -map 0:a:0 -vn -sn -dn -c:a pcm_s16le -ar 48000 -f wav - | {Quote(opusEncoderExecutable)} --bitrate {bitrateKbps} - {Quote(request.OutputPath)}";
+        return $"{Quote(ffmpegExecutable)} -hide_banner -nostats {progressArguments} -i {Quote(request.SourcePath)} -map 0:a:0 -vn -sn -dn -c:a pcm_s16le -ar 48000 -f wav pipe:1 | {Quote(opusEncoderExecutable)} --bitrate {bitrateKbps} - {Quote(request.OutputPath)}";
+    }
+
+    internal static ProcessStartInfo CreateOpusPipelineShellStartInfo(string command)
+    {
+        return new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = $"/d /s /c {Quote(command)}",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
+            CreateNoWindow = true
+        };
     }
 
     private static string BuildFfmpegLibOpusArguments(AudioProcessingRequest request, string? progressTarget = null)
