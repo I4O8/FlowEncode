@@ -35,6 +35,13 @@
     <meta name="twitter:image" content="https://frankie1024.github.io/FlowEncode/assets/flowencode-dashboard-en.png">
     <script>
       (() => {
+        const theme = window.localStorage.getItem("flowencode-theme");
+        if (theme === "light" || theme === "dark") {
+          document.documentElement.setAttribute("data-theme", theme);
+        }
+      })();
+
+      (() => {
         const params = new URLSearchParams(window.location.search);
         const requestedLanguage = params.get("lang");
         if (requestedLanguage === "en") {
@@ -59,6 +66,11 @@
         <a href="https://github.com/frankie1024/FlowEncode">GitHub</a>
         <a class="language-link" href="../?lang=zh">中文</a>
         <a class="language-link active" href="./?lang=en">English</a>
+        <span class="theme-switcher" role="group" aria-label="Theme">
+          <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+          <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+          <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+        </span>
       </nav>
     </header>
 
@@ -223,5 +235,6 @@
         <a href="https://github.com/frankie1024/FlowEncode/releases">Releases</a>
       </div>
     </footer>
+    <script src="../site.js"></script>
   </body>
 </html>
