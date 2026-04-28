@@ -46,8 +46,8 @@
       const rect = heroMedia.getBoundingClientRect();
       const x = (event.clientX - rect.left) / rect.width - 0.5;
       const y = (event.clientY - rect.top) / rect.height - 0.5;
-      heroMedia.style.setProperty("--tilt-x", `${x * 5}deg`);
-      heroMedia.style.setProperty("--tilt-y", `${y * -5}deg`);
+      heroMedia.style.setProperty("--tilt-x", `${x * 2}deg`);
+      heroMedia.style.setProperty("--tilt-y", `${y * -2}deg`);
     });
 
     heroMedia.addEventListener("pointerleave", () => {
