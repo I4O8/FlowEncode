@@ -181,8 +181,16 @@ public sealed partial class VapourSynthPreviewWindow : Window
     {
         var previousOutputInfo = _selectedOutputInfo;
         SaveCurrentOutputState();
+        var previousZoomState = previousOutputInfo is null
+            ? null
+            : CaptureZoomState(GetOrCreateOutputState(previousOutputInfo));
 
         var outputState = GetOrCreateOutputState(outputInfo);
+        if (previousOutputInfo is not null && previousOutputInfo.Index != outputInfo.Index && previousZoomState is not null)
+        {
+            ApplyZoomState(outputState, previousZoomState);
+        }
+
         _selectedOutputInfo = outputInfo;
         ViewModel.SelectedOutput = ViewModel.Outputs.FirstOrDefault(item => item.Info.Index == outputInfo.Index);
         ViewModel.UpdateForOutput(outputInfo);
@@ -1031,6 +1039,17 @@ public sealed partial class VapourSynthPreviewWindow : Window
             ?? ViewModel.CropModes[0];
         ViewModel.CropZoomPercentage = GetActiveCropZoomPercentage(outputState);
         ViewModel.UpdateCropPreviewState(ViewModel.IsCropPanelVisible);
+    }
+
+    private static PreviewZoomState CaptureZoomState(PreviewOutputState outputState)
+    {
+        return new PreviewZoomState(outputState.ZoomMode, outputState.ZoomRatio);
+    }
+
+    private static void ApplyZoomState(PreviewOutputState outputState, PreviewZoomState zoomState)
+    {
+        outputState.ZoomMode = zoomState.ZoomMode;
+        outputState.ZoomRatio = zoomState.ZoomRatio;
     }
 
     private int DetermineTargetFrame(
@@ -1976,6 +1995,10 @@ public sealed partial class VapourSynthPreviewWindow : Window
             };
         }
     }
+
+    private sealed record PreviewZoomState(
+        string ZoomMode,
+        double ZoomRatio);
 
     private sealed class AbsoluteCropState
     {
