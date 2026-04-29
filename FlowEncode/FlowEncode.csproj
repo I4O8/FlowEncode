@@ -71,6 +71,7 @@
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.6" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3179.45" GeneratePathProperty="true" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.1721" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />
   </ItemGroup>
@@ -113,6 +114,22 @@
                                     Condition="$([System.String]::Copy('%(PriOutputs.TargetPath)').Replace('/','\\').StartsWith('Assets\\VapourSynthEditor\\')) or $([System.String]::Copy('%(PriOutputs.Identity)').Replace('/','\\').Contains('\\Assets\\VapourSynthEditor\\'))" />
       <PriOutputs Remove="@(_VapourSynthEditorPriOutputs)" />
     </ItemGroup>
+  </Target>
+  <Target Name="NormalizeWebView2BuildOutput"
+          AfterTargets="Build"
+          Condition="'$(Platform)' == 'x64' and '$(PkgMicrosoft_Web_WebView2)' != ''">
+    <PropertyGroup>
+      <WebView2CoreSourcePath>$(PkgMicrosoft_Web_WebView2)runtimes\win-x64\native_uap\Microsoft.Web.WebView2.Core.dll</WebView2CoreSourcePath>
+      <WebView2LoaderSourcePath>$(PkgMicrosoft_Web_WebView2)runtimes\win-x64\native\WebView2Loader.dll</WebView2LoaderSourcePath>
+    </PropertyGroup>
+    <Copy SourceFiles="$(WebView2CoreSourcePath)"
+          DestinationFiles="$(OutDir)Microsoft.Web.WebView2.Core.dll"
+          SkipUnchangedFiles="false"
+          Condition="Exists('$(WebView2CoreSourcePath)')" />
+    <Copy SourceFiles="$(WebView2LoaderSourcePath)"
+          DestinationFiles="$(OutDir)WebView2Loader.dll"
+          SkipUnchangedFiles="false"
+          Condition="Exists('$(WebView2LoaderSourcePath)')" />
   </Target>
   <Target Name="CleanPublishedRuntimeArtifacts" AfterTargets="Publish">
     <ItemGroup>
