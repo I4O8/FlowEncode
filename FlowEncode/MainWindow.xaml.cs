@@ -356,7 +356,7 @@ public sealed partial class MainWindow : Window
             ? new GridLength(1, GridUnitType.Star)
             : new GridLength(0);
 
-        var cardHeight = width < 1100 ? 182 : 208;
+        var cardHeight = width < 1100 ? 216 : 248;
         DashboardDemuxButton.MinHeight = cardHeight;
         DashboardVapourSynthButton.MinHeight = cardHeight;
         DashboardVideoEncodeButton.MinHeight = cardHeight;
@@ -2182,7 +2182,11 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        ShowWindow(windowHandle, ShowWindowRestore);
+        if (IsIconic(windowHandle))
+        {
+            ShowWindow(windowHandle, ShowWindowRestore);
+        }
+
         SetForegroundWindow(windowHandle);
     }
 
@@ -2462,6 +2466,10 @@ public sealed partial class MainWindow : Window
     [DllImport("User32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShowWindow(IntPtr windowHandle, int command);
+
+    [DllImport("User32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(IntPtr windowHandle);
 
     [DllImport("User32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

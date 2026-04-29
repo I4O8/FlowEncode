@@ -24,6 +24,8 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
+    private const double LogSectionMinHeight = 112;
+    private const double LogSectionMaxHeight = 180;
 
     private readonly SemaphoreSlim _editorInitializationLock = new(1, 1);
     private readonly TaskCompletionSource<bool> _workspaceInitializedCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -113,6 +115,7 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
 
         try
         {
+            UpdateWorkspaceLayout(ActualHeight);
             await ViewModel.InitializeAsync();
             _workspaceInitializedCompletionSource.TrySetResult(true);
             await InitializeEditorAsync();
@@ -129,6 +132,11 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
     {
         CancelEditorReadyTimeout();
         CancelPendingDiagnostics();
+    }
+
+    private void UserControl_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdateWorkspaceLayout(e.NewSize.Height);
     }
 
     private async Task InitializeEditorAsync(bool forceReload = false)
@@ -437,6 +445,7 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
     private async Task ShowPreviewDeferredAsync()
     {
         await CaptureEditorStateAsync();
+        ViewModel.ClearPreviewLog();
         var sourceFilePath = ViewModel.CurrentFilePath;
         var displayName = string.IsNullOrWhiteSpace(sourceFilePath)
             ? ViewModel.Texts.VapourSynthUntitledDocument
@@ -462,11 +471,14 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
             mainWindowViewModel.CurrentLanguagePreference,
             mainWindowViewModel.CurrentThemePreference);
 
-        if (!opened)
+        if (opened)
         {
-            ViewModel.SetWorkspaceStatus(static texts => texts.VapourSynthPreviewEvaluationFailedStatus);
-            await FocusEditorAsync();
+            ViewModel.SetWorkspaceStatus(texts => texts.VapourSynthPreviewOpenedStatus(displayName));
+            return;
         }
+
+        ViewModel.SetWorkspaceStatus(static texts => texts.VapourSynthPreviewEvaluationFailedStatus);
+        await FocusEditorAsync();
     }
 
     public void UpdatePreviewPresentation(AppLanguage language, AppThemePreference themePreference)
@@ -882,6 +894,20 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
         RetryEditorButton.Visibility = showRetryButton ? Visibility.Visible : Visibility.Collapsed;
         EditorLoadingProgressRing.IsActive = showProgress;
         EditorLoadingProgressRing.Visibility = showProgress ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UpdateWorkspaceLayout(double availableHeight)
+    {
+        if (availableHeight <= 0)
+        {
+            return;
+        }
+
+        var targetLogHeight = Math.Clamp(Math.Round(availableHeight * 0.22), LogSectionMinHeight, LogSectionMaxHeight);
+        if (Math.Abs(LogRowDefinition.Height.Value - targetLogHeight) > 0.5)
+        {
+            LogRowDefinition.Height = new GridLength(targetLogHeight);
+        }
     }
 
     private async Task<StorageFile?> PickOpenFileAsync()

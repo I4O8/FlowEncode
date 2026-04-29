@@ -32,6 +32,7 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
     private StreamReader? _hostOutputReader;
     private string? _activeSessionPath;
     private int _commandCounter;
+    private bool _stderrTracebackActive;
     private bool _disposed;
 
     public event EventHandler<VapourSynthPreviewLogEventArgs>? LogEmitted;
@@ -59,10 +60,6 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
             var normalizedSourceFilePath = NormalizeAbsolutePath(request.SourceFilePath);
             var normalizedWorkingDirectory = NormalizeWorkingDirectory(request.WorkingDirectory, normalizedSourceFilePath);
 
-            EmitLog(
-                VapourSynthPreviewLogLevel.Information,
-                "preview",
-                $"Evaluating script: {request.DisplayName}");
             await CloseHostCoreAsync();
 
             var sessionPath = CreateSessionDirectory();
@@ -139,11 +136,6 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
                 throw new InvalidOperationException("The script did not expose any video outputs.");
             }
 
-            EmitLog(
-                VapourSynthPreviewLogLevel.Information,
-                "preview",
-                BuildOutputsReadyMessage(outputs));
-
             return new VapourSynthPreviewSessionInfo(outputs);
         }
         catch (OperationCanceledException)
@@ -151,12 +143,8 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
             await CloseHostCoreAsync();
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            EmitLog(
-                VapourSynthPreviewLogLevel.Error,
-                "preview",
-                $"Script evaluation failed. {ex.Message}");
             await CloseHostCoreAsync();
             throw;
         }
@@ -233,12 +221,8 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            EmitLog(
-                VapourSynthPreviewLogLevel.Error,
-                "preview",
-                $"Failed to render output {outputIndex}, frame {frameNumber}. {ex.Message}");
             throw;
         }
         finally
@@ -342,7 +326,7 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         }
 
         EmitLog(
-            VapourSynthPreviewLogLevel.Error,
+            ClassifyHelperStderrLine(e.Data),
             "helper",
             e.Data);
     }
@@ -426,6 +410,7 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         _hostOutputReader = null;
         _hostProcess = null;
         _commandCounter = 0;
+        _stderrTracebackActive = false;
 
         if (!string.IsNullOrWhiteSpace(_activeSessionPath))
         {
@@ -557,21 +542,49 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         };
     }
 
-    private static string BuildOutputsReadyMessage(IReadOnlyList<VapourSynthPreviewOutputInfo> outputs)
+    private VapourSynthPreviewLogLevel ClassifyHelperStderrLine(string line)
     {
-        var outputSummary = string.Join(
-            " | ",
-            outputs.Select(static output =>
-                $"#{output.Index} {output.Width}x{output.Height} {output.FpsNumerator}/{output.FpsDenominator} {output.FormatName} {FormatBitDepth(output.BitsPerSample)}"));
+        var normalizedLine = line.Trim();
+        if (normalizedLine.Length == 0)
+        {
+            return VapourSynthPreviewLogLevel.Information;
+        }
 
-        return outputs.Count == 1
-            ? $"Script evaluation succeeded. {outputSummary}"
-            : $"Script evaluation succeeded. Outputs: {outputSummary}";
+        if (normalizedLine.Contains("traceback", StringComparison.OrdinalIgnoreCase))
+        {
+            _stderrTracebackActive = true;
+            return VapourSynthPreviewLogLevel.Error;
+        }
+
+        if (_stderrTracebackActive)
+        {
+            return VapourSynthPreviewLogLevel.Error;
+        }
+
+        if (ContainsAny(normalizedLine, "warning", "warn"))
+        {
+            return VapourSynthPreviewLogLevel.Warning;
+        }
+
+        if (ContainsAny(normalizedLine, "error", "failed", "exception", "fatal"))
+        {
+            return VapourSynthPreviewLogLevel.Error;
+        }
+
+        return VapourSynthPreviewLogLevel.Information;
     }
 
-    private static string FormatBitDepth(int bitsPerSample)
+    private static bool ContainsAny(string line, params string[] tokens)
     {
-        return bitsPerSample > 0 ? $"{bitsPerSample}-bit" : "unknown-bit";
+        foreach (var token in tokens)
+        {
+            if (line.Contains(token, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void ThrowIfDisposed()

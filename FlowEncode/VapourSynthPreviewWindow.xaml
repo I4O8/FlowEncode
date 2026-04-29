@@ -400,6 +400,12 @@
                 <ScrollViewer
                     x:Name="PreviewScrollViewer"
                     HorizontalScrollBarVisibility="Hidden"
+                    PointerCanceled="PreviewScrollViewer_PointerCanceled"
+                    PointerCaptureLost="PreviewScrollViewer_PointerCaptureLost"
+                    PointerMoved="PreviewScrollViewer_PointerMoved"
+                    PointerPressed="PreviewScrollViewer_PointerPressed"
+                    PointerReleased="PreviewScrollViewer_PointerReleased"
+                    PointerWheelChanged="PreviewScrollViewer_PointerWheelChanged"
                     VerticalScrollBarVisibility="Hidden">
                     <Grid
                         HorizontalAlignment="Center"

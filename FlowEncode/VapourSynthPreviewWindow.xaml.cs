@@ -15,10 +15,12 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Foundation;
 using Windows.Graphics;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
+using Windows.UI.Core;
 using Windows.System;
 using WinRT.Interop;
 
@@ -32,14 +34,19 @@ public sealed partial class VapourSynthPreviewWindow : Window
     private bool _isFrameLoadInProgress;
     private bool _isFullScreenActive;
     private bool _isInternalControlUpdate;
+    private bool _isPreviewPanActive;
     private bool _isPlaying;
     private bool _hasEverActivated;
     private int? _pendingFrameNumber;
+    private uint _previewPanPointerId;
     private string? _pendingStatusText;
     private byte[]? _displayedFramePixels;
     private int _displayedFrameHeight;
     private int _displayedFrameWidth;
     private XamlRoot? _observedXamlRoot;
+    private Point _previewPanOrigin;
+    private double _previewPanStartHorizontalOffset;
+    private double _previewPanStartVerticalOffset;
     private VapourSynthPreviewFrameData? _lastFrameData;
     private byte[]? _sourceFramePixels;
     private int _sourceFrameHeight;
@@ -718,6 +725,114 @@ public sealed partial class VapourSynthPreviewWindow : Window
         ViewModel.UpdateViewport(
             Math.Max(0, e.NewSize.Width - 16),
             Math.Max(0, e.NewSize.Height - 16));
+    }
+
+    private void PreviewScrollViewer_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        if (e.Handled || !IsControlKeyPressed() || _displayedFrameWidth <= 0 || _displayedFrameHeight <= 0)
+        {
+            return;
+        }
+
+        var currentPoint = e.GetCurrentPoint(PreviewScrollViewer);
+        var wheelDelta = currentPoint.Properties.MouseWheelDelta;
+        if (wheelDelta == 0)
+        {
+            return;
+        }
+
+        var previousWidth = ViewModel.PreviewImageWidth;
+        var previousHeight = ViewModel.PreviewImageHeight;
+        var pointerPosition = currentPoint.Position;
+        var anchorXRatio = previousWidth > 0
+            ? Math.Clamp((PreviewScrollViewer.HorizontalOffset + pointerPosition.X) / previousWidth, 0.0, 1.0)
+            : 0.5;
+        var anchorYRatio = previousHeight > 0
+            ? Math.Clamp((PreviewScrollViewer.VerticalOffset + pointerPosition.Y) / previousHeight, 0.0, 1.0)
+            : 0.5;
+
+        var factor = Math.Pow(1.1, wheelDelta / 120.0);
+        var targetZoomRatio = Math.Clamp(GetCurrentEffectiveZoomRatio() * factor, 0.05, 16.0);
+        ApplyCustomZoom(targetZoomRatio);
+        RestorePreviewScrollAnchor(anchorXRatio, anchorYRatio, pointerPosition.X, pointerPosition.Y);
+        e.Handled = true;
+    }
+
+    private void PreviewScrollViewer_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (e.Handled || !CanPanPreview())
+        {
+            return;
+        }
+
+        var currentPoint = e.GetCurrentPoint(PreviewScrollViewer);
+        if (!currentPoint.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        _isPreviewPanActive = true;
+        _previewPanPointerId = currentPoint.PointerId;
+        _previewPanOrigin = currentPoint.Position;
+        _previewPanStartHorizontalOffset = PreviewScrollViewer.HorizontalOffset;
+        _previewPanStartVerticalOffset = PreviewScrollViewer.VerticalOffset;
+        PreviewScrollViewer.CapturePointer(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void PreviewScrollViewer_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_isPreviewPanActive || e.Pointer.PointerId != _previewPanPointerId)
+        {
+            return;
+        }
+
+        var currentPoint = e.GetCurrentPoint(PreviewScrollViewer);
+        if (!currentPoint.Properties.IsLeftButtonPressed)
+        {
+            ReleasePreviewPanCapture();
+            return;
+        }
+
+        var deltaX = currentPoint.Position.X - _previewPanOrigin.X;
+        var deltaY = currentPoint.Position.Y - _previewPanOrigin.Y;
+        var targetHorizontalOffset = Math.Clamp(
+            _previewPanStartHorizontalOffset - deltaX,
+            0,
+            PreviewScrollViewer.ScrollableWidth);
+        var targetVerticalOffset = Math.Clamp(
+            _previewPanStartVerticalOffset - deltaY,
+            0,
+            PreviewScrollViewer.ScrollableHeight);
+
+        PreviewScrollViewer.ChangeView(targetHorizontalOffset, targetVerticalOffset, null, true);
+        e.Handled = true;
+    }
+
+    private void PreviewScrollViewer_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (_isPreviewPanActive && e.Pointer.PointerId == _previewPanPointerId)
+        {
+            ReleasePreviewPanCapture();
+            e.Handled = true;
+        }
+    }
+
+    private void PreviewScrollViewer_PointerCanceled(object sender, PointerRoutedEventArgs e)
+    {
+        if (_isPreviewPanActive && e.Pointer.PointerId == _previewPanPointerId)
+        {
+            ReleasePreviewPanCapture();
+            e.Handled = true;
+        }
+    }
+
+    private void PreviewScrollViewer_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        if (_isPreviewPanActive && e.Pointer.PointerId == _previewPanPointerId)
+        {
+            ReleasePreviewPanCapture();
+        }
     }
 
     private async void FirstFrameButton_Click(object sender, RoutedEventArgs e)
@@ -1556,6 +1671,81 @@ public sealed partial class VapourSynthPreviewWindow : Window
     private static int GetIntValue(NumberBox numberBox)
     {
         return double.IsNaN(numberBox.Value) ? 0 : (int)Math.Round(numberBox.Value);
+    }
+
+    private bool CanPanPreview()
+    {
+        return ViewModel.PreviewImageWidth > PreviewViewportHost.ActualWidth + 1
+            || ViewModel.PreviewImageHeight > PreviewViewportHost.ActualHeight + 1;
+    }
+
+    private double GetCurrentEffectiveZoomRatio()
+    {
+        if (_displayedFrameWidth <= 0 || ViewModel.PreviewImageWidth <= 0)
+        {
+            return Math.Clamp(ViewModel.ZoomRatio, 0.05, 16.0);
+        }
+
+        var displayScale = RootLayout.XamlRoot?.RasterizationScale ?? 1.0;
+        var visibleRatio = ViewModel.PreviewImageWidth / _displayedFrameWidth;
+        var cropMultiplier = ViewModel.IsCropPanelVisible
+            ? Math.Max(0.1, ViewModel.CropZoomPercentage / 100.0)
+            : 1.0;
+
+        var zoomRatio = visibleRatio * displayScale / cropMultiplier;
+        if (zoomRatio <= 0 || double.IsNaN(zoomRatio) || double.IsInfinity(zoomRatio))
+        {
+            return Math.Clamp(ViewModel.ZoomRatio, 0.05, 16.0);
+        }
+
+        return Math.Clamp(zoomRatio, 0.05, 16.0);
+    }
+
+    private void ApplyCustomZoom(double zoomRatio)
+    {
+        var customZoomOption = ViewModel.ZoomModes.FirstOrDefault(option => option.Value == "custom");
+        ViewModel.ZoomRatio = zoomRatio;
+        if (customZoomOption is not null)
+        {
+            ViewModel.SelectedZoomMode = customZoomOption;
+        }
+
+        SaveCurrentOutputState();
+        SyncControls();
+    }
+
+    private void RestorePreviewScrollAnchor(
+        double anchorXRatio,
+        double anchorYRatio,
+        double pointerViewportX,
+        double pointerViewportY)
+    {
+        PreviewScrollViewer.UpdateLayout();
+
+        var targetHorizontalOffset = Math.Clamp(
+            ViewModel.PreviewImageWidth * anchorXRatio - pointerViewportX,
+            0,
+            PreviewScrollViewer.ScrollableWidth);
+        var targetVerticalOffset = Math.Clamp(
+            ViewModel.PreviewImageHeight * anchorYRatio - pointerViewportY,
+            0,
+            PreviewScrollViewer.ScrollableHeight);
+
+        PreviewScrollViewer.ChangeView(targetHorizontalOffset, targetVerticalOffset, null, true);
+    }
+
+    private void ReleasePreviewPanCapture()
+    {
+        _isPreviewPanActive = false;
+        _previewPanPointerId = 0;
+        PreviewScrollViewer.ReleasePointerCaptures();
+    }
+
+    private static bool IsControlKeyPressed()
+    {
+        return Microsoft.UI.Input.InputKeyboardSource
+            .GetKeyStateForCurrentThread(VirtualKey.Control)
+            .HasFlag(CoreVirtualKeyStates.Down);
     }
 
     private static void TryDeleteFile(string path)

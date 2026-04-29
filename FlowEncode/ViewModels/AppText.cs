@@ -128,8 +128,8 @@ public sealed class AppText
     public string AudioOpusBitrateHeader => Pick("Opus 码率", "Opus Bitrate");
     public string AudioOpusMappingFamilyHeader => Pick("环绕映射", "Surround Mapping");
     public string AudioOpusMappingFamilyDescription => Pick(
-        "3-8声道音频源建议开启",
-        "Recommended for 3-8 channel audio sources.");
+        "兼容的3-8声道使用 Opus family 1；其他布局自动回退默认管线。",
+        "Uses Opus family 1 for compatible 3-8 channel layouts; other layouts fall back to the default pipeline.");
     public string AudioChannelProfileHeader => Pick("声道布局", "Channel Layout");
     public string AudioProcessingStartButton => Pick("开始音频处理", "Start Audio");
     public string AudioProcessingCancelButton => Pick("取消音频处理", "Cancel Audio");
@@ -318,6 +318,8 @@ public sealed class AppText
     public string VapourSynthPreviewSessionReadyStatus => Pick(
         "脚本已求值，可以开始预览。",
         "The script is ready for preview.");
+    public string VapourSynthPreviewOpenedStatus(string documentName) =>
+        IsChinese ? $"预览已打开：{documentName}" : $"Preview opened: {documentName}";
     public string VapourSynthPreviewRenderingStatus(int outputIndex, int frameNumber) =>
         IsChinese
             ? $"正在渲染输出 {outputIndex} 的第 {frameNumber} 帧..."

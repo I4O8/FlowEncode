@@ -103,7 +103,7 @@
 
                                         <StackPanel Grid.Row="1" Spacing="8">
                                             <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavBluRayDemux}" TextWrapping="WrapWholeWords" />
-                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.DashboardDemuxCardDescription}" TextWrapping="WrapWholeWords" />
+                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardDemuxCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
                                         </StackPanel>
 
                                         <Grid Grid.Row="2" ColumnSpacing="10">
@@ -133,7 +133,7 @@
 
                                         <StackPanel Grid.Row="1" Spacing="8">
                                             <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavVapourSynthWorkspace}" TextWrapping="WrapWholeWords" />
-                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.DashboardVapourSynthCardDescription}" TextWrapping="WrapWholeWords" />
+                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardVapourSynthCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
                                         </StackPanel>
 
                                         <Grid Grid.Row="2" ColumnSpacing="10">
@@ -163,7 +163,7 @@
 
                                         <StackPanel Grid.Row="1" Spacing="8">
                                             <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavOverview}" TextWrapping="WrapWholeWords" />
-                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.DashboardVideoEncodeCardDescription}" TextWrapping="WrapWholeWords" />
+                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardVideoEncodeCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
                                         </StackPanel>
 
                                         <Grid Grid.Row="2" ColumnSpacing="10">
@@ -193,7 +193,7 @@
 
                                         <StackPanel Grid.Row="1" Spacing="8">
                                             <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavAudioProcessing}" TextWrapping="WrapWholeWords" />
-                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.DashboardAudioTranscodeCardDescription}" TextWrapping="WrapWholeWords" />
+                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardAudioTranscodeCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
                                         </StackPanel>
 
                                         <Grid Grid.Row="2" ColumnSpacing="10">
@@ -223,7 +223,7 @@
 
                                         <StackPanel Grid.Row="1" Spacing="8">
                                             <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavAutoCompression}" TextWrapping="WrapWholeWords" />
-                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.DashboardAutoCompressionCardDescription}" TextWrapping="WrapWholeWords" />
+                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardAutoCompressionCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
                                         </StackPanel>
 
                                         <Grid Grid.Row="2" ColumnSpacing="10">
@@ -253,7 +253,7 @@
 
                                         <StackPanel Grid.Row="1" Spacing="8">
                                             <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavSettings}" TextWrapping="WrapWholeWords" />
-                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.DashboardSettingsCardDescription}" TextWrapping="WrapWholeWords" />
+                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardSettingsCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
                                         </StackPanel>
 
                                         <Grid Grid.Row="2" ColumnSpacing="10">

@@ -1271,7 +1271,11 @@ function createEditor() {
         lineHeight: 22,
         cursorBlinking: "solid",
         smoothScrolling: true,
-        scrollBeyondLastLine: false,
+        scrollBeyondLastLine: true,
+        padding: {
+            top: 8,
+            bottom: 48
+        },
         minimap: { enabled: false },
         folding: true,
         glyphMargin: true,

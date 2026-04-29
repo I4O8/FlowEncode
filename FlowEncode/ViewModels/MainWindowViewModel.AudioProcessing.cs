@@ -756,6 +756,8 @@ public partial class MainWindowViewModel
             eac3ToOutputFormat,
             eac3ToAdditionalArguments,
             _audioSourceInfo?.DurationSeconds,
+            _audioSourceInfo?.Channels,
+            _audioSourceInfo?.ChannelLayout,
             opusBitrateKbps,
             AudioOpusUseMappingFamily1);
     }
@@ -859,7 +861,9 @@ public partial class MainWindowViewModel
 
         var capability = _environmentReadinessReport?.Capabilities.FirstOrDefault(readiness => readiness.Kind == capabilityKind)
             ?? BuildCachedAudioCapabilityReadiness(capabilityKind);
-        if (capabilityKind == EnvironmentCapabilityKind.AudioOpus && AudioOpusUseMappingFamily1)
+        if (capabilityKind == EnvironmentCapabilityKind.AudioOpus
+            && AudioOpusUseMappingFamily1
+            && CanUseFfmpegOpusMappingFamily1(_audioSourceInfo?.Channels, _audioSourceInfo?.ChannelLayout))
         {
             return OverrideOpusCapabilityForFfmpegMappingFamily(capability);
         }
@@ -961,6 +965,35 @@ public partial class MainWindowViewModel
             capability.Kind,
             ReadinessStateResolver.ResolveFromRequirements(filteredRequirements),
             filteredRequirements);
+    }
+
+    private static bool CanUseFfmpegOpusMappingFamily1(int? channelCount, string? channelLayout)
+    {
+        if (channelCount is > 8)
+        {
+            return false;
+        }
+
+        var layout = NormalizeAudioChannelLayoutName(channelLayout);
+        return layout is "mono"
+            or "stereo"
+            or "3.0"
+            or "quad"
+            or "quad(side)"
+            or "5.0"
+            or "5.0(side)"
+            or "5.1"
+            or "5.1(side)"
+            or "6.1"
+            or "6.1(back)"
+            or "7.1";
+    }
+
+    private static string NormalizeAudioChannelLayoutName(string? channelLayout)
+    {
+        return string.IsNullOrWhiteSpace(channelLayout)
+            ? string.Empty
+            : channelLayout.Trim().Replace(" ", string.Empty, StringComparison.Ordinal).ToLowerInvariant();
     }
 
     private ReadinessState GetSelectedAudioCapabilityState()

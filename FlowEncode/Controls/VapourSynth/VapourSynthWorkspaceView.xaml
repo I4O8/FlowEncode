@@ -5,8 +5,11 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Loaded="UserControl_Loaded">
-    <Grid Background="{ThemeResource WindowBackgroundBrush}">
+    Loaded="UserControl_Loaded"
+    SizeChanged="UserControl_SizeChanged">
+    <Grid
+        x:Name="WorkspaceRoot"
+        Background="{ThemeResource WindowBackgroundBrush}">
         <Border
             Background="{ThemeResource CardBrush}"
             BorderBrush="{ThemeResource CardBorderBrush}"
@@ -17,9 +20,9 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
+                <RowDefinition x:Name="EditorRowDefinition" Height="*" />
                 <RowDefinition Height="1" />
-                <RowDefinition Height="180" />
+                <RowDefinition x:Name="LogRowDefinition" Height="160" />
             </Grid.RowDefinitions>
 
             <CommandBar
@@ -147,7 +150,7 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="2" x:Name="EditorSurfaceHost" MinHeight="420">
+            <Grid Grid.Row="2" x:Name="EditorSurfaceHost">
                 <Border x:Name="EditorOverlay" Padding="28" Background="{ThemeResource CardAltBrush}" Visibility="Visible">
                     <StackPanel MaxWidth="520" Spacing="14" VerticalAlignment="Center">
                         <ProgressRing x:Name="EditorLoadingProgressRing" Width="32" Height="32" IsActive="True" />
@@ -173,7 +176,7 @@
 
             <Border Grid.Row="3" Background="{ThemeResource CardBorderBrush}" />
 
-            <Grid Grid.Row="4">
+            <Grid Grid.Row="4" MinHeight="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
@@ -218,6 +221,7 @@
                     FontFamily="{StaticResource AppMonoFont}"
                     IsReadOnly="True"
                     IsSpellCheckEnabled="False"
+                    MinHeight="0"
                     ScrollViewer.VerticalScrollBarVisibility="Auto"
                     Text="{Binding LogText, Mode=OneWay}"
                     TextWrapping="Wrap" />

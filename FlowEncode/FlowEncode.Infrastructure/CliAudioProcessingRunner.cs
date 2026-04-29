@@ -139,20 +139,21 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         CancellationToken cancellationToken)
     {
         var ffmpegPath = await ResolveToolPathAsync(RegisteredToolKind.Ffmpeg, cancellationToken);
+        var runPlan = CreateRunPlan(request);
         var progressFilePath = Path.Combine(
             Path.GetTempPath(),
             $"flowencode_opus_progress_{request.JobId:N}.log");
 
         try
         {
-            if (request.UseOpusMappingFamily1)
+            if (ShouldUseFfmpegLibOpusMappingFamily1(request))
             {
                 var displayArguments = BuildFfmpegLibOpusArguments(request);
-                var runArguments = BuildFfmpegLibOpusArguments(request, progressFilePath);
+                var runArguments = BuildFfmpegLibOpusArguments(runPlan.ExecutionRequest, progressFilePath);
                 var command = $"{Quote(ffmpegPath)} {displayArguments}";
 
                 return await RunProcessAsync(
-                    request,
+                    runPlan,
                     progress,
                     command,
                     new ProcessStartInfo
@@ -173,13 +174,13 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             var opusEncoderPath = await ResolveToolPathAsync(RegisteredToolKind.OpusExt, cancellationToken);
 
             var displayCommand = BuildOpusPipelineCommand(request, ffmpegPath, opusEncoderPath);
-            var runCommand = BuildOpusPipelineCommand(request, ffmpegPath, opusEncoderPath, progressFilePath);
+            var startInfos = CreateOpusPipelineStartInfos(runPlan.ExecutionRequest, ffmpegPath, opusEncoderPath, progressFilePath);
 
-            return await RunProcessAsync(
-                request,
+            return await RunOpusPipelineAsync(
+                runPlan,
                 progress,
                 displayCommand,
-                CreateOpusPipelineShellStartInfo(runCommand),
+                startInfos,
                 cancellationToken,
                 progressFilePath);
         }
@@ -206,7 +207,45 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         CancellationToken cancellationToken,
         string? supplementalProgressFilePath = null)
     {
-        var outputDirectory = Path.GetDirectoryName(request.OutputPath);
+        return await RunProcessAsync(
+            new AudioProcessingRunPlan(request, request, null),
+            progress,
+            displayCommand,
+            startInfo,
+            cancellationToken,
+            supplementalProgressFilePath);
+    }
+
+    private async Task<AudioProcessingResult> RunProcessAsync(
+        AudioProcessingRunPlan runPlan,
+        IProgress<AudioProcessingProgress>? progress,
+        string displayCommand,
+        ProcessStartInfo startInfo,
+        CancellationToken cancellationToken,
+        string? supplementalProgressFilePath = null)
+    {
+        return await RunProcessWithProgressAsync(
+            runPlan,
+            progress,
+            displayCommand,
+            (handleLine, token) => ExecuteSingleProcessAsync(
+                runPlan.ExecutionRequest,
+                startInfo,
+                handleLine,
+                token,
+                supplementalProgressFilePath),
+            cancellationToken);
+    }
+
+    private async Task<AudioProcessingResult> RunProcessWithProgressAsync(
+        AudioProcessingRunPlan runPlan,
+        IProgress<AudioProcessingProgress>? progress,
+        string displayCommand,
+        Func<Action<string>, CancellationToken, Task<ProcessExecutionResult>> executeAsync,
+        CancellationToken cancellationToken)
+    {
+        var request = runPlan.DisplayRequest;
+        var outputDirectory = Path.GetDirectoryName(runPlan.ExecutionRequest.OutputPath);
         if (!string.IsNullOrWhiteSpace(outputDirectory))
         {
             Directory.CreateDirectory(outputDirectory);
@@ -367,12 +406,6 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             }
         }
 
-        Process? process = null;
-        ActiveExecution? activeExecution = null;
-        Task pumpOutput = Task.CompletedTask;
-        Task pumpError = Task.CompletedTask;
-        Task pumpSupplementalProgress = Task.CompletedTask;
-
         progress?.Report(new AudioProcessingProgress(
             request.JobId,
             EncodingJobState.Running,
@@ -384,35 +417,13 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
         try
         {
-            process = new Process { StartInfo = startInfo };
-            process.Start();
-            activeExecution = new ActiveExecution(process);
-            _activeExecutions[request.JobId] = activeExecution;
-
-            using var cancellationRegistration = cancellationToken.Register(static state =>
-            {
-                if (state is ActiveExecution execution)
-                {
-                    execution.Terminate();
-                }
-            }, activeExecution);
-
-            pumpOutput = PumpAsync(process.StandardOutput, HandleLine, cancellationToken);
-            pumpError = PumpAsync(process.StandardError, HandleLine, cancellationToken);
-            if (request.Mode == AudioProcessingMode.Opus
-                && !string.IsNullOrWhiteSpace(supplementalProgressFilePath))
-            {
-                pumpSupplementalProgress = PumpProgressFileAsync(process, supplementalProgressFilePath, HandleLine);
-            }
-
-            await process.WaitForExitAsync(cancellationToken);
-            await Task.WhenAll(pumpOutput, pumpError, pumpSupplementalProgress);
-
-            _activeExecutions.TryRemove(request.JobId, out _);
-
+            var executionResult = await executeAsync(HandleLine, cancellationToken);
             var log = logBuilder.ToString();
-            if (process.ExitCode == 0)
+            if (executionResult.ExitCode == 0)
             {
+                FinalizeOutputFileForSuccess(runPlan);
+                DeletePartialOutputFile(runPlan);
+
                 progress?.Report(new AudioProcessingProgress(
                     request.JobId,
                     EncodingJobState.Completed,
@@ -431,7 +442,11 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                     displayCommand);
             }
 
-            var failureSummary = $"{BuildFailureSummary(request.Mode)}，退出代码 {process.ExitCode}";
+            DeletePartialOutputFile(runPlan);
+
+            var failureSummary = string.IsNullOrWhiteSpace(executionResult.ExitCodeDetail)
+                ? $"{BuildFailureSummary(request.Mode)}，退出代码 {executionResult.ExitCode}"
+                : $"{BuildFailureSummary(request.Mode)}，{executionResult.ExitCodeDetail}";
             progress?.Report(new AudioProcessingProgress(
                 request.JobId,
                 EncodingJobState.Failed,
@@ -444,10 +459,70 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             return new AudioProcessingResult(
                 request.JobId,
                 EncodingJobState.Failed,
-                process.ExitCode,
+                executionResult.ExitCode,
                 failureSummary,
                 log,
                 displayCommand);
+        }
+        catch (OperationCanceledException)
+        {
+            DeletePartialOutputFile(runPlan);
+
+            return new AudioProcessingResult(
+                request.JobId,
+                EncodingJobState.Cancelled,
+                -1,
+                BuildCancelledSummary(request.Mode),
+                logBuilder.ToString(),
+                displayCommand);
+        }
+        catch
+        {
+            DeletePartialOutputFile(runPlan);
+            throw;
+        }
+    }
+
+    private async Task<ProcessExecutionResult> ExecuteSingleProcessAsync(
+        AudioProcessingRequest request,
+        ProcessStartInfo startInfo,
+        Action<string> handleLine,
+        CancellationToken cancellationToken,
+        string? supplementalProgressFilePath)
+    {
+        Process? process = null;
+        ActiveExecution? activeExecution = null;
+        Task pumpOutput = Task.CompletedTask;
+        Task pumpError = Task.CompletedTask;
+        Task pumpSupplementalProgress = Task.CompletedTask;
+
+        try
+        {
+            process = new Process { StartInfo = startInfo };
+            process.Start();
+            activeExecution = new ActiveExecution(process);
+            _activeExecutions[request.JobId] = activeExecution;
+
+            using var cancellationRegistration = cancellationToken.Register(static state =>
+            {
+                if (state is ActiveExecution execution)
+                {
+                    execution.Terminate();
+                }
+            }, activeExecution);
+
+            pumpOutput = PumpAsync(process.StandardOutput, handleLine, cancellationToken);
+            pumpError = PumpAsync(process.StandardError, handleLine, cancellationToken);
+            if (request.Mode == AudioProcessingMode.Opus
+                && !string.IsNullOrWhiteSpace(supplementalProgressFilePath))
+            {
+                pumpSupplementalProgress = PumpProgressFileAsync(process, supplementalProgressFilePath, handleLine);
+            }
+
+            await process.WaitForExitAsync(cancellationToken);
+            await Task.WhenAll(pumpOutput, pumpError, pumpSupplementalProgress);
+
+            return new ProcessExecutionResult(process.ExitCode);
         }
         catch (OperationCanceledException)
         {
@@ -461,13 +536,141 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             {
             }
 
-            return new AudioProcessingResult(
-                request.JobId,
-                EncodingJobState.Cancelled,
-                -1,
-                BuildCancelledSummary(request.Mode),
-                logBuilder.ToString(),
-                displayCommand);
+            throw;
+        }
+        catch
+        {
+            activeExecution?.Terminate();
+            throw;
+        }
+        finally
+        {
+            _activeExecutions.TryRemove(request.JobId, out _);
+            activeExecution?.Dispose();
+        }
+    }
+
+    private async Task<AudioProcessingResult> RunOpusPipelineAsync(
+        AudioProcessingRunPlan runPlan,
+        IProgress<AudioProcessingProgress>? progress,
+        string displayCommand,
+        OpusPipelineStartInfos startInfos,
+        CancellationToken cancellationToken,
+        string? supplementalProgressFilePath)
+    {
+        return await RunProcessWithProgressAsync(
+            runPlan,
+            progress,
+            displayCommand,
+            (handleLine, token) => ExecuteOpusPipelineAsync(
+                runPlan.ExecutionRequest,
+                startInfos,
+                handleLine,
+                token,
+                supplementalProgressFilePath),
+            cancellationToken);
+    }
+
+    private async Task<ProcessExecutionResult> ExecuteOpusPipelineAsync(
+        AudioProcessingRequest request,
+        OpusPipelineStartInfos startInfos,
+        Action<string> handleLine,
+        CancellationToken cancellationToken,
+        string? supplementalProgressFilePath)
+    {
+        Process? ffmpegProcess = null;
+        Process? opusProcess = null;
+        ActiveExecution? activeExecution = null;
+        Task copyPcmToOpus = Task.CompletedTask;
+        Task pumpFfmpegError = Task.CompletedTask;
+        Task pumpOpusOutput = Task.CompletedTask;
+        Task pumpOpusError = Task.CompletedTask;
+        Task pumpSupplementalProgress = Task.CompletedTask;
+
+        try
+        {
+            ffmpegProcess = new Process { StartInfo = startInfos.FfmpegStartInfo };
+            opusProcess = new Process { StartInfo = startInfos.OpusEncoderStartInfo };
+
+            ffmpegProcess.Start();
+            try
+            {
+                opusProcess.Start();
+            }
+            catch
+            {
+                TryTerminate(ffmpegProcess);
+                throw;
+            }
+
+            activeExecution = new ActiveExecution(ffmpegProcess, opusProcess);
+            _activeExecutions[request.JobId] = activeExecution;
+
+            using var cancellationRegistration = cancellationToken.Register(static state =>
+            {
+                if (state is ActiveExecution execution)
+                {
+                    execution.Terminate();
+                }
+            }, activeExecution);
+
+            copyPcmToOpus = CopyOpusPcmPipeAsync(
+                ffmpegProcess.StandardOutput.BaseStream,
+                opusProcess.StandardInput.BaseStream,
+                cancellationToken);
+            pumpFfmpegError = PumpAsync(ffmpegProcess.StandardError, handleLine, cancellationToken);
+            pumpOpusOutput = PumpAsync(opusProcess.StandardOutput, handleLine, cancellationToken);
+            pumpOpusError = PumpAsync(opusProcess.StandardError, handleLine, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(supplementalProgressFilePath))
+            {
+                pumpSupplementalProgress = PumpProgressFileAsync(ffmpegProcess, supplementalProgressFilePath, handleLine);
+            }
+
+            await Task.WhenAll(
+                ffmpegProcess.WaitForExitAsync(cancellationToken),
+                opusProcess.WaitForExitAsync(cancellationToken),
+                ObservePipeCopyAsync(copyPcmToOpus));
+            await Task.WhenAll(pumpFfmpegError, pumpOpusOutput, pumpOpusError, pumpSupplementalProgress);
+
+            return BuildOpusPipelineExecutionResult(ffmpegProcess.ExitCode, opusProcess.ExitCode);
+        }
+        catch (OperationCanceledException)
+        {
+            activeExecution?.Terminate();
+
+            try
+            {
+                await Task.WhenAll(
+                    ObservePipeCopyAsync(copyPcmToOpus),
+                    pumpFfmpegError,
+                    pumpOpusOutput,
+                    pumpOpusError,
+                    pumpSupplementalProgress);
+            }
+            catch
+            {
+            }
+
+            throw;
+        }
+        catch
+        {
+            activeExecution?.Terminate();
+
+            try
+            {
+                await Task.WhenAll(
+                    ObservePipeCopyAsync(copyPcmToOpus),
+                    pumpFfmpegError,
+                    pumpOpusOutput,
+                    pumpOpusError,
+                    pumpSupplementalProgress);
+            }
+            catch
+            {
+            }
+
+            throw;
         }
         finally
         {
@@ -478,7 +681,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
     private static string BuildOpusCommand(AudioProcessingRequest request, string ffmpegExecutable, string opusEncoderExecutable)
     {
-        return request.UseOpusMappingFamily1
+        return ShouldUseFfmpegLibOpusMappingFamily1(request)
             ? $"{Quote(ffmpegExecutable)} {BuildFfmpegLibOpusArguments(request)}"
             : BuildOpusPipelineCommand(request, ffmpegExecutable, opusEncoderExecutable);
     }
@@ -490,59 +693,154 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         string? progressTarget = null)
     {
         var bitrateKbps = GetRequiredOpusBitrateKbps(request);
-        var progressArguments = BuildFfmpegProgressArguments(progressTarget);
-        return $"{Quote(ffmpegExecutable)} -hide_banner -nostats {progressArguments} -i {Quote(request.SourcePath)} -map 0:a:0 -vn -sn -dn -c:a pcm_s16le -ar 48000 -f wav pipe:1 | {Quote(opusEncoderExecutable)} --bitrate {bitrateKbps} - {Quote(request.OutputPath)}";
+        var ffmpegArguments = string.Join(' ', BuildOpusPipelineFfmpegDisplayArgumentParts(request, progressTarget));
+        return $"{Quote(ffmpegExecutable)} {ffmpegArguments} | {Quote(opusEncoderExecutable)} --bitrate {bitrateKbps} --ignorelength - {Quote(request.OutputPath)}";
     }
 
-    internal static ProcessStartInfo CreateOpusPipelineShellStartInfo(string command)
+    internal static OpusPipelineStartInfos CreateOpusPipelineStartInfos(
+        AudioProcessingRequest request,
+        string ffmpegExecutable,
+        string opusEncoderExecutable,
+        string? progressTarget = null)
     {
-        return new ProcessStartInfo
+        var ffmpegStartInfo = new ProcessStartInfo
         {
-            FileName = "cmd.exe",
-            Arguments = $"/d /s /c {Quote(command)}",
+            FileName = ffmpegExecutable,
             UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardErrorEncoding = Encoding.UTF8,
+            CreateNoWindow = true
+        };
+
+        foreach (var argument in BuildOpusPipelineFfmpegArgumentParts(request, progressTarget))
+        {
+            ffmpegStartInfo.ArgumentList.Add(argument);
+        }
+
+        var opusEncoderStartInfo = new ProcessStartInfo
+        {
+            FileName = opusEncoderExecutable,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
             CreateNoWindow = true
         };
+
+        opusEncoderStartInfo.ArgumentList.Add("--bitrate");
+        opusEncoderStartInfo.ArgumentList.Add(GetRequiredOpusBitrateKbps(request).ToString(CultureInfo.InvariantCulture));
+        opusEncoderStartInfo.ArgumentList.Add("--ignorelength");
+        opusEncoderStartInfo.ArgumentList.Add("-");
+        opusEncoderStartInfo.ArgumentList.Add(request.OutputPath);
+
+        return new OpusPipelineStartInfos(ffmpegStartInfo, opusEncoderStartInfo);
     }
 
     private static string BuildFfmpegLibOpusArguments(AudioProcessingRequest request, string? progressTarget = null)
     {
         var bitrateKbps = GetRequiredOpusBitrateKbps(request);
-        return string.Join(' ',
-        [
+        var parts = new List<string>
+        {
             "-hide_banner",
             "-y",
             "-nostats",
-            .. BuildFfmpegProgressArgumentParts(progressTarget),
-            "-i", Quote(request.SourcePath),
-            "-map", "0:a:0",
+        };
+
+        parts.AddRange(BuildFfmpegProgressArgumentParts(progressTarget, quoteTarget: true));
+        parts.AddRange(
+        [
+            "-i",
+            Quote(request.SourcePath),
+            "-map",
+            "0:a:0",
             "-vn",
             "-sn",
             "-dn",
-            "-c:a", "libopus",
-            "-b:a", $"{bitrateKbps}k",
-            "-vbr", "on",
-            "-application", "audio",
-            "-ar", "48000",
-            "-mapping_family", "1",
+        ]);
+
+        var mappingPlan = ResolveOpusMappingFamily1Plan(request);
+        if (!string.IsNullOrWhiteSpace(mappingPlan.FilterGraph))
+        {
+            parts.Add("-filter:a");
+            parts.Add(Quote(mappingPlan.FilterGraph));
+        }
+
+        parts.AddRange(
+        [
+            "-c:a",
+            "libopus",
+            "-b:a",
+            $"{bitrateKbps}k",
+            "-vbr",
+            "on",
+            "-application",
+            "audio",
+            "-ar",
+            "48000",
+            "-mapping_family",
+            "1",
             Quote(request.OutputPath)
         ]);
+
+        return string.Join(' ', parts);
+    }
+
+    private static IReadOnlyList<string> BuildOpusPipelineFfmpegArgumentParts(
+        AudioProcessingRequest request,
+        string? progressTarget)
+    {
+        var parts = new List<string>
+        {
+            "-hide_banner",
+            "-nostats"
+        };
+
+        parts.AddRange(BuildFfmpegProgressArgumentParts(progressTarget, quoteTarget: false));
+        parts.AddRange(
+        [
+            "-i",
+            request.SourcePath,
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-sn",
+            "-dn",
+            "-c:a",
+            "pcm_s16le",
+            "-ar",
+            "48000",
+            "-f",
+            "wav",
+            "pipe:1"
+        ]);
+
+        return parts;
+    }
+
+    private static IReadOnlyList<string> BuildOpusPipelineFfmpegDisplayArgumentParts(
+        AudioProcessingRequest request,
+        string? progressTarget)
+    {
+        return BuildOpusPipelineFfmpegArgumentParts(request, progressTarget)
+            .Select(argument => ShouldQuoteDisplayArgument(argument) ? Quote(argument) : argument)
+            .ToArray();
     }
 
     private static string BuildFfmpegProgressArguments(string? progressTarget)
     {
-        return string.Join(' ', BuildFfmpegProgressArgumentParts(progressTarget));
+        return string.Join(' ', BuildFfmpegProgressArgumentParts(progressTarget, quoteTarget: true));
     }
 
-    private static IReadOnlyList<string> BuildFfmpegProgressArgumentParts(string? progressTarget)
+    private static IReadOnlyList<string> BuildFfmpegProgressArgumentParts(string? progressTarget, bool quoteTarget)
     {
         var target = string.IsNullOrWhiteSpace(progressTarget)
             ? "pipe:2"
-            : Quote(progressTarget);
+            : quoteTarget
+                ? Quote(progressTarget)
+                : progressTarget;
 
         return
         [
@@ -574,6 +872,175 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
     {
         return request.OpusBitrateKbps
             ?? throw new InvalidOperationException("未指定 Opus 码率。");
+    }
+
+    private static bool ShouldUseFfmpegLibOpusMappingFamily1(AudioProcessingRequest request)
+    {
+        return request.UseOpusMappingFamily1
+            && ResolveOpusMappingFamily1Plan(request).CanUseMappingFamily1;
+    }
+
+    private static OpusMappingFamily1Plan ResolveOpusMappingFamily1Plan(AudioProcessingRequest request)
+    {
+        if (request.SourceChannelCount is > 8)
+        {
+            return new OpusMappingFamily1Plan(false, null);
+        }
+
+        var layout = NormalizeChannelLayoutName(request.SourceChannelLayout);
+        if (string.IsNullOrWhiteSpace(layout))
+        {
+            return new OpusMappingFamily1Plan(false, null);
+        }
+
+        var normalizedFilter = layout switch
+        {
+            "quad(side)" => "channelmap=map=FL-FL|FR-FR|SL-BL|SR-BR:channel_layout=quad",
+            "5.0(side)" => "channelmap=map=FL-FL|FR-FR|FC-FC|SL-BL|SR-BR:channel_layout=5.0",
+            "5.1(side)" => "channelmap=map=FL-FL|FR-FR|FC-FC|LFE-LFE|SL-BL|SR-BR:channel_layout=5.1",
+            "6.1(back)" => "channelmap=map=FL-FL|FR-FR|FC-FC|LFE-LFE|BL-SL|BR-SR|BC-BC:channel_layout=6.1",
+            _ => null
+        };
+
+        if (!string.IsNullOrWhiteSpace(normalizedFilter))
+        {
+            return new OpusMappingFamily1Plan(true, normalizedFilter);
+        }
+
+        return IsDirectOpusMappingFamily1Layout(layout)
+            ? new OpusMappingFamily1Plan(true, null)
+            : new OpusMappingFamily1Plan(false, null);
+    }
+
+    private static bool IsDirectOpusMappingFamily1Layout(string layout)
+    {
+        return layout is "mono"
+            or "stereo"
+            or "3.0"
+            or "quad"
+            or "5.0"
+            or "5.1"
+            or "6.1"
+            or "7.1";
+    }
+
+    private static string NormalizeChannelLayoutName(string? layout)
+    {
+        return string.IsNullOrWhiteSpace(layout)
+            ? string.Empty
+            : layout.Trim().Replace(" ", string.Empty, StringComparison.Ordinal).ToLowerInvariant();
+    }
+
+    private static bool ShouldQuoteDisplayArgument(string argument)
+    {
+        return argument.IndexOfAny([' ', '\t', '"', '|']) >= 0
+            || Path.IsPathFullyQualified(argument);
+    }
+
+    internal static AudioProcessingRunPlan CreateRunPlan(AudioProcessingRequest request)
+    {
+        if (request.Mode != AudioProcessingMode.Opus
+            || string.IsNullOrWhiteSpace(request.OutputPath))
+        {
+            return new AudioProcessingRunPlan(request, request, null);
+        }
+
+        var stagedOutputPath = CreateStagedOutputPath(request.OutputPath, request.JobId);
+        return new AudioProcessingRunPlan(
+            request,
+            request with { OutputPath = stagedOutputPath },
+            stagedOutputPath);
+    }
+
+    private static void FinalizeOutputFileForSuccess(AudioProcessingRunPlan runPlan)
+    {
+        if (string.IsNullOrWhiteSpace(runPlan.StagedOutputPath))
+        {
+            return;
+        }
+
+        var stagedOutputPath = runPlan.StagedOutputPath;
+        var finalOutputPath = runPlan.DisplayRequest.OutputPath;
+        if (!File.Exists(stagedOutputPath))
+        {
+            throw new FileNotFoundException("Opus temporary output was not produced.", stagedOutputPath);
+        }
+
+        try
+        {
+            var outputDirectory = Path.GetDirectoryName(finalOutputPath);
+            if (!string.IsNullOrWhiteSpace(outputDirectory))
+            {
+                Directory.CreateDirectory(outputDirectory);
+            }
+
+            if (File.Exists(finalOutputPath))
+            {
+                var backupPath = CreateStagedOutputPath(finalOutputPath, runPlan.DisplayRequest.JobId, "backup");
+                TryDeleteFile(backupPath);
+                File.Replace(stagedOutputPath, finalOutputPath, backupPath, ignoreMetadataErrors: true);
+                TryDeleteFile(backupPath);
+                return;
+            }
+
+            File.Move(stagedOutputPath, finalOutputPath);
+        }
+        catch (Exception ex)
+        {
+            throw new IOException($"Failed to finalize Opus output file: {finalOutputPath}", ex);
+        }
+    }
+
+    private static void DeletePartialOutputFile(AudioProcessingRunPlan runPlan)
+    {
+        if (string.IsNullOrWhiteSpace(runPlan.StagedOutputPath))
+        {
+            return;
+        }
+
+        TryDeleteFile(runPlan.StagedOutputPath);
+        TryDeleteOrphanedBackupFile(runPlan);
+    }
+
+    private static string CreateStagedOutputPath(string outputPath, Guid jobId, string suffix = "staging")
+    {
+        var outputDirectory = Path.GetDirectoryName(outputPath);
+        var outputFileName = Path.GetFileNameWithoutExtension(outputPath);
+        var outputExtension = Path.GetExtension(outputPath);
+        var stagedFileName = $"{outputFileName}.{jobId:N}.{suffix}.tmp{outputExtension}";
+        return string.IsNullOrWhiteSpace(outputDirectory)
+            ? stagedFileName
+            : Path.Combine(outputDirectory, stagedFileName);
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDeleteOrphanedBackupFile(AudioProcessingRunPlan runPlan)
+    {
+        if (string.IsNullOrWhiteSpace(runPlan.DisplayRequest.OutputPath))
+        {
+            return;
+        }
+
+        var backupPath = CreateStagedOutputPath(runPlan.DisplayRequest.OutputPath, runPlan.DisplayRequest.JobId, "backup");
+        if (!File.Exists(runPlan.DisplayRequest.OutputPath))
+        {
+            return;
+        }
+
+        TryDeleteFile(backupPath);
     }
 
     private async Task<string> ResolveToolPathAsync(RegisteredToolKind kind, CancellationToken cancellationToken)
@@ -1085,6 +1552,23 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         string ProgressTimeLine,
         string? SpeedLine);
 
+    internal sealed record OpusPipelineStartInfos(
+        ProcessStartInfo FfmpegStartInfo,
+        ProcessStartInfo OpusEncoderStartInfo);
+
+    internal sealed record AudioProcessingRunPlan(
+        AudioProcessingRequest DisplayRequest,
+        AudioProcessingRequest ExecutionRequest,
+        string? StagedOutputPath);
+
+    private sealed record OpusMappingFamily1Plan(
+        bool CanUseMappingFamily1,
+        string? FilterGraph);
+
+    private sealed record ProcessExecutionResult(
+        int ExitCode,
+        string? ExitCodeDetail = null);
+
     private static async Task PumpAsync(StreamReader reader, Action<string> onLine, CancellationToken cancellationToken)
     {
         var buffer = new char[512];
@@ -1116,6 +1600,54 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         }
 
         FlushConsoleSegment(segmentBuilder, onLine);
+    }
+
+    private static async Task CopyOpusPcmPipeAsync(
+        Stream ffmpegOutput,
+        Stream opusInput,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ffmpegOutput.CopyToAsync(opusInput, cancellationToken);
+        }
+        finally
+        {
+            try
+            {
+                await opusInput.DisposeAsync();
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static async Task ObservePipeCopyAsync(Task copyTask)
+    {
+        try
+        {
+            await copyTask;
+        }
+        catch (IOException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private static ProcessExecutionResult BuildOpusPipelineExecutionResult(int ffmpegExitCode, int opusExitCode)
+    {
+        if (ffmpegExitCode == 0 && opusExitCode == 0)
+        {
+            return new ProcessExecutionResult(0);
+        }
+
+        var exitCode = ffmpegExitCode != 0 ? ffmpegExitCode : opusExitCode;
+        return new ProcessExecutionResult(
+            exitCode,
+            $"ffmpeg 退出代码 {ffmpegExitCode}，opusenc 退出代码 {opusExitCode}");
     }
 
     private static async Task PumpProgressFileAsync(Process process, string path, Action<string> onLine)
@@ -1351,20 +1883,31 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
     private sealed class ActiveExecution : IDisposable
     {
-        private readonly Process _process;
-        private readonly JobObjectHandle? _jobObjectHandle;
+        private readonly IReadOnlyList<Process> _processes;
+        private readonly IReadOnlyList<JobObjectHandle> _jobObjectHandles;
         private int _disposed;
 
-        public ActiveExecution(Process process)
+        public ActiveExecution(params Process[] processes)
         {
-            _process = process;
-            _jobObjectHandle = JobObjectHandle.TryAttach(process);
+            _processes = processes;
+            _jobObjectHandles = processes
+                .Select(JobObjectHandle.TryAttach)
+                .Where(static handle => handle is not null)
+                .Select(static handle => handle!)
+                .ToArray();
         }
 
         public void Terminate()
         {
-            _jobObjectHandle?.Terminate();
-            TryTerminate(_process);
+            foreach (var jobObjectHandle in _jobObjectHandles)
+            {
+                jobObjectHandle.Terminate();
+            }
+
+            foreach (var process in _processes)
+            {
+                TryTerminate(process);
+            }
         }
 
         public void Dispose()
@@ -1374,8 +1917,15 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                 return;
             }
 
-            _jobObjectHandle?.Dispose();
-            _process.Dispose();
+            foreach (var jobObjectHandle in _jobObjectHandles)
+            {
+                jobObjectHandle.Dispose();
+            }
+
+            foreach (var process in _processes)
+            {
+                process.Dispose();
+            }
         }
     }
 

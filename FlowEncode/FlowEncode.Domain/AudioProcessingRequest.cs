@@ -8,5 +8,7 @@ public sealed record AudioProcessingRequest(
     AudioEac3ToOutputFormat? Eac3ToOutputFormat,
     IReadOnlyList<string> Eac3ToAdditionalArguments,
     double? SourceDurationSeconds,
+    int? SourceChannelCount,
+    string? SourceChannelLayout,
     int? OpusBitrateKbps,
     bool UseOpusMappingFamily1);

@@ -28,7 +28,7 @@ public sealed class CliAudioProcessingRunnerTests
     public void BuildDisplayCommand_WhenOpusMappingFamilyIsEnabled_UsesFfmpegLibopus()
     {
         var runner = new CliAudioProcessingRunner(new StubToolProbeService());
-        var request = CreateRequest(useOpusMappingFamily1: true);
+        var request = CreateRequest(useOpusMappingFamily1: true, channelLayout: "5.1", channelCount: 6);
 
         var command = runner.BuildDisplayCommand(request);
 
@@ -40,61 +40,91 @@ public sealed class CliAudioProcessingRunnerTests
     }
 
     [TestMethod]
-    public async Task CreateOpusPipelineShellStartInfo_WhenCommandContainsChinesePaths_PreservesExecutableArguments()
+    public void BuildDisplayCommand_WhenOpusMappingFamilyIsEnabledForSideSurround_NormalizesLayout()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            Assert.Inconclusive("cmd.exe pipeline validation is only applicable on Windows.");
-        }
+        var runner = new CliAudioProcessingRunner(new StubToolProbeService());
+        var request = CreateRequest(useOpusMappingFamily1: true, channelLayout: "5.1(side)", channelCount: 6);
 
-        var root = Path.Combine(Path.GetTempPath(), $"FlowEncode 中文路径 {Guid.NewGuid():N}");
-        var inputPath = Path.Combine(root, "输入 文件.txt");
-        var outputPath = Path.Combine(root, "输出 文件.txt");
+        var command = runner.BuildDisplayCommand(request);
 
-        try
-        {
-            Directory.CreateDirectory(root);
-            await File.WriteAllTextAsync(inputPath, "ok");
-
-            var comSpec = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
-            var command = $"{Quote(comSpec)} /d /c type {Quote(inputPath)} | {Quote(comSpec)} /d /c findstr ok > {Quote(outputPath)}";
-            var startInfo = CliAudioProcessingRunner.CreateOpusPipelineShellStartInfo(command);
-
-            StringAssert.Contains(startInfo.Arguments, "中文路径");
-            StringAssert.Contains(startInfo.Arguments, "输入 文件.txt");
-            Assert.IsFalse(startInfo.Arguments.Contains(".cmd", StringComparison.OrdinalIgnoreCase));
-
-            using var process = System.Diagnostics.Process.Start(startInfo)
-                ?? throw new InvalidOperationException("Failed to start cmd.exe.");
-            await process.WaitForExitAsync();
-
-            Assert.AreEqual(0, process.ExitCode);
-            Assert.AreEqual("ok", (await File.ReadAllTextAsync(outputPath)).Trim());
-        }
-        finally
-        {
-            if (Directory.Exists(root))
-            {
-                Directory.Delete(root, true);
-            }
-        }
+        StringAssert.Contains(command, "-filter:a");
+        StringAssert.Contains(command, "channelmap=map=FL-FL|FR-FR|FC-FC|LFE-LFE|SL-BL|SR-BR:channel_layout=5.1");
+        StringAssert.Contains(command, "-mapping_family 1");
+        Assert.IsFalse(command.Contains("opusenc.exe", StringComparison.Ordinal));
     }
 
-    private static AudioProcessingRequest CreateRequest(bool useOpusMappingFamily1)
+    [TestMethod]
+    public void BuildDisplayCommand_WhenOpusMappingFamilyIsEnabledForUnsupportedLayout_FallsBackToOpusencPipe()
+    {
+        var runner = new CliAudioProcessingRunner(new StubToolProbeService());
+        var request = CreateRequest(useOpusMappingFamily1: true, channelLayout: "4.0", channelCount: 4);
+
+        var command = runner.BuildDisplayCommand(request);
+
+        StringAssert.Contains(command, "opusenc.exe");
+        StringAssert.Contains(command, "-f wav pipe:1 |");
+        Assert.IsFalse(command.Contains("-mapping_family 1", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void CreateOpusPipelineStartInfos_WhenPathsContainChinese_UsesDirectProcessArguments()
+    {
+        var request = CreateRequest(
+            useOpusMappingFamily1: false,
+            sourcePath: @"Z:\cmct发布\audio\2-中影公映国配-zh.dts",
+            outputPath: @"Z:\cmct发布\audio\2-中影公映国配-zh.opus");
+
+        var startInfos = CliAudioProcessingRunner.CreateOpusPipelineStartInfos(
+            request,
+            @"C:\工具\ffmpeg.exe",
+            @"C:\工具\opusenc.exe",
+            @"C:\临时目录\progress.log");
+
+        Assert.AreEqual(@"C:\工具\ffmpeg.exe", startInfos.FfmpegStartInfo.FileName);
+        Assert.AreEqual(@"C:\工具\opusenc.exe", startInfos.OpusEncoderStartInfo.FileName);
+        CollectionAssert.Contains(startInfos.FfmpegStartInfo.ArgumentList, request.SourcePath);
+        CollectionAssert.Contains(startInfos.FfmpegStartInfo.ArgumentList, @"C:\临时目录\progress.log");
+        CollectionAssert.Contains(startInfos.OpusEncoderStartInfo.ArgumentList, "--ignorelength");
+        CollectionAssert.Contains(startInfos.OpusEncoderStartInfo.ArgumentList, request.OutputPath);
+        Assert.AreEqual(string.Empty, startInfos.FfmpegStartInfo.Arguments);
+        Assert.AreEqual(string.Empty, startInfos.OpusEncoderStartInfo.Arguments);
+    }
+
+    [TestMethod]
+    public void CreateRunPlan_WhenOpusRequested_StagesOutputUntilSuccess()
+    {
+        var request = CreateRequest(
+            useOpusMappingFamily1: false,
+            outputPath: @"D:\audio\输出 文件.opus");
+
+        var runPlan = CliAudioProcessingRunner.CreateRunPlan(request);
+
+        Assert.AreEqual(request.OutputPath, runPlan.DisplayRequest.OutputPath);
+        Assert.AreNotEqual(request.OutputPath, runPlan.ExecutionRequest.OutputPath);
+        Assert.AreEqual(runPlan.ExecutionRequest.OutputPath, runPlan.StagedOutputPath);
+        StringAssert.Contains(runPlan.ExecutionRequest.OutputPath, ".staging.tmp.opus");
+    }
+
+    private static AudioProcessingRequest CreateRequest(
+        bool useOpusMappingFamily1,
+        string sourcePath = @"D:\audio\input.thd",
+        string outputPath = @"D:\audio\output.opus",
+        int? channelCount = 6,
+        string? channelLayout = "5.1")
     {
         return new AudioProcessingRequest(
             Guid.NewGuid(),
-            @"D:\audio\input.thd",
-            @"D:\audio\output.opus",
+            sourcePath,
+            outputPath,
             AudioProcessingMode.Opus,
             null,
             [],
             120d,
+            channelCount,
+            channelLayout,
             384,
             useOpusMappingFamily1);
     }
-
-    private static string Quote(string value) => $"\"{value}\"";
 
     private sealed class StubToolProbeService : IToolProbeService
     {
