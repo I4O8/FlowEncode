@@ -10,6 +10,7 @@ internal interface IVapourSynthPreviewHostFactory
     Task<IVapourSynthPreviewHostSession> StartAsync(
         string workingDirectory,
         string startupPath,
+        Action<string>? stderrLineHandler,
         CancellationToken cancellationToken = default);
 }
 
@@ -18,8 +19,6 @@ internal interface IVapourSynthPreviewHostSession : IDisposable
     bool HasExited { get; }
 
     int ProcessId { get; }
-
-    event Action<string>? StderrLineReceived;
 
     Task WriteLineAsync(string line, CancellationToken cancellationToken = default);
 
@@ -44,6 +43,7 @@ internal sealed class ProcessVapourSynthPreviewHostFactory : IVapourSynthPreview
     public async Task<IVapourSynthPreviewHostSession> StartAsync(
         string workingDirectory,
         string startupPath,
+        Action<string>? stderrLineHandler,
         CancellationToken cancellationToken = default)
     {
         var pythonPath = await ResolvePythonPathAsync(cancellationToken);
@@ -66,7 +66,7 @@ internal sealed class ProcessVapourSynthPreviewHostFactory : IVapourSynthPreview
         startInfo.ArgumentList.Add(startupPath);
         VapourSynthRuntimePathResolver.EnrichProcessPath(startInfo);
 
-        return ProcessVapourSynthPreviewHostSession.Start(startInfo);
+        return ProcessVapourSynthPreviewHostSession.Start(startInfo, stderrLineHandler);
     }
 
     private async Task<string> ResolvePythonPathAsync(CancellationToken cancellationToken)
@@ -123,15 +123,15 @@ internal sealed class ProcessVapourSynthPreviewHostFactory : IVapourSynthPreview
 internal sealed class ProcessVapourSynthPreviewHostSession : IVapourSynthPreviewHostSession
 {
     private readonly Process _process;
+    private readonly Action<string>? _stderrLineHandler;
     private int _disposed;
 
-    private ProcessVapourSynthPreviewHostSession(Process process)
+    private ProcessVapourSynthPreviewHostSession(Process process, Action<string>? stderrLineHandler)
     {
         _process = process;
+        _stderrLineHandler = stderrLineHandler;
         _process.ErrorDataReceived += Process_ErrorDataReceived;
     }
-
-    public event Action<string>? StderrLineReceived;
 
     public bool HasExited
     {
@@ -163,7 +163,9 @@ internal sealed class ProcessVapourSynthPreviewHostSession : IVapourSynthPreview
         }
     }
 
-    public static ProcessVapourSynthPreviewHostSession Start(ProcessStartInfo startInfo)
+    public static ProcessVapourSynthPreviewHostSession Start(
+        ProcessStartInfo startInfo,
+        Action<string>? stderrLineHandler = null)
     {
         var process = new Process
         {
@@ -171,9 +173,19 @@ internal sealed class ProcessVapourSynthPreviewHostSession : IVapourSynthPreview
             EnableRaisingEvents = true
         };
 
+        var session = new ProcessVapourSynthPreviewHostSession(process, stderrLineHandler);
+
         using var _ = ErrorDialogSuppression.Enter();
-        process.Start();
-        var session = new ProcessVapourSynthPreviewHostSession(process);
+        try
+        {
+            process.Start();
+        }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
+
         process.BeginErrorReadLine();
         process.StandardInput.AutoFlush = true;
         return session;
@@ -214,7 +226,7 @@ internal sealed class ProcessVapourSynthPreviewHostSession : IVapourSynthPreview
     {
         if (!string.IsNullOrWhiteSpace(e.Data))
         {
-            StderrLineReceived?.Invoke(e.Data);
+            _stderrLineHandler?.Invoke(e.Data);
         }
     }
 }

@@ -42,6 +42,23 @@ public sealed class VapourSynthPreviewServiceTests
     }
 
     [TestMethod]
+    public async Task OpenSessionAsync_WhenStartupStderrArrivesBeforeHostReturns_PreservesDiagnosticContext()
+    {
+        using var context = CreateContext();
+        var emittedLogs = new List<VapourSynthPreviewLogEntry>();
+        context.Service.LogEmitted += (_, args) => emittedLogs.Add(args.Entry);
+        context.Factory.StartupStderrLine = "Traceback: helper failed before ready";
+
+        var exception = await AssertThrowsAsync<InvalidOperationException>(
+            () => context.Service.OpenSessionAsync(CreateOpenRequest()));
+
+        Assert.AreEqual(1, emittedLogs.Count);
+        Assert.AreEqual(VapourSynthPreviewLogLevel.Error, emittedLogs[0].Level);
+        StringAssert.Contains(emittedLogs[0].Message, "Traceback");
+        StringAssert.Contains(exception.Message, "Traceback");
+    }
+
+    [TestMethod]
     public async Task RenderFrameAsync_WhenRequestIdMismatch_Throws()
     {
         using var context = CreateContext();
@@ -231,12 +248,22 @@ public sealed class VapourSynthPreviewServiceTests
 
         public string? StartupPath { get; private set; }
 
+        public string? StartupStderrLine { get; set; }
+
         public Task<IVapourSynthPreviewHostSession> StartAsync(
             string workingDirectory,
             string startupPath,
+            Action<string>? stderrLineHandler,
             CancellationToken cancellationToken = default)
         {
             StartupPath = startupPath;
+            _session.SetStderrLineHandler(stderrLineHandler);
+
+            if (!string.IsNullOrWhiteSpace(StartupStderrLine))
+            {
+                _session.EmitStderrLine(StartupStderrLine);
+            }
+
             return Task.FromResult<IVapourSynthPreviewHostSession>(_session);
         }
     }
@@ -245,7 +272,7 @@ public sealed class VapourSynthPreviewServiceTests
     {
         private readonly Queue<string?> _responses = new();
         private readonly Queue<Func<FakePreviewHostSession, CancellationToken, Task>> _waitBehaviors = new();
-        private Action<string>? _stderrLineReceived;
+        private Action<string>? _stderrLineHandler;
 
         public List<string> WrittenLines { get; } = [];
 
@@ -255,15 +282,14 @@ public sealed class VapourSynthPreviewServiceTests
 
         public bool KillCalled { get; private set; }
 
-        public event Action<string>? StderrLineReceived
-        {
-            add => _stderrLineReceived += value;
-            remove => _stderrLineReceived -= value;
-        }
-
         public void EnqueueResponse(string response)
         {
             _responses.Enqueue(response);
+        }
+
+        public void SetStderrLineHandler(Action<string>? stderrLineHandler)
+        {
+            _stderrLineHandler = stderrLineHandler;
         }
 
         public void EnqueueWaitBehavior(Func<FakePreviewHostSession, Task> behavior)
@@ -309,7 +335,7 @@ public sealed class VapourSynthPreviewServiceTests
 
         public void EmitStderrLine(string line)
         {
-            _stderrLineReceived?.Invoke(line);
+            _stderrLineHandler?.Invoke(line);
         }
     }
 }

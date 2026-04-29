@@ -82,8 +82,11 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
             var startupJson = JsonSerializer.Serialize(startupPayload, JsonOptions);
             await File.WriteAllTextAsync(startupPath, startupJson, new UTF8Encoding(false), cancellationToken);
 
-            _hostSession = await _hostFactory.StartAsync(normalizedWorkingDirectory, startupPath, cancellationToken);
-            _hostSession.StderrLineReceived += HostSession_StderrLineReceived;
+            _hostSession = await _hostFactory.StartAsync(
+                normalizedWorkingDirectory,
+                startupPath,
+                HostSession_StderrLineReceived,
+                cancellationToken);
 
             var response = await ReadResponseAsync(cancellationToken);
             if (!string.Equals(response.Type, "ready", StringComparison.Ordinal))
@@ -189,14 +192,6 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
                 response.RawPixelPath,
                 response.FrameType,
                 properties);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception)
-        {
-            throw;
         }
         finally
         {
@@ -323,7 +318,6 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
                 }
             }
 
-            session.StderrLineReceived -= HostSession_StderrLineReceived;
             session.Dispose();
         }
 
