@@ -78,6 +78,8 @@ public partial class App : Microsoft.UI.Xaml.Application
         services.AddSingleton<LocalAppPaths>();
         services.AddSingleton<AppLaunchActivation>();
         services.AddSingleton<IAppSettingsService, LocalAppSettingsService>();
+        services.AddSingleton<IQueueCompletionActionService, WindowsQueueCompletionActionService>();
+        services.AddSingleton<ISystemIdleService, WindowsSystemIdleService>();
         services.AddSingleton<ISetupGuideCacheService, LocalSetupGuideCacheService>();
         services.AddSingleton<IToolRegistryService, DefaultToolRegistryService>();
         services.AddSingleton<IToolProbeService, ProcessToolProbeService>();

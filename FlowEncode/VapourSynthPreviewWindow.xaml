@@ -144,7 +144,7 @@
                         <ColumnDefinition Width="108" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="108" />
-                        <ColumnDefinition Width="74" />
+                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
@@ -188,7 +188,7 @@
                         Minimum="5"
                         SmallChange="5"
                         SpinButtonPlacementMode="Hidden"
-                        Width="74"
+                        Width="96"
                         ValueChanged="ZoomRatioBox_ValueChanged"
                         Visibility="{Binding CustomZoomVisibility}" />
 
@@ -400,6 +400,7 @@
                 <ScrollViewer
                     x:Name="PreviewScrollViewer"
                     HorizontalScrollBarVisibility="Hidden"
+                    IsTabStop="True"
                     PointerCanceled="PreviewScrollViewer_PointerCanceled"
                     PointerCaptureLost="PreviewScrollViewer_PointerCaptureLost"
                     PointerMoved="PreviewScrollViewer_PointerMoved"

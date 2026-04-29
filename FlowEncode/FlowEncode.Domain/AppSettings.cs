@@ -11,7 +11,8 @@ public sealed record AppSettings(
     string WorkspaceRootPath = "",
     IReadOnlyDictionary<string, string>? ManualToolPaths = null,
     bool HasRunInitialVsPluginDependencyUpdate = false,
-    int MaxConcurrentEncodingJobs = 1)
+    int MaxConcurrentEncodingJobs = 1,
+    QueueCompletionAction QueueCompletionAction = QueueCompletionAction.None)
 {
     public static AppSettings Default { get; } = new(
         PreferSystemEncoders: true,
@@ -22,7 +23,8 @@ public sealed record AppSettings(
         WorkspaceRootPath: string.Empty,
         ManualToolPaths: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
         HasRunInitialVsPluginDependencyUpdate: false,
-        MaxConcurrentEncodingJobs: 1);
+        MaxConcurrentEncodingJobs: 1,
+        QueueCompletionAction: QueueCompletionAction.None);
 
     [JsonIgnore]
     public IReadOnlyDictionary<string, string> EffectiveManualToolPaths =>

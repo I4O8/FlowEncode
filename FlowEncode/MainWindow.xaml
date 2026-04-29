@@ -507,10 +507,48 @@
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
 
-                                    <StackPanel Spacing="6">
-                                        <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="24" FontWeight="SemiBold" Text="{Binding Texts.QueueTitle}" />
-                                        <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding QueueSummary}" TextWrapping="WrapWholeWords" />
-                                    </StackPanel>
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Spacing="6">
+                                            <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="24" FontWeight="SemiBold" Text="{Binding Texts.QueueTitle}" />
+                                            <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding QueueSummary}" TextWrapping="WrapWholeWords" />
+                                        </StackPanel>
+
+                                        <Grid Grid.Column="1" ColumnSpacing="14" HorizontalAlignment="Right" VerticalAlignment="Top">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <StackPanel Width="132" HorizontalAlignment="Right" Spacing="6">
+                                                <TextBlock HorizontalAlignment="Right" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.MaxConcurrentEncodingJobsHeader}" TextAlignment="Right" TextWrapping="WrapWholeWords" />
+                                                <ComboBox
+                                                    x:Name="QueueConcurrentEncodingJobsComboBox"
+                                                    Width="88"
+                                                    HorizontalAlignment="Right"
+                                                    DisplayMemberPath="Label"
+                                                    ItemsSource="{Binding ConcurrentEncodingJobOptions}"
+                                                    SelectedItem="{Binding SelectedConcurrentEncodingJobOption, Mode=TwoWay}"
+                                                    SelectionChanged="QueueHeaderComboBox_SelectionChanged" />
+                                            </StackPanel>
+
+                                            <StackPanel Grid.Column="1" Width="156" HorizontalAlignment="Right" Spacing="6">
+                                                <TextBlock HorizontalAlignment="Right" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.QueueCompletionActionHeader}" TextAlignment="Right" TextWrapping="WrapWholeWords" />
+                                                <ComboBox
+                                                    x:Name="QueueCompletionActionComboBox"
+                                                    Width="140"
+                                                    HorizontalAlignment="Right"
+                                                    DisplayMemberPath="Label"
+                                                    ItemsSource="{Binding QueueCompletionActionOptions}"
+                                                    SelectedItem="{Binding SelectedQueueCompletionActionOption, Mode=TwoWay}"
+                                                    SelectionChanged="QueueHeaderComboBox_SelectionChanged" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Grid>
 
                                     <Border Grid.Row="1" Padding="0" Background="{ThemeResource CardAltBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppCardCornerRadius}">
                                         <Grid>
@@ -1373,7 +1411,6 @@
                                         <StackPanel Spacing="14">
                                             <ToggleSwitch x:Name="PreferSystemEncodersToggle" Header="{Binding Texts.PreferSystemEncodersHeader}" IsOn="{Binding PreferSystemEncoders, Mode=TwoWay}" OffContent="{Binding Texts.ToggleOffLabel}" OnContent="{Binding Texts.ToggleOnLabel}" Toggled="SettingsToggle_Toggled" />
                                             <ToggleSwitch x:Name="AutoCheckUpdatesToggle" Header="{Binding Texts.AutoCheckUpdatesHeader}" IsOn="{Binding AutoCheckUpdatesOnStartup, Mode=TwoWay}" OffContent="{Binding Texts.ToggleOffLabel}" OnContent="{Binding Texts.ToggleOnLabel}" Toggled="SettingsToggle_Toggled" />
-                                            <NumberBox x:Name="MaxConcurrentEncodingJobsBox" Header="{Binding Texts.MaxConcurrentEncodingJobsHeader}" Minimum="1" Maximum="8" SmallChange="1" SpinButtonPlacementMode="Inline" Value="{Binding MaxConcurrentEncodingJobs, Mode=TwoWay}" ValueChanged="MaxConcurrentEncodingJobsBox_ValueChanged" />
                                         </StackPanel>
                                     </Border>
 

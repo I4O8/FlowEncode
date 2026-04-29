@@ -370,7 +370,8 @@ public sealed class AppText
     public string ToggleOffLabel => Pick("关", "Off");
     public string PreferSystemEncodersHeader => Pick("本地缺失时回退系统编码器", "Fallback to system encoders when local is missing");
     public string AutoCheckUpdatesHeader => Pick("启动时自动检查程序更新", "Check app updates on startup");
-    public string MaxConcurrentEncodingJobsHeader => Pick("同时编码任务数", "Concurrent Encode Jobs");
+    public string MaxConcurrentEncodingJobsHeader => Pick("并发任务数", "Concurrent Jobs");
+    public string QueueCompletionActionHeader => Pick("全部任务完成后", "After Queue Finishes");
     public string AppUpdateSectionTitle => Pick("程序更新", "App Updates");
     public string CheckUpdatesButton => Pick("检查更新", "Check for Updates");
     public string CheckingUpdatesButton => Pick("检查中...", "Checking...");
@@ -780,6 +781,45 @@ public sealed class AppText
         IsChinese
             ? $"进行中 {running} · 排队 {queued} · 已完成 {completed} · 失败 {failed} · 已取消 {cancelled}"
             : $"Running {running} · Queued {queued} · Completed {completed} · Failed {failed} · Cancelled {cancelled}";
+
+    public string QueueCompletionActionLabel(QueueCompletionAction action) =>
+        action switch
+        {
+            QueueCompletionAction.Sleep => Pick("睡眠", "Sleep"),
+            QueueCompletionAction.Shutdown => Pick("关机", "Shut Down"),
+            _ => Pick("什么都不做", "Do Nothing")
+        };
+
+    public string QueueCompletionActionExecutingStatus(QueueCompletionAction action) =>
+        action switch
+        {
+            QueueCompletionAction.Sleep => Pick("队列已完成，系统即将睡眠。", "Queue finished. Putting the PC to sleep."),
+            QueueCompletionAction.Shutdown => Pick("队列已完成，系统即将关机。", "Queue finished. Shutting down the PC."),
+            _ => Pick("队列已完成。", "Queue finished.")
+        };
+
+    public string QueueCompletionActionPendingIdleStatus(QueueCompletionAction action, TimeSpan requiredIdleTime)
+    {
+        var idleMinutes = Math.Max(1, (int)Math.Ceiling(requiredIdleTime.TotalMinutes));
+        return action switch
+        {
+            QueueCompletionAction.Sleep => Pick(
+                $"队列已全部成功完成。系统连续空闲 {idleMinutes} 分钟后将自动睡眠。",
+                $"All queued jobs finished successfully. The PC will sleep after {idleMinutes} minutes of system idle."),
+            QueueCompletionAction.Shutdown => Pick(
+                $"队列已全部成功完成。系统连续空闲 {idleMinutes} 分钟后将自动关机。",
+                $"All queued jobs finished successfully. The PC will shut down after {idleMinutes} minutes of system idle."),
+            _ => Pick("队列已完成。", "Queue finished.")
+        };
+    }
+
+    public string QueueCompletionActionFailedStatus(QueueCompletionAction action, string detail) =>
+        action switch
+        {
+            QueueCompletionAction.Sleep => Pick($"执行睡眠失败：{detail}", $"Failed to enter sleep mode: {detail}"),
+            QueueCompletionAction.Shutdown => Pick($"执行关机失败：{detail}", $"Failed to shut down the PC: {detail}"),
+            _ => Pick($"任务完成后动作执行失败：{detail}", $"Failed to run the completion action: {detail}")
+        };
 
     public string AudioSourceInfoSummary(string codecName, string channelLabel, int? bitDepth, int? sampleRate, bool isLossless) =>
         IsChinese

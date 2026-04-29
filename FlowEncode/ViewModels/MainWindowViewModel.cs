@@ -24,10 +24,14 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
 {
     private const string AppReleasePageUrl = "https://github.com/frankie1024/FlowEncode/releases";
     private const int MinConcurrentEncodingJobs = 1;
-    private const int MaxConcurrentEncodingJobsLimit = 8;
+    private const int MaxConcurrentEncodingJobsLimit = 5;
+    private static readonly TimeSpan QueueCompletionActionIdleRequirement = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan QueueCompletionActionIdlePollInterval = TimeSpan.FromSeconds(5);
     private readonly IEncoderToolchainService _toolchainService;
     private readonly IProfileLibraryService _profileLibraryService;
     private readonly IEncodingJobRunner _jobRunner;
+    private readonly IQueueCompletionActionService _queueCompletionActionService;
+    private readonly ISystemIdleService _systemIdleService;
     private readonly IAutoCompressionRunner _autoCompressionRunner;
     private readonly IAudioProcessingRunner _audioProcessingRunner;
     private readonly IAudioSourceInfoService _audioSourceInfoService;
@@ -77,9 +81,12 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     private StringChoiceOption? _selectedTune;
     private StringChoiceOption? _selectedProfileOption;
     private StringChoiceOption? _selectedOutputFormat;
+    private StringChoiceOption? _selectedConcurrentEncodingJobOption;
+    private StringChoiceOption? _selectedQueueCompletionActionOption;
     private bool _preferSystemEncoders;
     private bool _autoCheckUpdatesOnStartup;
     private double _maxConcurrentEncodingJobs = MinConcurrentEncodingJobs;
+    private QueueCompletionAction _queueCompletionAction = QueueCompletionAction.None;
     private IReadOnlyDictionary<string, string> _manualToolPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private bool _hasRunInitialVsPluginDependencyUpdate;
     private string _workspaceRootPath = string.Empty;
@@ -96,6 +103,10 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     private bool _isSynchronizingDraft;
     private bool _isUpdatingOutputPath;
     private bool _isQueueProcessing;
+    private bool _isQueueCompletionActionArmed;
+    private bool _queueCompletionActionBatchHadNonSuccessfulCompletion;
+    private bool _isExecutingQueueCompletionAction;
+    private CancellationTokenSource? _queueCompletionActionWaitCancellationTokenSource;
     private string _autoCompressionSourcePath = string.Empty;
     private string _autoCompressionOutputPath = string.Empty;
     private string _autoCompressionVideoParameters = string.Empty;
@@ -127,6 +138,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         IEncoderToolchainService toolchainService,
         IProfileLibraryService profileLibraryService,
         IEncodingJobRunner jobRunner,
+        IQueueCompletionActionService queueCompletionActionService,
+        ISystemIdleService systemIdleService,
         IAutoCompressionRunner autoCompressionRunner,
         IAudioProcessingRunner audioProcessingRunner,
         IAudioSourceInfoService audioSourceInfoService,
@@ -144,6 +157,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         _toolchainService = toolchainService;
         _profileLibraryService = profileLibraryService;
         _jobRunner = jobRunner;
+        _queueCompletionActionService = queueCompletionActionService;
+        _systemIdleService = systemIdleService;
         _autoCompressionRunner = autoCompressionRunner;
         _audioProcessingRunner = audioProcessingRunner;
         _audioSourceInfoService = audioSourceInfoService;
@@ -172,11 +187,15 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 new EncoderOption(EncoderKind.X265, EncoderKind.X265.ToDisplayName()),
                 new EncoderOption(EncoderKind.SvtAv1, EncoderKind.SvtAv1.ToDisplayName())
             ]);
+        ReplaceItems(ConcurrentEncodingJobOptions, BuildConcurrentEncodingJobOptions());
+        ReplaceItems(QueueCompletionActionOptions, BuildQueueCompletionActionOptions());
 
         _selectedTheme = ThemeOptions[0];
         _selectedLanguage = LanguageOptions[0];
         _selectedEncoder = EncoderOptions[0];
         _selectedAutoEncoder = EncoderOptions[0];
+        _selectedConcurrentEncodingJobOption = ConcurrentEncodingJobOptions[0];
+        _selectedQueueCompletionActionOption = QueueCompletionActionOptions[0];
         _autoCompressionStatusText = _texts.AutoCompressionIdleStatus;
         InitializeAudioProcessingState();
         InitializeBluRayDemuxState();
@@ -207,6 +226,10 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     public ObservableCollection<StringChoiceOption> AvailableProfiles { get; } = [];
 
     public ObservableCollection<StringChoiceOption> AvailableOutputFormats { get; } = [];
+
+    public ObservableCollection<StringChoiceOption> ConcurrentEncodingJobOptions { get; } = [];
+
+    public ObservableCollection<StringChoiceOption> QueueCompletionActionOptions { get; } = [];
 
     public bool IsBusy => _isRefreshingCatalog
         || _isCheckingUpdates
@@ -605,6 +628,40 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
+    public StringChoiceOption? SelectedConcurrentEncodingJobOption
+    {
+        get => _selectedConcurrentEncodingJobOption;
+        set
+        {
+            if (!SetProperty(ref _selectedConcurrentEncodingJobOption, value) || value is null)
+            {
+                return;
+            }
+
+            if (int.TryParse(value.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var concurrentJobCount))
+            {
+                MaxConcurrentEncodingJobs = concurrentJobCount;
+            }
+        }
+    }
+
+    public StringChoiceOption? SelectedQueueCompletionActionOption
+    {
+        get => _selectedQueueCompletionActionOption;
+        set
+        {
+            if (!SetProperty(ref _selectedQueueCompletionActionOption, value) || value is null)
+            {
+                return;
+            }
+
+            if (Enum.TryParse<QueueCompletionAction>(value.Value, ignoreCase: false, out var action))
+            {
+                QueueCompletionAction = action;
+            }
+        }
+    }
+
     public double DraftQuality
     {
         get => _draftQuality;
@@ -685,7 +742,36 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             var normalized = NormalizeConcurrentEncodingJobs(value);
             if (SetProperty(ref _maxConcurrentEncodingJobs, normalized))
             {
+                SyncSelectedConcurrentEncodingJobOption(normalized);
                 _ = ProcessQueueAsync();
+            }
+        }
+    }
+
+    public QueueCompletionAction QueueCompletionAction
+    {
+        get => _queueCompletionAction;
+        set
+        {
+            if (!SetProperty(ref _queueCompletionAction, value))
+            {
+                return;
+            }
+
+            SyncSelectedQueueCompletionActionOption(value);
+
+            if (value == QueueCompletionAction.None)
+            {
+                CancelPendingQueueCompletionActionWait();
+                ResetQueueCompletionActionBatch();
+            }
+            else if (Jobs.Any(static job => job.State == EncodingJobState.Running))
+            {
+                _isQueueCompletionActionArmed = true;
+            }
+            else if (_queueCompletionActionWaitCancellationTokenSource is not null && !HasActiveAppWork())
+            {
+                StatusText = Texts.QueueCompletionActionPendingIdleStatus(value, QueueCompletionActionIdleRequirement);
             }
         }
     }
@@ -964,6 +1050,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
 
         _isDisposed = true;
+        CancelPendingQueueCompletionActionWait();
         CancelPendingPreviewRefresh();
         CancelAutoCompression();
         DisposeAutoCompressionCancellation();
@@ -1184,7 +1271,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 normalizedWorkspaceRootPath,
                 new Dictionary<string, string>(_manualToolPaths, StringComparer.OrdinalIgnoreCase),
                 _hasRunInitialVsPluginDependencyUpdate,
-                GetMaxConcurrentEncodingJobCount());
+                GetMaxConcurrentEncodingJobCount(),
+                QueueCompletionAction);
 
             _settingsService.Save(settings);
             WorkspaceRootPath = normalizedWorkspaceRootPath;
@@ -1754,11 +1842,6 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         {
             while (true)
             {
-                if (Jobs.Any(static job => job.State == EncodingJobState.Running))
-                {
-                    break;
-                }
-
                 if (_isShuttingDown)
                 {
                     break;
@@ -1807,6 +1890,184 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return Math.Clamp(rounded, MinConcurrentEncodingJobs, MaxConcurrentEncodingJobsLimit);
     }
 
+    private void SyncSelectedConcurrentEncodingJobOption(int normalizedValue)
+    {
+        var targetValue = normalizedValue.ToString(CultureInfo.InvariantCulture);
+        var matchedOption = ConcurrentEncodingJobOptions.FirstOrDefault(option =>
+            string.Equals(option.Value, targetValue, StringComparison.Ordinal));
+
+        if (ReferenceEquals(_selectedConcurrentEncodingJobOption, matchedOption))
+        {
+            return;
+        }
+
+        _selectedConcurrentEncodingJobOption = matchedOption;
+        OnPropertyChanged(nameof(SelectedConcurrentEncodingJobOption));
+    }
+
+    private void SyncSelectedQueueCompletionActionOption(QueueCompletionAction action)
+    {
+        var targetValue = action.ToString();
+        var matchedOption = QueueCompletionActionOptions.FirstOrDefault(option =>
+            string.Equals(option.Value, targetValue, StringComparison.Ordinal));
+
+        if (ReferenceEquals(_selectedQueueCompletionActionOption, matchedOption))
+        {
+            return;
+        }
+
+        _selectedQueueCompletionActionOption = matchedOption;
+        OnPropertyChanged(nameof(SelectedQueueCompletionActionOption));
+    }
+
+    private static bool IsPendingQueueWork(EncodingJobItemViewModel job)
+    {
+        return job.State is EncodingJobState.Queued or EncodingJobState.Running;
+    }
+
+    private bool HasPendingQueueWork()
+    {
+        return Jobs.Any(IsPendingQueueWork);
+    }
+
+    private bool HasActiveAppWork()
+    {
+        return HasPendingQueueWork()
+            || IsAutoCompressionRunning
+            || IsAudioProcessingRunning
+            || IsBluRayDemuxRunning;
+    }
+
+    private void ResetQueueCompletionActionBatch()
+    {
+        _isQueueCompletionActionArmed = false;
+        _queueCompletionActionBatchHadNonSuccessfulCompletion = false;
+    }
+
+    private void BeginQueueCompletionActionBatch()
+    {
+        CancelPendingQueueCompletionActionWait();
+        _isQueueCompletionActionArmed = QueueCompletionAction != QueueCompletionAction.None;
+        _queueCompletionActionBatchHadNonSuccessfulCompletion = false;
+    }
+
+    private void MarkQueueCompletionActionBatchNonSuccessful()
+    {
+        if (!_isQueueCompletionActionArmed)
+        {
+            return;
+        }
+
+        _queueCompletionActionBatchHadNonSuccessfulCompletion = true;
+        CancelPendingQueueCompletionActionWait();
+    }
+
+    private bool ShouldTreatNonSuccessfulJobAsUnattendedFailure()
+    {
+        return _isQueueCompletionActionArmed
+            && _systemIdleService.GetIdleDuration() >= QueueCompletionActionIdleRequirement;
+    }
+
+    private void CancelPendingQueueCompletionActionWait()
+    {
+        _queueCompletionActionWaitCancellationTokenSource?.Cancel();
+        _queueCompletionActionWaitCancellationTokenSource?.Dispose();
+        _queueCompletionActionWaitCancellationTokenSource = null;
+    }
+
+    private void TryScheduleQueueCompletionActionAfterSuccessfulQueueDrain()
+    {
+        if (_isShuttingDown || _isExecutingQueueCompletionAction || !_isQueueCompletionActionArmed)
+        {
+            return;
+        }
+
+        if (_queueCompletionActionBatchHadNonSuccessfulCompletion)
+        {
+            ResetQueueCompletionActionBatch();
+            return;
+        }
+
+        if (HasActiveAppWork())
+        {
+            return;
+        }
+
+        var action = QueueCompletionAction;
+        if (action == QueueCompletionAction.None)
+        {
+            ResetQueueCompletionActionBatch();
+            return;
+        }
+
+        CancelPendingQueueCompletionActionWait();
+        var cancellationTokenSource = new CancellationTokenSource();
+        _queueCompletionActionWaitCancellationTokenSource = cancellationTokenSource;
+        ResetQueueCompletionActionBatch();
+        StatusText = Texts.QueueCompletionActionPendingIdleStatus(action, QueueCompletionActionIdleRequirement);
+        _ = WaitForQueueCompletionActionIdleAndExecuteAsync(cancellationTokenSource);
+    }
+
+    private async Task WaitForQueueCompletionActionIdleAndExecuteAsync(CancellationTokenSource cancellationTokenSource)
+    {
+        var cancellationToken = cancellationTokenSource.Token;
+
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                if (_isShuttingDown || _isExecutingQueueCompletionAction || HasActiveAppWork())
+                {
+                    return;
+                }
+
+                var action = QueueCompletionAction;
+                if (action == QueueCompletionAction.None)
+                {
+                    return;
+                }
+
+                if (_systemIdleService.GetIdleDuration() >= QueueCompletionActionIdleRequirement)
+                {
+                    await ExecuteQueueCompletionActionAsync(action);
+                    return;
+                }
+
+                await Task.Delay(QueueCompletionActionIdlePollInterval, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_queueCompletionActionWaitCancellationTokenSource, cancellationTokenSource))
+            {
+                _queueCompletionActionWaitCancellationTokenSource = null;
+            }
+
+            cancellationTokenSource.Dispose();
+        }
+    }
+
+    private async Task ExecuteQueueCompletionActionAsync(QueueCompletionAction action)
+    {
+        _isExecutingQueueCompletionAction = true;
+        try
+        {
+            StatusText = Texts.QueueCompletionActionExecutingStatus(action);
+            var error = await _queueCompletionActionService.ExecuteAsync(action);
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                StatusText = Texts.QueueCompletionActionFailedStatus(action, error);
+            }
+        }
+        finally
+        {
+            _isExecutingQueueCompletionAction = false;
+        }
+    }
+
     private async Task RunJobAsync(EncodingJobItemViewModel job)
     {
         if (job.State != EncodingJobState.Queued || _isShuttingDown)
@@ -1815,6 +2076,11 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
 
         using var cancellationSource = new CancellationTokenSource();
+        if (QueueCompletionAction != QueueCompletionAction.None && GetRunningEncodingJobCount() == 0)
+        {
+            BeginQueueCompletionActionBatch();
+        }
+
         job.AttachCancellation(cancellationSource);
         job.MarkRunning();
         RaiseJobStatePropertyChanges();
@@ -1847,10 +2113,23 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 RaiseJobStatePropertyChanges();
             }
 
+            if (result.State is EncodingJobState.Failed or EncodingJobState.Cancelled)
+            {
+                if (ShouldTreatNonSuccessfulJobAsUnattendedFailure())
+                {
+                    MarkQueueCompletionActionBatchNonSuccessful();
+                }
+            }
+
             StatusText = Texts.EncodingFinishedStatus(job.SourceFileName, result.Summary);
         }
         catch (OperationCanceledException)
         {
+            if (ShouldTreatNonSuccessfulJobAsUnattendedFailure())
+            {
+                MarkQueueCompletionActionBatchNonSuccessful();
+            }
+
             job.MarkCancelled(
                 Texts.Pick("编码已取消", "Encoding cancelled"),
                 Texts.Pick("作业被用户中断。", "The job was cancelled by the user."));
@@ -1859,6 +2138,11 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
         catch (Exception ex)
         {
+            if (ShouldTreatNonSuccessfulJobAsUnattendedFailure())
+            {
+                MarkQueueCompletionActionBatchNonSuccessful();
+            }
+
             job.MarkFailed(Texts.Pick($"编码失败：{ex.Message}", $"Encoding failed: {ex.Message}"), ex.ToString());
             RaiseJobStatePropertyChanges();
             StatusText = Texts.EncodingFailedStatus(job.SourceFileName);
@@ -1867,12 +2151,15 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         {
             job.DetachCancellation();
             _ = ProcessQueueAsync();
+            TryScheduleQueueCompletionActionAfterSuccessfulQueueDrain();
         }
     }
 
     public async Task CancelRunningJobsForShutdownAsync()
     {
         _isShuttingDown = true;
+        CancelPendingQueueCompletionActionWait();
+        ResetQueueCompletionActionBatch();
         CancelAutoCompression();
         CancelAudioProcessing();
         CancelBluRayDemux();
@@ -2781,6 +3068,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         PreferSystemEncoders = settings.PreferSystemEncoders;
         AutoCheckUpdatesOnStartup = settings.AutoCheckUpdatesOnStartup;
         MaxConcurrentEncodingJobs = settings.MaxConcurrentEncodingJobs;
+        QueueCompletionAction = settings.QueueCompletionAction;
         WorkspaceRootPath = _appPaths.RootPath;
         _hasCompletedSetupGuide = settings.HasSeenSetupGuide;
         _manualToolPaths = new Dictionary<string, string>(settings.EffectiveManualToolPaths, StringComparer.OrdinalIgnoreCase);
@@ -3308,6 +3596,27 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         ];
     }
 
+    private static IEnumerable<StringChoiceOption> BuildConcurrentEncodingJobOptions()
+    {
+        return Enumerable
+            .Range(MinConcurrentEncodingJobs, MaxConcurrentEncodingJobsLimit)
+            .Select(value =>
+            {
+                var text = value.ToString(CultureInfo.InvariantCulture);
+                return new StringChoiceOption(text, text);
+            });
+    }
+
+    private IEnumerable<StringChoiceOption> BuildQueueCompletionActionOptions()
+    {
+        return
+        [
+            new StringChoiceOption(QueueCompletionAction.None.ToString(), Texts.QueueCompletionActionLabel(QueueCompletionAction.None)),
+            new StringChoiceOption(QueueCompletionAction.Sleep.ToString(), Texts.QueueCompletionActionLabel(QueueCompletionAction.Sleep)),
+            new StringChoiceOption(QueueCompletionAction.Shutdown.ToString(), Texts.QueueCompletionActionLabel(QueueCompletionAction.Shutdown))
+        ];
+    }
+
     private void ApplyLanguage(AppLanguage language)
     {
         Texts = new AppText(language);
@@ -3316,6 +3625,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         ReplaceItems(ThemeOptions, BuildThemeOptions());
         _selectedTheme = ThemeOptions.FirstOrDefault(option => option.Value == themePreference) ?? ThemeOptions[0];
         OnPropertyChanged(nameof(SelectedTheme));
+        ReplaceItems(QueueCompletionActionOptions, BuildQueueCompletionActionOptions());
+        SyncSelectedQueueCompletionActionOption(QueueCompletionAction);
 
         foreach (var job in Jobs)
         {

@@ -1918,8 +1918,13 @@ public sealed partial class MainWindow : Window
         await PersistSettingsAsync(refreshTemplateLibrary: false);
     }
 
-    private async void MaxConcurrentEncodingJobsBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+    private async void QueueHeaderComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (sender is not ComboBox { SelectedItem: not null })
+        {
+            return;
+        }
+
         await PersistSettingsAsync(refreshTemplateLibrary: false);
     }
 

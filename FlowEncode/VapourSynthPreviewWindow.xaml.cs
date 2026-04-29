@@ -13,6 +13,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Foundation;
@@ -43,6 +44,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
     private byte[]? _displayedFramePixels;
     private int _displayedFrameHeight;
     private int _displayedFrameWidth;
+    private readonly List<TextBox> _attachedPreviewNumberBoxEditors = [];
     private XamlRoot? _observedXamlRoot;
     private Point _previewPanOrigin;
     private double _previewPanStartHorizontalOffset;
@@ -78,7 +80,9 @@ public sealed partial class VapourSynthPreviewWindow : Window
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         RootLayout.Loaded += RootLayout_Loaded;
         RootLayout.Unloaded += RootLayout_Unloaded;
+        RootLayout.ActualThemeChanged += RootLayout_ActualThemeChanged;
         RootLayout.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(RootLayout_KeyDown), true);
+        RootLayout.AddHandler(UIElement.KeyUpEvent, new KeyEventHandler(RootLayout_KeyUp), true);
         Title = ViewModel.WindowTitle;
     }
 
@@ -121,6 +125,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         ApplyTheme(themePreference);
         RefreshDisplayScale();
         SyncControls();
+        QueueAttachPreviewNumberBoxEditorHandlers();
     }
 
     private async Task<bool> LoadSessionAsync(bool preserveCurrentFrame)
@@ -763,11 +768,17 @@ public sealed partial class VapourSynthPreviewWindow : Window
         var targetZoomRatio = Math.Clamp(GetCurrentEffectiveZoomRatio() * factor, 0.05, 16.0);
         ApplyCustomZoom(targetZoomRatio);
         RestorePreviewScrollAnchor(anchorXRatio, anchorYRatio, pointerPosition.X, pointerPosition.Y);
+        QueueFocusPreviewSurface();
         e.Handled = true;
     }
 
     private void PreviewScrollViewer_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
+        if (!e.Handled)
+        {
+            QueueFocusPreviewSurface();
+        }
+
         if (e.Handled || !CanPanPreview())
         {
             return;
@@ -933,8 +944,10 @@ public sealed partial class VapourSynthPreviewWindow : Window
         StopPlayback();
         SaveCurrentOutputState();
         DetachXamlRoot();
+        DetachPreviewNumberBoxEditorHandlers();
         RootLayout.Loaded -= RootLayout_Loaded;
         RootLayout.Unloaded -= RootLayout_Unloaded;
+        RootLayout.ActualThemeChanged -= RootLayout_ActualThemeChanged;
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
         await _previewService.CloseSessionAsync();
         PreviewWindowClosed?.Invoke(this, EventArgs.Empty);
@@ -1785,11 +1798,18 @@ public sealed partial class VapourSynthPreviewWindow : Window
     {
         AttachXamlRoot();
         RefreshDisplayScale();
+        QueueAttachPreviewNumberBoxEditorHandlers();
     }
 
     private void RootLayout_Unloaded(object sender, RoutedEventArgs e)
     {
         DetachXamlRoot();
+        DetachPreviewNumberBoxEditorHandlers();
+    }
+
+    private void RootLayout_ActualThemeChanged(FrameworkElement sender, object args)
+    {
+        QueueAttachPreviewNumberBoxEditorHandlers();
     }
 
     private void AttachXamlRoot()
@@ -1881,6 +1901,37 @@ public sealed partial class VapourSynthPreviewWindow : Window
         }
     }
 
+    private void RootLayout_KeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Handled || e.Key != VirtualKey.Enter)
+        {
+            return;
+        }
+
+        if (TryFindAncestor<NumberBox>(e.OriginalSource as DependencyObject) is null)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        FocusPreviewSurface();
+        QueueFocusPreviewSurface();
+    }
+
+    private void NumberBoxEditor_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Handled || e.Key != VirtualKey.Enter)
+        {
+            return;
+        }
+
+        RootLayout.DispatcherQueue.TryEnqueue(() =>
+        {
+            _ = FocusPreviewSurface();
+            QueueFocusPreviewSurface();
+        });
+    }
+
     private bool IsEditingShortcutSuppressed()
     {
         var focusedElement = FocusManager.GetFocusedElement(RootLayout.XamlRoot);
@@ -1889,6 +1940,123 @@ public sealed partial class VapourSynthPreviewWindow : Window
             or RichEditBox
             or ComboBox
             or NumberBox;
+    }
+
+    private bool FocusPreviewSurface()
+    {
+        if (_isClosed)
+        {
+            return false;
+        }
+
+        if (PreviewScrollViewer.Focus(FocusState.Programmatic))
+        {
+            return true;
+        }
+
+        return ReloadPreviewButton.Focus(FocusState.Programmatic);
+    }
+
+    private void QueueFocusPreviewSurface()
+    {
+        if (_isClosed)
+        {
+            return;
+        }
+
+        RootLayout.DispatcherQueue.TryEnqueue(() => _ = FocusPreviewSurface());
+    }
+
+    private static TControl? TryFindAncestor<TControl>(DependencyObject? source)
+        where TControl : DependencyObject
+    {
+        while (source is not null)
+        {
+            if (source is TControl control)
+            {
+                return control;
+            }
+
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return null;
+    }
+
+    private void AttachPreviewNumberBoxEditorHandlers()
+    {
+        DetachPreviewNumberBoxEditorHandlers();
+
+        foreach (var numberBox in EnumeratePreviewNumberBoxes())
+        {
+            numberBox.ApplyTemplate();
+
+            var editor = FindDescendant<TextBox>(numberBox);
+            if (editor is null)
+            {
+                continue;
+            }
+
+            editor.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(NumberBoxEditor_KeyDown), true);
+            _attachedPreviewNumberBoxEditors.Add(editor);
+        }
+    }
+
+    private void DetachPreviewNumberBoxEditorHandlers()
+    {
+        foreach (var editor in _attachedPreviewNumberBoxEditors)
+        {
+            editor.RemoveHandler(UIElement.KeyDownEvent, new KeyEventHandler(NumberBoxEditor_KeyDown));
+        }
+
+        _attachedPreviewNumberBoxEditors.Clear();
+    }
+
+    private void QueueAttachPreviewNumberBoxEditorHandlers()
+    {
+        if (_isClosed)
+        {
+            return;
+        }
+
+        RootLayout.DispatcherQueue.TryEnqueue(AttachPreviewNumberBoxEditorHandlers);
+    }
+
+    private IEnumerable<NumberBox> EnumeratePreviewNumberBoxes()
+    {
+        yield return FrameNumberBox;
+        yield return ZoomRatioBox;
+        yield return StepSizeBox;
+        yield return TimeStepSecondsBox;
+        yield return CropLeftBox;
+        yield return CropTopBox;
+        yield return CropWidthBox;
+        yield return CropHeightBox;
+        yield return CropRightBox;
+        yield return CropBottomBox;
+        yield return CropZoomBox;
+    }
+
+    private static TElement? FindDescendant<TElement>(DependencyObject root)
+        where TElement : DependencyObject
+    {
+        var childCount = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < childCount; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is TElement element)
+            {
+                return element;
+            }
+
+            var descendant = FindDescendant<TElement>(child);
+            if (descendant is not null)
+            {
+                return descendant;
+            }
+        }
+
+        return null;
     }
 
     private static bool TryGetFrameNavigationDelta(VirtualKey key, out int frameDelta)
