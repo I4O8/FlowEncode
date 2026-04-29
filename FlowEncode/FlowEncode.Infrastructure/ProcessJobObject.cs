@@ -14,7 +14,7 @@ internal sealed class ProcessJobObject : IDisposable
         _handle = handle;
     }
 
-    public static ProcessJobObject? TryAttach(Process process)
+    public static ProcessJobObject? TryAttach(Process process, Action<string>? onFailure = null)
     {
         SafeJobHandle? handle = null;
 
@@ -23,7 +23,9 @@ internal sealed class ProcessJobObject : IDisposable
             handle = CreateJobObject(IntPtr.Zero, null);
             if (handle.IsInvalid)
             {
+                var win32Error = Marshal.GetLastWin32Error();
                 handle.Dispose();
+                ReportFailure(onFailure, process, "CreateJobObject", win32Error);
                 return null;
             }
 
@@ -41,22 +43,87 @@ internal sealed class ProcessJobObject : IDisposable
                     ref limits,
                     (uint)Marshal.SizeOf<JobObjectExtendedLimitInformation>()))
             {
+                var win32Error = Marshal.GetLastWin32Error();
                 handle.Dispose();
+                ReportFailure(onFailure, process, "SetInformationJobObject", win32Error);
                 return null;
             }
 
             if (!AssignProcessToJobObject(handle, process.Handle))
             {
+                var win32Error = Marshal.GetLastWin32Error();
                 handle.Dispose();
+                ReportFailure(onFailure, process, "AssignProcessToJobObject", win32Error);
                 return null;
             }
 
             return new ProcessJobObject(handle);
         }
-        catch
+        catch (Exception ex)
         {
             handle?.Dispose();
+            ReportFailure(onFailure, process, "exception", null, ex);
             return null;
+        }
+    }
+
+    private static void ReportFailure(
+        Action<string>? onFailure,
+        Process process,
+        string stage,
+        int? win32Error = null,
+        Exception? exception = null)
+    {
+        if (onFailure is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var processId = TryGetProcessId(process);
+            var executablePath = string.IsNullOrWhiteSpace(process.StartInfo.FileName)
+                ? "unknown"
+                : process.StartInfo.FileName;
+            var builder = new System.Text.StringBuilder()
+                .Append("Process job attach failed at ")
+                .Append(stage)
+                .Append(" for PID ")
+                .Append(processId)
+                .Append(" (")
+                .Append(executablePath)
+                .Append(')');
+
+            if (win32Error.HasValue)
+            {
+                builder.Append(". Win32Error=").Append(win32Error.Value);
+            }
+
+            if (exception is not null)
+            {
+                builder
+                    .Append(". ")
+                    .Append(exception.GetType().Name)
+                    .Append(": ")
+                    .Append(exception.Message);
+            }
+
+            onFailure(builder.ToString());
+        }
+        catch
+        {
+        }
+    }
+
+    private static int TryGetProcessId(Process process)
+    {
+        try
+        {
+            return process.Id;
+        }
+        catch
+        {
+            return -1;
         }
     }
 

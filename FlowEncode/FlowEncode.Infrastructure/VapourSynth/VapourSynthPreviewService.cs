@@ -21,10 +21,12 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
     };
 
     private readonly IToolProbeService _toolProbeService;
+    private readonly LocalAppPaths _appPaths;
     private readonly string _sessionRootPath;
     private readonly SemaphoreSlim _stateLock = new(1, 1);
     private readonly SemaphoreSlim _pythonPathLock = new(1, 1);
     private readonly TimeSpan _closeTimeout = TimeSpan.FromSeconds(2);
+    private readonly TimeSpan _killWaitTimeout = TimeSpan.FromSeconds(5);
     private readonly StringBuilder _stderrBuffer = new();
     private string? _pythonPath;
     private Process? _hostProcess;
@@ -42,6 +44,7 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         LocalAppPaths appPaths)
     {
         _toolProbeService = toolProbeService;
+        _appPaths = appPaths;
         _sessionRootPath = Path.Combine(appPaths.DataRootPath, "vapoursynth-preview");
         Directory.CreateDirectory(_sessionRootPath);
     }
@@ -385,18 +388,22 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
                     await process.WaitForExitAsync(timeoutCancellationTokenSource.Token);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                WriteDiagnostic($"Preview helper graceful shutdown failed for PID {TryGetProcessId(process)}. {ex.GetType().Name}: {ex.Message}");
+
                 try
                 {
                     if (!process.HasExited)
                     {
                         process.Kill(entireProcessTree: true);
-                        await process.WaitForExitAsync(CancellationToken.None);
+                        using var killTimeoutCancellationTokenSource = new CancellationTokenSource(_killWaitTimeout);
+                        await process.WaitForExitAsync(killTimeoutCancellationTokenSource.Token);
                     }
                 }
-                catch
+                catch (Exception killEx)
                 {
+                    WriteDiagnostic($"Preview helper forced shutdown failed for PID {TryGetProcessId(process)}. {killEx.GetType().Name}: {killEx.Message}");
                 }
             }
 
@@ -467,17 +474,54 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         }
     }
 
-    private static void TryDeleteDirectory(string path)
+    private void TryDeleteDirectory(string path)
+    {
+        Exception? lastError = null;
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(path))
+                {
+                    return;
+                }
+
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (attempt < 2)
+            {
+                lastError = ex;
+                Thread.Sleep(150 * (attempt + 1));
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                break;
+            }
+        }
+
+        if (lastError is not null)
+        {
+            WriteDiagnostic($"Failed to delete preview session directory '{path}'. {lastError.GetType().Name}: {lastError.Message}");
+        }
+    }
+
+    private void WriteDiagnostic(string message)
+    {
+        AppDiagnosticsLog.Write(_appPaths, nameof(VapourSynthPreviewService), message);
+    }
+
+    private static int TryGetProcessId(Process process)
     {
         try
         {
-            if (Directory.Exists(path))
-            {
-                Directory.Delete(path, recursive: true);
-            }
+            return process.Id;
         }
         catch
         {
+            return -1;
         }
     }
 

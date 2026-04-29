@@ -21,10 +21,12 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
 
     private readonly ExternalToolLocator _toolLocator;
     private readonly IAppSettingsService _settingsService;
+    private readonly LocalAppPaths _appPaths;
     private readonly ConcurrentDictionary<Guid, Process> _activeProcesses = new();
 
     public Av1anAutoCompressionRunner(LocalAppPaths paths, IAppSettingsService settingsService)
     {
+        _appPaths = paths;
         _settingsService = settingsService;
         _toolLocator = new ExternalToolLocator(paths, settingsService);
     }
@@ -158,7 +160,9 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         {
             process = CreateProcess(av1anPath, arguments);
             process.Start();
-            processJob = ProcessJobObject.TryAttach(process);
+            processJob = ProcessJobObject.TryAttach(
+                process,
+                message => WriteDiagnostic($"Auto compression job {request.JobId}: {message}"));
             _activeProcesses[request.JobId] = process;
 
             pumpOutput = PumpAsync(process.StandardOutput, HandleLine, cancellationToken);
@@ -296,10 +300,10 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         return Path.Combine(baseDirectory, TempWorkspaceFolderName, "av1an", request.JobId.ToString("N"));
     }
 
-    private static void CleanupJobTempDirectory(AutoCompressionRequest request)
+    private void CleanupJobTempDirectory(AutoCompressionRequest request)
     {
         var jobTempDirectory = GetTempDirectory(request);
-        TryDeleteDirectoryIfEmpty(jobTempDirectory);
+        TryDeleteDirectoryRecursivelyWithRetry(jobTempDirectory, $"auto compression temp directory '{jobTempDirectory}'");
         TryDeleteDirectoryIfEmpty(Path.GetDirectoryName(jobTempDirectory));
         TryDeleteDirectoryIfEmpty(Path.GetDirectoryName(Path.GetDirectoryName(jobTempDirectory)));
     }
@@ -321,6 +325,50 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         catch
         {
         }
+    }
+
+    private void TryDeleteDirectoryRecursivelyWithRetry(string? directory, string description)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return;
+        }
+
+        Exception? lastError = null;
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(directory))
+                {
+                    return;
+                }
+
+                Directory.Delete(directory, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (attempt < 2)
+            {
+                lastError = ex;
+                Thread.Sleep(150 * (attempt + 1));
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                break;
+            }
+        }
+
+        if (lastError is not null)
+        {
+            WriteDiagnostic($"Failed to delete {description}. {lastError.GetType().Name}: {lastError.Message}");
+        }
+    }
+
+    private void WriteDiagnostic(string message)
+    {
+        AppDiagnosticsLog.Write(_appPaths, nameof(Av1anAutoCompressionRunner), message);
     }
 
     private string MapEncoder(EncoderKind kind)

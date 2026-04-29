@@ -56,6 +56,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private readonly SourceVideoInfoProbe _sourceInfoProbe;
     private readonly IEncoderDiscoveryService _discoveryService;
     private readonly IAppSettingsService _settingsService;
+    private readonly LocalAppPaths _appPaths;
     private readonly ConcurrentDictionary<Guid, Process> _activeProcesses = new();
 
     public LocalEncodingJobRunner(
@@ -63,6 +64,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         IEncoderDiscoveryService discoveryService,
         IAppSettingsService settingsService)
     {
+        _appPaths = paths;
         _toolLocator = new ExternalToolLocator(paths, settingsService);
         _sourceInfoProbe = new SourceVideoInfoProbe(_toolLocator);
         _discoveryService = discoveryService;
@@ -157,7 +159,9 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 activeProcess = process;
 
                 process.Start();
-                activeProcessJob = ProcessJobObject.TryAttach(process);
+                activeProcessJob = ProcessJobObject.TryAttach(
+                    process,
+                    message => WriteDiagnostic($"Encoding job {request.JobId}: {message}"));
                 _activeProcesses[request.JobId] = process;
 
                 void HandleLine(string line)
@@ -654,7 +658,40 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return new EncodingProgressSnapshot(0, plan.TotalFrames, null, null, null, null);
     }
 
-    private static async Task<string> WriteSidecarLogAsync(
+    private async Task<string> WriteSidecarLogAsync(
+        EncodingJobRequest request,
+        string displayCommand,
+        EncodingJobState state,
+        int exitCode,
+        string rawLogPath)
+    {
+        var primaryLogPath = GetAvailableLogPath(request);
+        var primaryError = await TryWriteSidecarLogAsync(primaryLogPath, request, displayCommand, state, exitCode, rawLogPath);
+        if (primaryError is null)
+        {
+            return primaryLogPath;
+        }
+
+        var fallbackLogPath = GetFallbackLogPath(request);
+        var fallbackError = await TryWriteSidecarLogAsync(fallbackLogPath, request, displayCommand, state, exitCode, rawLogPath);
+        if (fallbackError is null)
+        {
+            WriteDiagnostic(
+                $"Encoding job {request.JobId}: primary sidecar log write failed for '{primaryLogPath}', "
+                + $"fallback saved to '{fallbackLogPath}'. {primaryError.GetType().Name}: {primaryError.Message}");
+            return fallbackLogPath;
+        }
+
+        WriteDiagnostic(
+            $"Encoding job {request.JobId}: failed to write sidecar log. "
+            + $"Primary='{primaryLogPath}' ({primaryError.GetType().Name}: {primaryError.Message}); "
+            + $"Fallback='{fallbackLogPath}' ({fallbackError.GetType().Name}: {fallbackError.Message}); "
+            + $"RawLog='{rawLogPath}'.");
+        return string.Empty;
+    }
+
+    private static async Task<Exception?> TryWriteSidecarLogAsync(
+        string logPath,
         EncodingJobRequest request,
         string displayCommand,
         EncodingJobState state,
@@ -663,7 +700,12 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     {
         try
         {
-            var logPath = GetAvailableLogPath(request);
+            var directory = Path.GetDirectoryName(logPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
             await using var stream = File.Open(logPath, FileMode.Create, FileAccess.Write, FileShare.None);
             await using var writer = new StreamWriter(stream, Encoding.UTF8);
             await writer.WriteLineAsync($"JobId: {request.JobId}");
@@ -686,11 +728,11 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 await reader.BaseStream.CopyToAsync(stream);
             }
 
-            return logPath;
+            return null;
         }
-        catch
+        catch (Exception ex)
         {
-            return string.Empty;
+            return ex;
         }
     }
 
@@ -1575,6 +1617,35 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return Path.Combine(directory, $"{baseName}{suffix}_{Guid.NewGuid():N}{extension}");
     }
 
+    private string GetFallbackLogPath(EncodingJobRequest request)
+    {
+        var baseName = Path.GetFileNameWithoutExtension(request.OutputPath);
+        var prefix = string.IsNullOrWhiteSpace(baseName)
+            ? request.JobId.ToString("N")
+            : SanitizeFileName(baseName);
+        var suffix = BuildLogFileSuffix(request.Profile);
+        var candidate = Path.Combine(_appPaths.LogsRootPath, $"{prefix}{suffix}.log");
+
+        if (!File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        for (var index = 0; index < 10000; index++)
+        {
+            var timestampSuffix = index == 0
+                ? $"_{DateTime.Now:yyyyMMdd_HHmmss}"
+                : $"_{DateTime.Now:yyyyMMdd_HHmmss}_{index + 1}";
+            candidate = Path.Combine(_appPaths.LogsRootPath, $"{prefix}{suffix}{timestampSuffix}.log");
+            if (!File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return Path.Combine(_appPaths.LogsRootPath, $"{prefix}{suffix}_{Guid.NewGuid():N}.log");
+    }
+
     private static string BuildLogFileSuffix(EncodingProfile profile)
     {
         var encoderToken = profile.Kind.ToShortName();
@@ -1780,18 +1851,9 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return new StreamWriter(stream, Encoding.UTF8);
     }
 
-    private static void CleanupTemporaryRawLog(string path)
+    private void CleanupTemporaryRawLog(string path)
     {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch
-        {
-        }
+        TryDeleteFileWithRetry(path, $"temporary raw log '{path}'");
     }
 
     private static void CleanupPlanArtifacts(EncodingExecutionPlan plan)
@@ -1832,12 +1894,10 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return Path.Combine(baseDirectory, TempWorkspaceFolderName, request.JobId.ToString("N"));
     }
 
-    private static void CleanupJobTempDirectory(EncodingJobRequest request)
+    private void CleanupJobTempDirectory(EncodingJobRequest request)
     {
         var jobTempDirectory = GetJobTempDirectory(request);
-        TryDeleteDirectoryIfEmpty(Path.Combine(jobTempDirectory, "logs"));
-        TryDeleteDirectoryIfEmpty(Path.Combine(jobTempDirectory, "multipass"));
-        TryDeleteDirectoryIfEmpty(jobTempDirectory);
+        TryDeleteDirectoryRecursivelyWithRetry(jobTempDirectory, $"job temp directory '{jobTempDirectory}'");
 
         var rootDirectory = Path.GetDirectoryName(jobTempDirectory);
         TryDeleteDirectoryIfEmpty(rootDirectory);
@@ -1860,6 +1920,100 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         catch
         {
         }
+    }
+
+    private void TryDeleteFileWithRetry(string? path, string description)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        Exception? lastError = null;
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    return;
+                }
+
+                File.Delete(path);
+                return;
+            }
+            catch (Exception ex) when (attempt < 2)
+            {
+                lastError = ex;
+                Thread.Sleep(150 * (attempt + 1));
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                break;
+            }
+        }
+
+        if (lastError is not null)
+        {
+            WriteDiagnostic($"Failed to delete {description}. {lastError.GetType().Name}: {lastError.Message}");
+        }
+    }
+
+    private void TryDeleteDirectoryRecursivelyWithRetry(string? directory, string description)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return;
+        }
+
+        Exception? lastError = null;
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                if (!Directory.Exists(directory))
+                {
+                    return;
+                }
+
+                Directory.Delete(directory, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (attempt < 2)
+            {
+                lastError = ex;
+                Thread.Sleep(150 * (attempt + 1));
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                break;
+            }
+        }
+
+        if (lastError is not null)
+        {
+            WriteDiagnostic($"Failed to delete {description}. {lastError.GetType().Name}: {lastError.Message}");
+        }
+    }
+
+    private void WriteDiagnostic(string message)
+    {
+        AppDiagnosticsLog.Write(_appPaths, nameof(LocalEncodingJobRunner), message);
+    }
+
+    private static string SanitizeFileName(string fileName)
+    {
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var sanitized = new string(fileName
+            .Select(ch => invalidChars.Contains(ch) ? '_' : ch)
+            .ToArray())
+            .Trim();
+
+        return string.IsNullOrWhiteSpace(sanitized) ? "encoding-job" : sanitized;
     }
 
     private static string Optional(string name, string value)
