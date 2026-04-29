@@ -11,7 +11,7 @@ public sealed class CliAudioProcessingRunnerTests
     [TestMethod]
     public void BuildDisplayCommand_WhenOpusUsesDefaultPipeline_UsesOpusencPipe()
     {
-        var runner = new CliAudioProcessingRunner(new StubToolProbeService());
+        var runner = CreateRunner();
         var request = CreateRequest(useOpusMappingFamily1: false);
 
         var command = runner.BuildDisplayCommand(request);
@@ -27,7 +27,7 @@ public sealed class CliAudioProcessingRunnerTests
     [TestMethod]
     public void BuildDisplayCommand_WhenOpusMappingFamilyIsEnabled_UsesFfmpegLibopus()
     {
-        var runner = new CliAudioProcessingRunner(new StubToolProbeService());
+        var runner = CreateRunner();
         var request = CreateRequest(useOpusMappingFamily1: true, channelLayout: "5.1", channelCount: 6);
 
         var command = runner.BuildDisplayCommand(request);
@@ -42,7 +42,7 @@ public sealed class CliAudioProcessingRunnerTests
     [TestMethod]
     public void BuildDisplayCommand_WhenOpusMappingFamilyIsEnabledForSideSurround_NormalizesLayout()
     {
-        var runner = new CliAudioProcessingRunner(new StubToolProbeService());
+        var runner = CreateRunner();
         var request = CreateRequest(useOpusMappingFamily1: true, channelLayout: "5.1(side)", channelCount: 6);
 
         var command = runner.BuildDisplayCommand(request);
@@ -56,7 +56,7 @@ public sealed class CliAudioProcessingRunnerTests
     [TestMethod]
     public void BuildDisplayCommand_WhenOpusMappingFamilyIsEnabledForUnsupportedLayout_FallsBackToOpusencPipe()
     {
-        var runner = new CliAudioProcessingRunner(new StubToolProbeService());
+        var runner = CreateRunner();
         var request = CreateRequest(useOpusMappingFamily1: true, channelLayout: "4.0", channelCount: 4);
 
         var command = runner.BuildDisplayCommand(request);
@@ -105,6 +105,9 @@ public sealed class CliAudioProcessingRunnerTests
         StringAssert.Contains(runPlan.ExecutionRequest.OutputPath, ".staging.tmp.opus");
     }
 
+    private static CliAudioProcessingRunner CreateRunner() =>
+        new(new StubToolProbeService(), new StubSettingsService());
+
     private static AudioProcessingRequest CreateRequest(
         bool useOpusMappingFamily1,
         string sourcePath = @"D:\audio\input.thd",
@@ -136,6 +139,15 @@ public sealed class CliAudioProcessingRunnerTests
         public Task<ToolProbeResult> ProbeAsync(RegisteredToolKind kind, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
+        }
+    }
+
+    private sealed class StubSettingsService : IAppSettingsService
+    {
+        public AppSettings Load() => AppSettings.Default with { Language = AppLanguage.English };
+
+        public void Save(AppSettings settings)
+        {
         }
     }
 }

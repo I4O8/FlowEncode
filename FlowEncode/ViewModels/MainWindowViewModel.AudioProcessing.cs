@@ -1478,52 +1478,7 @@ public partial class MainWindowViewModel
 
     private static bool IsCompactAudioProcessingLiveLine(AudioProcessingMode? mode, string line)
     {
-        if (string.IsNullOrWhiteSpace(line))
-        {
-            return false;
-        }
-
-        return mode switch
-        {
-            AudioProcessingMode.Eac3To => line.StartsWith("process:", StringComparison.OrdinalIgnoreCase),
-            AudioProcessingMode.Ddp => LooksLikeDeewCliProgressLine(line),
-            AudioProcessingMode.Opus => line.StartsWith("process:", StringComparison.OrdinalIgnoreCase)
-                || LooksLikeOpusCliProgressLine(line),
-            _ => false
-        };
-    }
-
-    private static bool LooksLikeDeewCliProgressLine(string line)
-    {
-        return line.StartsWith("Stage progress:", StringComparison.OrdinalIgnoreCase)
-            || (line.IndexOf('%') >= 0
-                && line.IndexOf('[') >= 0
-                && line.IndexOf(']') >= 0);
-    }
-
-    private static bool LooksLikeOpusCliProgressLine(string line)
-    {
-        if (string.IsNullOrWhiteSpace(line) || line.Length < 16)
-        {
-            return false;
-        }
-
-        if (line[0] != '[' || line[2] != ']' || !char.IsWhiteSpace(line[3]))
-        {
-            return false;
-        }
-
-        return char.IsDigit(line[4])
-            && char.IsDigit(line[5])
-            && line[6] == ':'
-            && char.IsDigit(line[7])
-            && char.IsDigit(line[8])
-            && line[9] == ':'
-            && char.IsDigit(line[10])
-            && char.IsDigit(line[11])
-            && line[12] == '.'
-            && char.IsDigit(line[13])
-            && char.IsDigit(line[14]);
+        return ToolLogLineClassifier.IsAudioTransientLine(mode, line);
     }
 
     private void ResetAudioProcessingLogState()

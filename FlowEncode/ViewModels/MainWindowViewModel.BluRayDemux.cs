@@ -1127,8 +1127,8 @@ public partial class MainWindowViewModel
     {
         return SelectedBluRayDemuxBackend?.Value switch
         {
-            BluRayDemuxBackend.Eac3To when IsEac3ToAnalyzeLine(line) => Texts.BluRayDemuxAnalyzePhaseLabel,
-            BluRayDemuxBackend.Eac3To when IsEac3ToProcessLine(line) => Texts.BluRayDemuxProcessPhaseLabel,
+            BluRayDemuxBackend.Eac3To when ToolLogLineClassifier.IsEac3ToAnalyzeLine(line) => Texts.BluRayDemuxAnalyzePhaseLabel,
+            BluRayDemuxBackend.Eac3To when ToolLogLineClassifier.IsEac3ToProcessLine(line) => Texts.BluRayDemuxProcessPhaseLabel,
             _ => string.Empty
         };
     }
@@ -1140,60 +1140,13 @@ public partial class MainWindowViewModel
 
     private static bool IsCompactBluRayDemuxLiveLine(BluRayDemuxBackend? backend, string line)
     {
-        if (string.IsNullOrWhiteSpace(line))
-        {
-            return false;
-        }
-
-        return backend switch
-        {
-            BluRayDemuxBackend.DgDemux => LooksLikeDgDemuxProgressLine(line),
-            BluRayDemuxBackend.Eac3To => IsEac3ToAnalyzeLine(line) || IsEac3ToProcessLine(line),
-            _ => false
-        };
-    }
-
-    private static bool LooksLikeDgDemuxProgressLine(string line)
-    {
-        var trimmed = line.Trim();
-        if (!trimmed.EndsWith('%'))
-        {
-            return false;
-        }
-
-        var numericPart = trimmed[..^1].Trim();
-        if (string.IsNullOrWhiteSpace(numericPart))
-        {
-            return false;
-        }
-
-        foreach (var character in numericPart)
-        {
-            if (!char.IsDigit(character) && character != '.')
-            {
-                return false;
-            }
-        }
-
-        return double.TryParse(numericPart, NumberStyles.Float, CultureInfo.InvariantCulture, out var percent)
-            && percent >= 0
-            && percent <= 100;
-    }
-
-    private static bool IsEac3ToAnalyzeLine(string line)
-    {
-        return line.StartsWith("analyze:", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsEac3ToProcessLine(string line)
-    {
-        return line.StartsWith("process:", StringComparison.OrdinalIgnoreCase);
+        return ToolLogLineClassifier.IsBluRayTransientLine(backend, line);
     }
 
     private static bool TryParseEac3ToAnalyzeProgress(string line, out double percent)
     {
         percent = 0;
-        if (!IsEac3ToAnalyzeLine(line))
+        if (!ToolLogLineClassifier.IsEac3ToAnalyzeLine(line))
         {
             return false;
         }

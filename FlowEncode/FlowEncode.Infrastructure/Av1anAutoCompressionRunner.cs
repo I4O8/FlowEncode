@@ -11,15 +11,21 @@ namespace FlowEncode.Infrastructure;
 public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
 {
     private const string TempWorkspaceFolderName = ".flowencode-temp";
+    private const int MaxVisibleLogLength = 200_000;
+    private const int RetainedVisibleLogLength = 120_000;
+    private const string VisibleLogTruncationMarker = "[Log truncated; only latest output is kept]";
     private static readonly Regex ProgressRegex = new(@"(?<!\d)(?<value>\d{1,3}(?:\.\d+)?)\s*%", RegexOptions.Compiled);
     private static readonly Regex FractionProgressRegex = new(@"(?<!\d)(?<done>\d{1,7})\s*/\s*(?<total>\d{1,7})(?!\d)", RegexOptions.Compiled);
     private static readonly TimeSpan ProgressReportInterval = TimeSpan.FromMilliseconds(250);
+    private const double SignificantProgressDelta = 0.0025;
 
     private readonly ExternalToolLocator _toolLocator;
+    private readonly IAppSettingsService _settingsService;
     private readonly ConcurrentDictionary<Guid, Process> _activeProcesses = new();
 
     public Av1anAutoCompressionRunner(LocalAppPaths paths, IAppSettingsService settingsService)
     {
+        _settingsService = settingsService;
         _toolLocator = new ExternalToolLocator(paths, settingsService);
     }
 
@@ -43,9 +49,10 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         IProgress<AutoCompressionProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        var language = GetLanguage();
         if (!File.Exists(request.SourcePath))
         {
-            throw new FileNotFoundException("未找到自动压制输入源文件。", request.SourcePath);
+            throw new FileNotFoundException(T(language, "Auto encode source file was not found.", "未找到自动压制输入源文件。"), request.SourcePath);
         }
 
         var av1anPath = _toolLocator.ResolveAv1an();
@@ -65,17 +72,21 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
             request.JobId,
             EncodingJobState.Running,
             null,
-            "自动压制已启动",
+            T(language, "Auto encode started", "自动压制已启动"),
             displayCommand));
 
         var gate = new object();
         var lastProgress = 0.0;
         var hasKnownProgress = false;
         var lastReportAt = DateTimeOffset.MinValue;
+        var lastReportedProgress = 0.0;
+        var hasReportedProgress = false;
+        var lastReportedLine = string.Empty;
 
         void HandleLine(string line)
         {
-            if (string.IsNullOrWhiteSpace(line))
+            var normalizedLine = ConsoleOutputLineNormalizer.Normalize(line);
+            if (string.IsNullOrWhiteSpace(normalizedLine))
             {
                 return;
             }
@@ -84,18 +95,31 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
 
             lock (gate)
             {
-                logBuilder.AppendLine(line);
-
                 var now = DateTimeOffset.UtcNow;
-                var parsedProgress = ParseProgressFraction(line) ?? ParseFractionProgress(line);
+                var parsedProgress = ParseProgressFraction(normalizedLine) ?? ParseFractionProgress(normalizedLine);
+                var detailLine = NormalizeDisplayLine(normalizedLine, parsedProgress);
+                var isTransient = ToolLogLineClassifier.IsAutoCompressionTransientLine(detailLine)
+                    || ToolLogLineClassifier.IsAutoCompressionTransientLine(normalizedLine);
                 if (parsedProgress.HasValue)
                 {
                     hasKnownProgress = true;
                     lastProgress = Math.Clamp(Math.Max(lastProgress, parsedProgress.Value), 0.0, 1.0);
                 }
 
-                var shouldReport = parsedProgress.HasValue
-                    || now - lastReportAt >= ProgressReportInterval;
+                if (!isTransient)
+                {
+                    AppendVisibleLogLine(logBuilder, normalizedLine);
+                }
+
+                var reachedReportWindow = now - lastReportAt >= ProgressReportInterval;
+                var progressAdvancedEnough = hasKnownProgress
+                    && (!hasReportedProgress || lastProgress - lastReportedProgress >= SignificantProgressDelta);
+                var lineChanged = !string.Equals(detailLine, lastReportedLine, StringComparison.Ordinal);
+                var shouldReport = !isTransient
+                    ? lineChanged
+                    : parsedProgress.HasValue
+                        ? progressAdvancedEnough || (reachedReportWindow && lineChanged)
+                        : reachedReportWindow && lineChanged;
 
                 if (!shouldReport)
                 {
@@ -103,13 +127,20 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
                 }
 
                 lastReportAt = now;
-                var summary = BuildRunningSummary(lastProgress, line);
+                if (hasKnownProgress)
+                {
+                    hasReportedProgress = true;
+                    lastReportedProgress = lastProgress;
+                }
+
+                lastReportedLine = detailLine;
+                var summary = BuildRunningSummary(language, lastProgress, normalizedLine);
                 update = new AutoCompressionProgress(
                     request.JobId,
                     EncodingJobState.Running,
                     hasKnownProgress ? lastProgress : null,
                     summary,
-                    line);
+                    detailLine);
             }
 
             if (update is not null)
@@ -146,14 +177,14 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
                     request.JobId,
                     EncodingJobState.Completed,
                     1.0,
-                    "自动压制完成",
+                    T(language, "Auto encode completed", "自动压制完成"),
                     LastMeaningfulLine(log)));
 
                 return new AutoCompressionResult(
                     request.JobId,
                     EncodingJobState.Completed,
                     0,
-                    "自动压制完成",
+                    T(language, "Auto encode completed", "自动压制完成"),
                     log,
                     displayCommand);
             }
@@ -162,14 +193,14 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
                 request.JobId,
                 EncodingJobState.Failed,
                 null,
-                $"自动压制失败，退出代码 {process.ExitCode}",
+                T(language, $"Auto encode failed (exit code {process.ExitCode})", $"自动压制失败，退出代码 {process.ExitCode}"),
                 LastMeaningfulLine(log)));
 
             return new AutoCompressionResult(
                 request.JobId,
                 EncodingJobState.Failed,
                 process.ExitCode,
-                $"自动压制失败，退出代码 {process.ExitCode}",
+                T(language, $"Auto encode failed (exit code {process.ExitCode})", $"自动压制失败，退出代码 {process.ExitCode}"),
                 log,
                 displayCommand);
         }
@@ -194,14 +225,14 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
                 request.JobId,
                 EncodingJobState.Cancelled,
                 null,
-                "自动压制已取消",
-                "任务已取消。"));
+                T(language, "Auto encode cancelled", "自动压制已取消"),
+                T(language, "The task was cancelled.", "任务已取消。")));
 
             return new AutoCompressionResult(
                 request.JobId,
                 EncodingJobState.Cancelled,
                 -1,
-                "自动压制已取消",
+                T(language, "Auto encode cancelled", "自动压制已取消"),
                 log,
                 displayCommand);
         }
@@ -217,18 +248,18 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
     {
         if (request.Probes <= 0)
         {
-            throw new InvalidOperationException("探测次数必须大于 0。");
+            throw new InvalidOperationException(T(GetLanguage(), "The probe count must be greater than 0.", "探测次数必须大于 0。"));
         }
 
         if (request.TargetVmaf <= 0 || request.TargetVmaf > 100)
         {
-            throw new InvalidOperationException("目标 VMAF 必须在 0 到 100 之间。");
+            throw new InvalidOperationException(T(GetLanguage(), "Target VMAF must be between 0 and 100.", "目标 VMAF 必须在 0 到 100 之间。"));
         }
 
         if (!string.IsNullOrWhiteSpace(request.VideoParameters)
             && (request.VideoParameters.Contains('\r') || request.VideoParameters.Contains('\n')))
         {
-            throw new InvalidOperationException("小参不支持换行，请使用单行参数。");
+            throw new InvalidOperationException(T(GetLanguage(), "Fine parameters must be a single line.", "小参不支持换行，请使用单行参数。"));
         }
 
         var args = new List<string>
@@ -292,14 +323,14 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         }
     }
 
-    private static string MapEncoder(EncoderKind kind)
+    private string MapEncoder(EncoderKind kind)
     {
         return kind switch
         {
             EncoderKind.X264 => "x264",
             EncoderKind.X265 => "x265",
             EncoderKind.SvtAv1 => "svt-av1",
-            _ => throw new InvalidOperationException($"不支持的编码器: {kind}")
+            _ => throw new InvalidOperationException(T(GetLanguage(), $"Unsupported encoder: {kind}", $"不支持的编码器: {kind}"))
         };
     }
 
@@ -328,17 +359,35 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         Action<string> onLine,
         CancellationToken cancellationToken)
     {
+        var buffer = new char[512];
+        var segmentBuilder = new StringBuilder();
+
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var line = await reader.ReadLineAsync(cancellationToken);
-            if (line is null)
+            var read = await reader.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (read == 0)
             {
                 break;
             }
 
-            onLine(line);
+            for (var index = 0; index < read; index++)
+            {
+                var character = buffer[index];
+                if (character is '\r' or '\n')
+                {
+                    FlushConsoleSegment(segmentBuilder, onLine);
+                    continue;
+                }
+
+                if (!char.IsControl(character) || character == '\t')
+                {
+                    segmentBuilder.Append(character);
+                }
+            }
         }
+
+        FlushConsoleSegment(segmentBuilder, onLine);
     }
 
     private static double? ParseProgressFraction(string line)
@@ -402,20 +451,20 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
             || line.Contains("progress", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string BuildRunningSummary(double progressFraction, string line)
+    private static string BuildRunningSummary(AppLanguage language, double progressFraction, string line)
     {
-        var stageText = ResolveStageText(line);
+        var stageText = ResolveStageText(language, line);
         if (progressFraction > 0)
         {
             return string.IsNullOrWhiteSpace(stageText)
-                ? $"自动压制中 {progressFraction:P0}"
+                ? T(language, $"Auto encode {progressFraction:P0}", $"自动压制中 {progressFraction:P0}")
                 : $"{stageText} {progressFraction:P0}";
         }
 
-        return stageText ?? "自动压制中";
+        return stageText ?? T(language, "Auto encode running", "自动压制中");
     }
 
-    private static string? ResolveStageText(string line)
+    private static string? ResolveStageText(AppLanguage language, string line)
     {
         if (string.IsNullOrWhiteSpace(line))
         {
@@ -425,37 +474,81 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         if (line.Contains("scenecut", StringComparison.OrdinalIgnoreCase)
             || line.Contains("scene(s)", StringComparison.OrdinalIgnoreCase))
         {
-            return "场景检测中";
+            return T(language, "Scene detection", "场景检测中");
         }
 
         if (line.Contains("target quality", StringComparison.OrdinalIgnoreCase)
             || line.Contains("probe", StringComparison.OrdinalIgnoreCase)
             || line.Contains("vmaf", StringComparison.OrdinalIgnoreCase))
         {
-            return "VMAF 探测中";
+            return T(language, "VMAF probing", "VMAF 探测中");
         }
 
         if (line.Contains("chunk", StringComparison.OrdinalIgnoreCase)
             || line.Contains("encoding", StringComparison.OrdinalIgnoreCase)
             || line.Contains("fps", StringComparison.OrdinalIgnoreCase))
         {
-            return "编码中";
+            return T(language, "Encoding", "编码中");
         }
 
         if (line.Contains("concat", StringComparison.OrdinalIgnoreCase)
             || line.Contains("merge", StringComparison.OrdinalIgnoreCase)
             || line.Contains("mux", StringComparison.OrdinalIgnoreCase))
         {
-            return "封装中";
+            return T(language, "Muxing", "封装中");
         }
 
         if (line.Contains("input:", StringComparison.OrdinalIgnoreCase)
             || line.Contains("split", StringComparison.OrdinalIgnoreCase))
         {
-            return "预处理中";
+            return T(language, "Preparing", "预处理中");
         }
 
         return null;
+    }
+
+    private static string NormalizeDisplayLine(string line, double? parsedProgress)
+    {
+        return parsedProgress.HasValue
+            ? $"process: {Math.Clamp(parsedProgress.Value, 0.0, 1.0) * 100:0.##}%"
+            : line;
+    }
+
+    private static void AppendVisibleLogLine(StringBuilder builder, string line)
+    {
+        if (builder.Length > 0)
+        {
+            builder.AppendLine();
+        }
+
+        builder.Append(line);
+        TrimVisibleLogIfNeeded(builder);
+    }
+
+    private static void TrimVisibleLogIfNeeded(StringBuilder builder)
+    {
+        if (builder.Length <= MaxVisibleLogLength)
+        {
+            return;
+        }
+
+        var removeCount = Math.Max(0, builder.Length - RetainedVisibleLogLength);
+        if (removeCount > 0)
+        {
+            builder.Remove(0, removeCount);
+        }
+
+        var retainedText = builder.ToString();
+        var firstLineBreak = retainedText.IndexOfAny(['\r', '\n']);
+        if (firstLineBreak >= 0 && firstLineBreak + 1 < builder.Length)
+        {
+            builder.Remove(0, firstLineBreak + 1);
+        }
+
+        if (!builder.ToString().StartsWith(VisibleLogTruncationMarker, StringComparison.Ordinal))
+        {
+            builder.Insert(0, $"{VisibleLogTruncationMarker}{Environment.NewLine}");
+        }
     }
 
     private void TryTerminateProcess(Guid jobId, Process process)
@@ -490,6 +583,21 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         return $"\"{value.Replace("\"", "\\\"")}\"";
     }
 
+    private static void FlushConsoleSegment(StringBuilder segmentBuilder, Action<string> onLine)
+    {
+        if (segmentBuilder.Length == 0)
+        {
+            return;
+        }
+
+        var normalized = ConsoleOutputLineNormalizer.Normalize(segmentBuilder.ToString());
+        segmentBuilder.Clear();
+        if (!string.IsNullOrWhiteSpace(normalized))
+        {
+            onLine(normalized);
+        }
+    }
+
     private async Task EnsureAv1anRuntimeReadyAsync(string av1anPath, CancellationToken cancellationToken)
     {
         using var process = CreateProcess(av1anPath, "--version");
@@ -513,8 +621,9 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         throw new InvalidOperationException(message);
     }
 
-    private static string BuildRuntimeFailureMessage(int exitCode, string output, string error)
+    private string BuildRuntimeFailureMessage(int exitCode, string output, string error)
     {
+        var language = GetLanguage();
         var stderr = (error ?? string.Empty).Trim();
         var stdout = (output ?? string.Empty).Trim();
         var merged = string.IsNullOrWhiteSpace(stderr)
@@ -525,19 +634,24 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
 
         if (exitCode == unchecked((int)0xC0000135) || exitCode == -1073741515)
         {
-            return "Av1an 启动失败：缺少运行时依赖（常见为 VSScript.dll / VapourSynth 运行时）。请安装或修复 VapourSynth 后重试。";
+            return T(language, "Av1an failed to start because runtime dependencies are missing, commonly VSScript.dll or the VapourSynth runtime. Install or repair VapourSynth and try again.", "Av1an 启动失败：缺少运行时依赖（常见为 VSScript.dll / VapourSynth 运行时）。请安装或修复 VapourSynth 后重试。");
         }
 
         if (merged.Contains("Failed to get VSScript API", StringComparison.OrdinalIgnoreCase))
         {
-            return "Av1an 启动失败：检测到 VSScript API 不可用。当前 VapourSynth 运行时与 Av1an 不兼容或安装损坏，请重装 VapourSynth（并确认 vspipe 可正常运行）后重试。";
+            return T(language, "Av1an failed to start because the VSScript API is unavailable. The current VapourSynth runtime is incompatible with Av1an or damaged. Reinstall VapourSynth and confirm vspipe works before trying again.", "Av1an 启动失败：检测到 VSScript API 不可用。当前 VapourSynth 运行时与 Av1an 不兼容或安装损坏，请重装 VapourSynth（并确认 vspipe 可正常运行）后重试。");
         }
 
         if (!string.IsNullOrWhiteSpace(merged))
         {
-            return $"Av1an 预检失败（退出码 {exitCode}）：{merged}";
+            return T(language, $"Av1an preflight failed (exit code {exitCode}): {merged}", $"Av1an 预检失败（退出码 {exitCode}）：{merged}");
         }
 
-        return $"Av1an 预检失败，退出码 {exitCode}。";
+        return T(language, $"Av1an preflight failed (exit code {exitCode}).", $"Av1an 预检失败，退出码 {exitCode}。");
     }
+
+    private AppLanguage GetLanguage() => _settingsService.Load().Language;
+
+    private static string T(AppLanguage language, string en, string zh) =>
+        language == AppLanguage.English ? en : zh;
 }

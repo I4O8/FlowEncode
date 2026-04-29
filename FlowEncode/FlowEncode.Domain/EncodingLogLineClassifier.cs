@@ -27,7 +27,7 @@ public static class EncodingLogLineClassifier
         System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     private static readonly System.Text.RegularExpressions.Regex SvtStatusTickerRegex = new(
-        @"^Encoding:\s*\d+\s*\/\s*\d+\s+Frames?\b.*\bfps\b.*\bkbps\b",
+        @"^Encoding:\s*\d+\s*\/\s*\d+\s+Frames?\b.*\bfps\b.*\bkb(?:\/s|ps)\b",
         System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
     private static readonly System.Text.RegularExpressions.Regex SvtOutputFrameRegex = new(
@@ -36,7 +36,7 @@ public static class EncodingLogLineClassifier
 
     public static bool IsTransientProgressLine(EncoderKind kind, string? line)
     {
-        var normalized = line?.Trim();
+        var normalized = EncoderConsoleLineNormalizer.Normalize(line);
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return false;
@@ -68,6 +68,14 @@ public static class EncodingLogLineClassifier
     private static bool LooksLikeSvtProgress(string line)
     {
         if (string.Equals(line, "Encoding", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (line.StartsWith("Encoding:", StringComparison.OrdinalIgnoreCase)
+            && line.Contains("fps", StringComparison.OrdinalIgnoreCase)
+            && (line.Contains("kb/s", StringComparison.OrdinalIgnoreCase)
+                || line.Contains("kbps", StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }

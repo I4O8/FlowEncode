@@ -297,36 +297,56 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
         Action<string>? lineHandler,
         CancellationToken cancellationToken)
     {
+        var buffer = new char[512];
+        var segmentBuilder = new StringBuilder();
+
         while (true)
         {
-            string? line;
-            try
-            {
-                line = await reader.ReadLineAsync(cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            cancellationToken.ThrowIfCancellationRequested();
+            var read = await reader.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (read == 0)
             {
                 break;
             }
 
-            if (line is null)
+            for (var index = 0; index < read; index++)
             {
-                break;
-            }
+                var character = buffer[index];
+                if (character is '\r' or '\n')
+                {
+                    FlushConsoleSegment(segmentBuilder, sink, lineHandler);
+                    continue;
+                }
 
-            var normalized = line.TrimEnd();
-            if (string.IsNullOrWhiteSpace(normalized))
-            {
-                continue;
+                if (!char.IsControl(character) || character == '\t')
+                {
+                    segmentBuilder.Append(character);
+                }
             }
-
-            if (sink is not null)
-            {
-                sink.AppendLine(normalized);
-            }
-
-            lineHandler?.Invoke(normalized);
         }
+
+        FlushConsoleSegment(segmentBuilder, sink, lineHandler);
+    }
+
+    private static void FlushConsoleSegment(
+        StringBuilder segmentBuilder,
+        StringBuilder? sink,
+        Action<string>? lineHandler)
+    {
+        if (segmentBuilder.Length == 0)
+        {
+            return;
+        }
+
+        var normalized = ConsoleOutputLineNormalizer.Normalize(segmentBuilder.ToString());
+        segmentBuilder.Clear();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        sink?.AppendLine(normalized);
+        lineHandler?.Invoke(normalized);
     }
 
     private static void TryKillProcess(Process? process)

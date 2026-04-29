@@ -515,7 +515,7 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
 
         foreach (var line in normalizedMessage.Split('\n'))
         {
-            var trimmedLine = line.TrimEnd();
+            var trimmedLine = ConsoleOutputLineNormalizer.Normalize(line);
             if (string.IsNullOrWhiteSpace(trimmedLine))
             {
                 continue;

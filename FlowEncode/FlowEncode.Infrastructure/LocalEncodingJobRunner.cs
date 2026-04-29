@@ -11,6 +11,9 @@ namespace FlowEncode.Infrastructure;
 public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 {
     private const string TempWorkspaceFolderName = ".flowencode-temp";
+    private const int MaxVisibleLogLength = 200_000;
+    private const int RetainedVisibleLogLength = 120_000;
+    private const string VisibleLogTruncationMarker = "[Log truncated; only latest output is kept]";
     private static readonly char[] ForbiddenCmdCharacters = ['&', '|', '<', '>', '^', '%'];
     private static readonly TimeSpan TransientProgressReportInterval = TimeSpan.FromMilliseconds(125);
     private static readonly Regex X26xProgressRegex = new(@"(?<progress>\d{1,3}(?:\.\d+)?)\s*%", RegexOptions.Compiled);
@@ -28,11 +31,23 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private static readonly Regex X26xBracketedSizeRegex = new(@"\[(?<size>\d+(?:\.\d+)?)\s*(?<unit>[KMGTP]?B)\]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SvtFrameRegex = new(@"Encoding\s+frame\s+(?<frame>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SvtOutputRegex = new(@"Output\s+(?<frame>\d+)\s+frames", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex SvtStatusMetricsRegex = new(
-        @"^Encoding:\s*(?<current>\d+)\s*\/\s*(?<total>\d+)\s+Frames?\s+@\s*(?<fps>\d+(?:\.\d+)?)\s+fps\s*\|\s*(?<bitrate>\d+(?:\.\d+)?)\s+kbps\s*\|\s*Time:\s*(?<elapsed>-?\d+:\d{2}:\d{2})(?:\s*\[(?<eta>-?\d+:\d{2}:\d{2})\])?\s*\|\s*Size:\s*(?<currentsize>\d+(?:\.\d+)?)\s*(?<currentunit>[KMGTP]?B)(?:\s*\[(?<size>\d+(?:\.\d+)?)\s*(?<unit>[KMGTP]?B)\])?\s*$",
+    private static readonly Regex SvtStatusPrefixRegex = new(
+        @"^Encoding:\s*(?<current>\d+)\s*\/\s*(?<total>\d+)\s+Frames?\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex SvtStatusFpsRegex = new(
+        @"@\s*(?<fps>\d+(?:\.\d+)?)\s+fps\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex SvtStatusBitrateRegex = new(
+        @"\|\s*(?<bitrate>\d+(?:\.\d+)?)\s+kb(?:\/s|ps)\b",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex SvtStatusTimeRegex = new(
+        @"Time:\s*(?<elapsed>-?\d+:\d{2}:\d{2})(?:\s*\[(?<eta>-?\d+:\d{2}:\d{2})\])?",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex SvtStatusSizeRegex = new(
+        @"Size:\s*(?<currentsize>\d+(?:\.\d+)?)\s*(?<currentunit>[KMGTP]?B)(?:\s*\[(?<size>\d+(?:\.\d+)?)\s*(?<unit>[KMGTP]?B)\])?",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SvtLooseMetricsRegex = new(
-        @"^Encoding:\s*(?<current>\d+)\s*\/\s*(?<total>\d+)\s+Frames?\b.*?(?<fps>\d+(?:\.\d+)?)\s+fps\b.*?(?<bitrate>\d+(?:\.\d+)?)\s+kbps\b",
+        @"^Encoding:\s*(?<current>\d+)\s*\/\s*(?<total>\d+)\s+Frames?\b.*?(?<fps>\d+(?:\.\d+)?)\s+fps\b.*?(?<bitrate>\d+(?:\.\d+)?)\s+kb(?:\/s|ps)\b",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SvtMetricsRegex = new(@"Encoding\s+frame\s+(?<current>\d+)\s+(?<bitrate>\d+(?:\.\d+)?)\s+kbps\s+(?<fps>\d+(?:\.\d+)?)\s+fps", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex CommandLineTokenRegex = new("\"([^\"]*)\"|'([^']*)'|(\\S+)", RegexOptions.Compiled);
@@ -73,11 +88,12 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         IProgress<EncodingJobProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        var language = GetLanguage();
         var encoderPath = ResolveEncoderPath(request);
         var plan = BuildPlan(request, encoderPath, includeSourceMetadata: true);
         var visibleLogBuilder = new StringBuilder();
         var currentState = EncodingJobState.Running;
-        var progressDispatchState = new ProgressDispatchState(DateTimeOffset.UtcNow, 0.0, 0);
+        var progressDispatchState = new ProgressDispatchState(DateTimeOffset.UtcNow, 0.0, 0, string.Empty);
         var outputDirectory = Path.GetDirectoryName(request.OutputPath);
         var rawLogPath = CreateTemporaryRawLogPath(request);
         var lineGate = new object();
@@ -118,7 +134,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             request.JobId,
             EncodingJobState.Running,
             0.0,
-            "编码已启动",
+            BuildStageStartingSummary(language, plan.Steps[0]),
             plan.DisplayCommand,
             BuildInitialSnapshot(plan)));
 
@@ -133,8 +149,8 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     request.JobId,
                     EncodingJobState.Running,
                     BuildStageStartingProgress(step),
-                    BuildStageStartingSummary(step),
-                    BuildStageStartingDetail(step),
+                    BuildStageStartingSummary(language, step),
+                    BuildStageStartingDetail(language, step),
                     BuildStageStartingSnapshot(plan, step)));
 
                 using var process = CreateProcess(step, encoderPath);
@@ -146,7 +162,8 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
                 void HandleLine(string line)
                 {
-                    if (string.IsNullOrWhiteSpace(line))
+                    var normalizedLine = EncoderConsoleLineNormalizer.Normalize(line);
+                    if (string.IsNullOrWhiteSpace(normalizedLine))
                     {
                         return;
                     }
@@ -155,16 +172,17 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
                     lock (lineGate)
                     {
-                        rawLogWriter.WriteLine(line);
+                        rawLogWriter.WriteLine(normalizedLine);
 
-                        if (!EncodingLogLineClassifier.IsTransientProgressLine(plan.Kind, line))
+                        if (!EncodingLogLineClassifier.IsTransientProgressLine(plan.Kind, normalizedLine))
                         {
-                            visibleLogBuilder.AppendLine(line);
+                            visibleLogBuilder.AppendLine(normalizedLine);
+                            TrimVisibleLogIfNeeded(visibleLogBuilder);
                         }
 
-                        var progressSnapshot = ParseProgressSnapshot(plan.Kind, plan.TotalFrames, plan.SourceFramesPerSecond, line);
+                        var progressSnapshot = ParseProgressSnapshot(plan.Kind, plan.TotalFrames, plan.SourceFramesPerSecond, normalizedLine);
                         var stageAwareProgress = ApplyStageProgress(progressSnapshot, step);
-                        if (!ShouldReportProgress(plan.Kind, line, stageAwareProgress, ref progressDispatchState))
+                        if (!ShouldReportProgress(plan.Kind, normalizedLine, stageAwareProgress, ref progressDispatchState))
                         {
                             return;
                         }
@@ -173,8 +191,8 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                             request.JobId,
                             currentState,
                             stageAwareProgress?.ProgressFraction,
-                            BuildRunningSummary(step, stageAwareProgress?.ProgressFraction),
-                            line,
+                            BuildRunningSummary(language, step, stageAwareProgress?.ProgressFraction),
+                            normalizedLine,
                             stageAwareProgress?.Snapshot);
                     }
 
@@ -199,8 +217,8 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 {
                     currentState = EncodingJobState.Failed;
                     var failedSummary = step.StageCount > 1
-                        ? $"第 {step.StageIndex}/{step.StageCount} 遍失败，退出代码 {process.ExitCode}"
-                        : $"编码失败，退出代码 {process.ExitCode}";
+                        ? T(language, $"Pass {step.StageIndex}/{step.StageCount} failed (exit code {process.ExitCode})", $"第 {step.StageIndex}/{step.StageCount} 遍失败，退出代码 {process.ExitCode}")
+                        : T(language, $"Encoding failed (exit code {process.ExitCode})", $"编码失败，退出代码 {process.ExitCode}");
                     var failedVisibleLog = visibleLogBuilder.ToString();
                     await CloseRawLogWriterAsync();
                     var failedSidecarLogPath = await WriteSidecarLogAsync(request, plan.DisplayCommand, currentState, process.ExitCode, rawLogPath);
@@ -223,7 +241,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             }
 
             currentState = EncodingJobState.Completed;
-            var summary = "编码完成";
+            var summary = T(language, "Encoding completed", "编码完成");
             var visibleLog = visibleLogBuilder.ToString();
             await CloseRawLogWriterAsync();
             var sidecarLogPath = await WriteSidecarLogAsync(request, plan.DisplayCommand, currentState, 0, rawLogPath);
@@ -263,8 +281,8 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 request.JobId,
                 currentState,
                 null,
-                "编码已取消",
-                "作业已被用户取消。"));
+                T(language, "Encoding cancelled", "编码已取消"),
+                T(language, "The job was cancelled by the user.", "作业已被用户取消。")));
 
             var cancelledLog = visibleLogBuilder.ToString();
 
@@ -278,7 +296,13 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
             await CloseRawLogWriterAsync();
             var cancelledLogPath = await WriteSidecarLogAsync(request, plan.DisplayCommand, currentState, -1, rawLogPath);
-            return new EncodingJobResult(request.JobId, currentState, -1, "编码已取消", cancelledLog, cancelledLogPath);
+            return new EncodingJobResult(
+                request.JobId,
+                currentState,
+                -1,
+                T(language, "Encoding cancelled", "编码已取消"),
+                cancelledLog,
+                cancelledLogPath);
         }
         finally
         {
@@ -309,7 +333,10 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             return resolved.ExecutablePath;
         }
 
-        throw new FileNotFoundException($"未找到 {request.Profile.Kind.ToDisplayName()} 可执行文件。请先在工具链页面导入或自动更新编码器。");
+        throw new FileNotFoundException(T(
+            GetLanguage(),
+            $"No usable {request.Profile.Kind.ToDisplayName()} executable was found. Import it or update it from the toolchain page first.",
+            $"未找到 {request.Profile.Kind.ToDisplayName()} 可执行文件。请先在工具链页面导入或自动更新编码器。"));
     }
 
     private EncodingExecutionPlan BuildPlan(
@@ -319,7 +346,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     {
         var profile = request.Profile;
         var pipelineKind = ResolvePipelineKind(request);
-        ValidateShellPipelineArguments(request, pipelineKind);
+        ValidateShellPipelineArguments(request, pipelineKind, GetLanguage());
         var sourceInfo = includeSourceMetadata || profile.Kind == EncoderKind.SvtAv1
             ? ResolveSourceInfo(
                 request,
@@ -336,7 +363,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             InputPipelineKind.FfmpegPipe => $"{Quote(_toolLocator.ResolveFfmpeg())} -hide_banner -loglevel error -i {Quote(request.SourcePath)} -map 0:v:0 -an -sn -dn -strict -1 -f yuv4mpegpipe -",
             InputPipelineKind.RawYuvFile => string.Empty,
             InputPipelineKind.Y4mFile => string.Empty,
-            _ => throw new InvalidOperationException("当前输入模式不支持管道执行。")
+            _ => throw new InvalidOperationException(T(GetLanguage(), "The current input mode does not support pipe execution.", "当前输入模式不支持管道执行。"))
         };
 
         var statsPath = profile.RateControl == RateControlMode.TwoPass
@@ -472,7 +499,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         string statsPath)
     {
         var resolvedSourceInfo = sourceInfo
-            ?? throw new InvalidOperationException("SVT-AV1 两遍编码需要可探测的源信息。");
+            ?? throw new InvalidOperationException("SVT-AV1 two-pass encoding requires detectable source metadata.");
 
         var pass1Command = BuildEncoderCommand(
             request,
@@ -722,7 +749,10 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
         if (required)
         {
-            throw new InvalidOperationException("SVT-AV1 需要可探测的源信息。请确保当前输入可被 ffprobe / vspipe 正常识别。");
+            throw new InvalidOperationException(T(
+                GetLanguage(),
+                "SVT-AV1 requires detectable source metadata. Make sure the current input can be recognized by ffprobe or vspipe.",
+                "SVT-AV1 需要可探测的源信息。请确保当前输入可被 ffprobe / vspipe 正常识别。"));
         }
 
         return null;
@@ -1085,13 +1115,21 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
         if (!isTransient)
         {
-            state = new ProgressDispatchState(now, currentProgressFraction, currentFrame);
+            state = new ProgressDispatchState(now, currentProgressFraction, currentFrame, line);
             return true;
         }
 
         if (progressSnapshot is null)
         {
-            return false;
+            var intervalElapsedWithoutSnapshot = now - state.LastReportedAt >= TransientProgressReportInterval;
+            var lineChanged = !string.Equals(line, state.LastReportedLine, StringComparison.Ordinal);
+            if (!intervalElapsedWithoutSnapshot || !lineChanged)
+            {
+                return false;
+            }
+
+            state = new ProgressDispatchState(now, state.LastProgressFraction, state.LastCurrentFrame, line);
+            return true;
         }
 
         var intervalElapsed = now - state.LastReportedAt >= TransientProgressReportInterval;
@@ -1110,7 +1148,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             return false;
         }
 
-        state = new ProgressDispatchState(now, currentProgressFraction, currentFrame);
+        state = new ProgressDispatchState(now, currentProgressFraction, currentFrame, line);
         return true;
     }
 
@@ -1120,9 +1158,15 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         double? sourceFramesPerSecond,
         string line)
     {
+        var normalizedLine = EncoderConsoleLineNormalizer.Normalize(line);
+        if (string.IsNullOrWhiteSpace(normalizedLine))
+        {
+            return null;
+        }
+
         if (kind is EncoderKind.X264 or EncoderKind.X265)
         {
-            var normalizedX26xLine = NormalizeX26xProgressPrefix(line);
+            var normalizedX26xLine = NormalizeX26xProgressPrefix(normalizedLine);
 
             var x265PipeMetricsMatch = X265PipeMetricsRegex.Match(normalizedX26xLine);
             if (x265PipeMetricsMatch.Success)
@@ -1238,21 +1282,23 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
         if (kind == EncoderKind.SvtAv1)
         {
-            var statusMetricsMatch = SvtStatusMetricsRegex.Match(line);
-            if (statusMetricsMatch.Success)
+            var statusPrefixMatch = SvtStatusPrefixRegex.Match(normalizedLine);
+            if (statusPrefixMatch.Success)
             {
-                var currentFrame = ParseInvariantLong(statusMetricsMatch.Groups["current"].Value);
-                var parsedTotalFrames = ParseInvariantLong(statusMetricsMatch.Groups["total"].Value) ?? totalFrames;
-                var fps = ParseInvariantDoubleNullable(statusMetricsMatch.Groups["fps"].Value);
-                var bitrate = ParseInvariantDoubleNullable(statusMetricsMatch.Groups["bitrate"].Value);
+                var currentFrame = ParseInvariantLong(statusPrefixMatch.Groups["current"].Value);
+                var parsedTotalFrames = ParseInvariantLong(statusPrefixMatch.Groups["total"].Value) ?? totalFrames;
+                var fps = ParseInvariantDoubleNullable(SvtStatusFpsRegex.Match(normalizedLine).Groups["fps"].Value);
+                var bitrate = ParseInvariantDoubleNullable(SvtStatusBitrateRegex.Match(normalizedLine).Groups["bitrate"].Value);
                 var progressFraction = TryBuildProgressFraction(null, currentFrame, parsedTotalFrames);
-                var eta = ParseEta(statusMetricsMatch.Groups["eta"].Value)
+                var statusTimeMatch = SvtStatusTimeRegex.Match(normalizedLine);
+                var eta = ParseEta(statusTimeMatch.Groups["eta"].Value)
                     ?? (currentFrame.HasValue && parsedTotalFrames is > 0 && fps is > 0
                         ? (TimeSpan?)TimeSpan.FromSeconds(Math.Max(0, (parsedTotalFrames.Value - currentFrame.Value) / fps.Value))
                         : null);
+                var statusSizeMatch = SvtStatusSizeRegex.Match(normalizedLine);
                 var estimatedSizeBytes =
-                    ParseSizeToBytes(statusMetricsMatch.Groups["size"].Value, statusMetricsMatch.Groups["unit"].Value)
-                    ?? ParseSizeToBytes(statusMetricsMatch.Groups["currentsize"].Value, statusMetricsMatch.Groups["currentunit"].Value)
+                    ParseSizeToBytes(statusSizeMatch.Groups["size"].Value, statusSizeMatch.Groups["unit"].Value)
+                    ?? ParseSizeToBytes(statusSizeMatch.Groups["currentsize"].Value, statusSizeMatch.Groups["currentunit"].Value)
                     ?? (parsedTotalFrames is > 0 && sourceFramesPerSecond is > 0 && bitrate is > 0
                         ? (long?)EstimateFileSizeBytes(parsedTotalFrames.Value, sourceFramesPerSecond.Value, bitrate.Value)
                         : null);
@@ -1262,7 +1308,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     new EncodingProgressSnapshot(currentFrame, parsedTotalFrames, fps, bitrate, eta, estimatedSizeBytes));
             }
 
-            var looseMetricsMatch = SvtLooseMetricsRegex.Match(line);
+            var looseMetricsMatch = SvtLooseMetricsRegex.Match(normalizedLine);
             if (looseMetricsMatch.Success)
             {
                 var currentFrame = ParseInvariantLong(looseMetricsMatch.Groups["current"].Value);
@@ -1282,7 +1328,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     new EncodingProgressSnapshot(currentFrame, parsedTotalFrames, fps, bitrate, eta, estimatedSizeBytes));
             }
 
-            var metricsMatch = SvtMetricsRegex.Match(line);
+            var metricsMatch = SvtMetricsRegex.Match(normalizedLine);
             if (metricsMatch.Success)
             {
                 var currentFrame = ParseInvariantLong(metricsMatch.Groups["current"].Value);
@@ -1301,10 +1347,10 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     new EncodingProgressSnapshot(currentFrame, totalFrames, fps, bitrate, eta, estimatedSizeBytes));
             }
 
-            var match = SvtFrameRegex.Match(line);
+            var match = SvtFrameRegex.Match(normalizedLine);
             if (!match.Success)
             {
-                match = SvtOutputRegex.Match(line);
+                match = SvtOutputRegex.Match(normalizedLine);
             }
 
             if (match.Success
@@ -1318,6 +1364,18 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         }
 
         return null;
+    }
+
+    internal static (double? ProgressFraction, EncodingProgressSnapshot? Snapshot) ParseProgressSnapshotForTesting(
+        EncoderKind kind,
+        long? totalFrames,
+        double? sourceFramesPerSecond,
+        string line)
+    {
+        var snapshot = ParseProgressSnapshot(kind, totalFrames, sourceFramesPerSecond, line);
+        return snapshot is null
+            ? (null, null)
+            : (snapshot.ProgressFraction, snapshot.Snapshot);
     }
 
     private static ParsedProgressSnapshot? TryParseLooseX26xMetrics(
@@ -1617,28 +1675,30 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             : Math.Clamp((step.StageIndex - 1) / (double)step.StageCount, 0.0, 1.0);
     }
 
-    private static string BuildStageStartingSummary(EncodingExecutionStep step)
+    private static string BuildStageStartingSummary(AppLanguage language, EncodingExecutionStep step)
     {
         return step.StageCount > 1
-            ? $"开始第 {step.StageIndex}/{step.StageCount} 遍"
-            : "编码已启动";
+            ? T(language, $"Starting pass {step.StageIndex}/{step.StageCount}", $"开始第 {step.StageIndex}/{step.StageCount} 遍")
+            : T(language, "Encoding started", "编码已启动");
     }
 
-    private static string BuildRunningSummary(EncodingExecutionStep step, double? progressFraction)
+    private static string BuildRunningSummary(AppLanguage language, EncodingExecutionStep step, double? progressFraction)
     {
         if (step.StageCount > 1)
         {
-            return $"第 {step.StageIndex}/{step.StageCount} 遍编码中";
+            return T(language, $"Pass {step.StageIndex}/{step.StageCount} running", $"第 {step.StageIndex}/{step.StageCount} 遍编码中");
         }
 
-        return progressFraction is { } progressValue ? $"编码中 {progressValue:P0}" : "编码中";
+        return progressFraction is { } progressValue
+            ? T(language, $"Encoding {progressValue:P0}", $"编码中 {progressValue:P0}")
+            : T(language, "Encoding", "编码中");
     }
 
-    private static string BuildStageStartingDetail(EncodingExecutionStep step)
+    private static string BuildStageStartingDetail(AppLanguage language, EncodingExecutionStep step)
     {
         return step.StageCount > 1
-            ? $"开始执行第 {step.StageIndex}/{step.StageCount} 遍。"
-            : "开始执行编码任务。";
+            ? T(language, $"Starting pass {step.StageIndex}/{step.StageCount}.", $"开始执行第 {step.StageIndex}/{step.StageCount} 遍。")
+            : T(language, "Starting the encoding job.", "开始执行编码任务。");
     }
 
     private static EncodingProgressSnapshot? BuildStageStartingSnapshot(EncodingExecutionPlan plan, EncodingExecutionStep step)
@@ -1678,6 +1738,33 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         }
 
         builder.AppendLine(line);
+        TrimVisibleLogIfNeeded(builder);
+    }
+
+    private static void TrimVisibleLogIfNeeded(StringBuilder builder)
+    {
+        if (builder.Length <= MaxVisibleLogLength)
+        {
+            return;
+        }
+
+        var removeCount = Math.Max(0, builder.Length - RetainedVisibleLogLength);
+        if (removeCount > 0)
+        {
+            builder.Remove(0, removeCount);
+        }
+
+        var retainedText = builder.ToString();
+        var firstLineBreak = retainedText.IndexOfAny(['\r', '\n']);
+        if (firstLineBreak >= 0 && firstLineBreak + 1 < builder.Length)
+        {
+            builder.Remove(0, firstLineBreak + 1);
+        }
+
+        if (!builder.ToString().StartsWith(VisibleLogTruncationMarker, StringComparison.Ordinal))
+        {
+            builder.Insert(0, $"{VisibleLogTruncationMarker}{Environment.NewLine}");
+        }
     }
 
     private string CreateTemporaryRawLogPath(EncodingJobRequest request)
@@ -1748,6 +1835,8 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private static void CleanupJobTempDirectory(EncodingJobRequest request)
     {
         var jobTempDirectory = GetJobTempDirectory(request);
+        TryDeleteDirectoryIfEmpty(Path.Combine(jobTempDirectory, "logs"));
+        TryDeleteDirectoryIfEmpty(Path.Combine(jobTempDirectory, "multipass"));
         TryDeleteDirectoryIfEmpty(jobTempDirectory);
 
         var rootDirectory = Path.GetDirectoryName(jobTempDirectory);
@@ -1793,22 +1882,28 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return InputSourceSupport.ResolvePipelineKind(request.SourcePath);
     }
 
-    private static void ValidateShellPipelineArguments(EncodingJobRequest request, InputPipelineKind pipelineKind)
+    private static void ValidateShellPipelineArguments(EncodingJobRequest request, InputPipelineKind pipelineKind, AppLanguage language)
     {
         if (pipelineKind is InputPipelineKind.Y4mFile or InputPipelineKind.RawYuvFile)
         {
             return;
         }
 
-        ThrowIfContainsForbiddenShellCharacters(request.Profile.AdditionalArguments, "自定义压制参数");
+        ThrowIfContainsForbiddenShellCharacters(
+            request.Profile.AdditionalArguments,
+            T(language, "Custom encode arguments", "自定义压制参数"),
+            language);
 
         if (request.Profile.Kind == EncoderKind.X265)
         {
-            ThrowIfContainsForbiddenShellCharacters(request.Profile.UhdParameters, "x265 UHD / HDR 附加参数");
+            ThrowIfContainsForbiddenShellCharacters(
+                request.Profile.UhdParameters,
+                T(language, "x265 UHD / HDR extra arguments", "x265 UHD / HDR 附加参数"),
+                language);
         }
     }
 
-    private static void ThrowIfContainsForbiddenShellCharacters(string? value, string parameterName)
+    private static void ThrowIfContainsForbiddenShellCharacters(string? value, string parameterName, AppLanguage language)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -1819,7 +1914,10 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             || value.Contains('\r')
             || value.Contains('\n'))
         {
-            throw new InvalidOperationException($"{parameterName} 中包含不受支持的命令行控制字符。为避免命令注入风险，自动编码仅允许普通参数文本。请移除 & | < > ^ % 和换行后重试。");
+            throw new InvalidOperationException(T(
+                language,
+                $"{parameterName} contains unsupported shell control characters. To reduce command-injection risk, only plain argument text is allowed. Remove &, |, <, >, ^, %, and line breaks, then try again.",
+                $"{parameterName} 中包含不受支持的命令行控制字符。为避免命令注入风险，自动编码仅允许普通参数文本。请移除 & | < > ^ % 和换行后重试。"));
         }
     }
 
@@ -1883,6 +1981,11 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return value.ToString("0.0##", CultureInfo.InvariantCulture);
     }
 
+    private AppLanguage GetLanguage() => _settingsService.Load().Language;
+
+    private static string T(AppLanguage language, string en, string zh) =>
+        language == AppLanguage.English ? en : zh;
+
     private sealed record ParsedProgressSnapshot(
         double? ProgressFraction,
         EncodingProgressSnapshot? Snapshot);
@@ -1890,5 +1993,6 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private sealed record ProgressDispatchState(
         DateTimeOffset LastReportedAt,
         double? LastProgressFraction,
-        long? LastCurrentFrame);
+        long? LastCurrentFrame,
+        string LastReportedLine);
 }

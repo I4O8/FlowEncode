@@ -12,11 +12,9 @@ namespace FlowEncode.Infrastructure;
 
 public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 {
-    private static readonly Regex AnsiEscapeRegex = new(@"\x1B\[[0-?]*[ -/]*[@-~]", RegexOptions.Compiled);
     private static readonly Regex DeewStageProgressRegex = new(@"Stage progress:\s*(?<value>\d{1,3}(?:\.\d+)?)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex DeewDisplayProgressRegex = new(@"\[\s*(?<stage>DEE:[^\]]+)\]\s*[- ]*(?<value>\d{1,3}(?:\.\d+)?)\s*%", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex Eac3ToProcessProgressRegex = new(@"^\s*process:\s*(?<value>\d{1,3}(?:\.\d+)?)\s*%", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex OpusEncDisplayProgressRegex = new(@"^\[[\|/\\\- ]\]\s+\d{2}:\d{2}:\d{2}\.\d{2}\b", RegexOptions.Compiled);
     private static readonly Regex Eac3ToAdditionalPassNeededRegex = new(@"(?<pass>\d+)(?:st|nd|rd|th)\s+pass\s+will\s+be\s+necessary", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex Eac3ToStartingPassRegex = new(@"Starting\s+(?<pass>\d+)(?:st|nd|rd|th)\s+pass", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex FfmpegOutTimeRegex = new(@"^\s*out_time=(?<value>\d{1,}:\d{2}:\d{2}\.\d+)\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -26,14 +24,14 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
     private static readonly TimeSpan ProgressReportInterval = TimeSpan.FromMilliseconds(750);
     private static readonly TimeSpan ProgressFilePollInterval = TimeSpan.FromMilliseconds(200);
     private const double SignificantProgressDelta = 0.01;
-    private const string DeewWarmupDisplayLine = "ffmpeg 处理中，请稍后...";
-
     private readonly IToolProbeService _toolProbeService;
+    private readonly IAppSettingsService _settingsService;
     private readonly ConcurrentDictionary<Guid, ActiveExecution> _activeExecutions = new();
 
-    public CliAudioProcessingRunner(IToolProbeService toolProbeService)
+    public CliAudioProcessingRunner(IToolProbeService toolProbeService, IAppSettingsService settingsService)
     {
         _toolProbeService = toolProbeService;
+        _settingsService = settingsService;
     }
 
     public string BuildDisplayCommand(AudioProcessingRequest request)
@@ -60,9 +58,10 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         IProgress<AudioProcessingProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        var language = GetLanguage();
         if (!File.Exists(request.SourcePath))
         {
-            throw new FileNotFoundException("未找到音频输入文件。", request.SourcePath);
+            throw new FileNotFoundException(T(language, "Audio source file was not found.", "未找到音频输入文件。"), request.SourcePath);
         }
 
         return request.Mode switch
@@ -244,6 +243,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         Func<Action<string>, CancellationToken, Task<ProcessExecutionResult>> executeAsync,
         CancellationToken cancellationToken)
     {
+        var language = GetLanguage();
         var request = runPlan.DisplayRequest;
         var outputDirectory = Path.GetDirectoryName(runPlan.ExecutionRequest.OutputPath);
         if (!string.IsNullOrWhiteSpace(outputDirectory))
@@ -326,7 +326,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                             request.JobId,
                             EncodingJobState.Running,
                             hasKnownProgress ? lastProgress : null,
-                            BuildRunningSummary(request.Mode, lastProgress, hasKnownProgress, lastReportedLine, phaseLabel),
+                            BuildRunningSummary(language, request.Mode, lastProgress, hasKnownProgress, lastReportedLine, phaseLabel),
                             lastReportedDetailLine,
                             telemetry,
                             phaseLabel);
@@ -347,7 +347,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                             request.JobId,
                             EncodingJobState.Running,
                             hasKnownProgress ? lastProgress : null,
-                            BuildRunningSummary(request.Mode, lastProgress, hasKnownProgress, lastReportedLine, phaseLabel),
+                            BuildRunningSummary(language, request.Mode, lastProgress, hasKnownProgress, lastReportedLine, phaseLabel),
                             lastReportedDetailLine,
                             null,
                             phaseLabel);
@@ -394,7 +394,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                     request.JobId,
                     EncodingJobState.Running,
                     hasKnownProgress ? lastProgress : null,
-                    BuildRunningSummary(request.Mode, lastProgress, hasKnownProgress, line, phaseLabel),
+                    BuildRunningSummary(language, request.Mode, lastProgress, hasKnownProgress, line, phaseLabel),
                     detailLine,
                     telemetry,
                     phaseLabel);
@@ -410,8 +410,8 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             request.JobId,
             EncodingJobState.Running,
             null,
-            BuildStartingSummary(request.Mode),
-            BuildStartingDetail(request.Mode),
+            BuildStartingSummary(language, request.Mode),
+            BuildStartingDetail(language, request.Mode),
             null,
             eac3ToProgressState?.PhaseLabel));
 
@@ -428,7 +428,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                     request.JobId,
                     EncodingJobState.Completed,
                     1.0,
-                    BuildCompletedSummary(request.Mode),
+                    BuildCompletedSummary(language, request.Mode),
                     LastMeaningfulLine(log),
                     null,
                     eac3ToProgressState?.PhaseLabel));
@@ -437,7 +437,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                     request.JobId,
                     EncodingJobState.Completed,
                     0,
-                    BuildCompletedSummary(request.Mode),
+                    BuildCompletedSummary(language, request.Mode),
                     log,
                     displayCommand);
             }
@@ -445,8 +445,8 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             DeletePartialOutputFile(runPlan);
 
             var failureSummary = string.IsNullOrWhiteSpace(executionResult.ExitCodeDetail)
-                ? $"{BuildFailureSummary(request.Mode)}，退出代码 {executionResult.ExitCode}"
-                : $"{BuildFailureSummary(request.Mode)}，{executionResult.ExitCodeDetail}";
+                ? T(language, $"{BuildFailureSummary(language, request.Mode)} (exit code {executionResult.ExitCode})", $"{BuildFailureSummary(language, request.Mode)}，退出代码 {executionResult.ExitCode}")
+                : T(language, $"{BuildFailureSummary(language, request.Mode)}: {executionResult.ExitCodeDetail}", $"{BuildFailureSummary(language, request.Mode)}，{executionResult.ExitCodeDetail}");
             progress?.Report(new AudioProcessingProgress(
                 request.JobId,
                 EncodingJobState.Failed,
@@ -472,7 +472,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                 request.JobId,
                 EncodingJobState.Cancelled,
                 -1,
-                BuildCancelledSummary(request.Mode),
+                BuildCancelledSummary(language, request.Mode),
                 logBuilder.ToString(),
                 displayCommand);
         }
@@ -871,7 +871,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
     private static int GetRequiredOpusBitrateKbps(AudioProcessingRequest request)
     {
         return request.OpusBitrateKbps
-            ?? throw new InvalidOperationException("未指定 Opus 码率。");
+            ?? throw new InvalidOperationException("Opus bitrate is not specified.");
     }
 
     private static bool ShouldUseFfmpegLibOpusMappingFamily1(AudioProcessingRequest request)
@@ -1052,7 +1052,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         }
 
         throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.FailureReason)
-            ? $"未找到可用的 {kind.ToDisplayName()}。"
+            ? T(GetLanguage(), $"No usable {kind.ToDisplayName()} was found.", $"未找到可用的 {kind.ToDisplayName()}。")
             : result.FailureReason);
     }
 
@@ -1155,7 +1155,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             return (reachedReportWindow || progressAdvancedEnough) && (lineChanged || progressAdvancedEnough);
         }
 
-        if (LooksLikeDeewConsoleProgressLine(line))
+        if (ToolLogLineClassifier.LooksLikeDeewConsoleProgressLine(line))
         {
             return false;
         }
@@ -1188,9 +1188,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
         return mode switch
         {
-            AudioProcessingMode.Eac3To => !line.StartsWith("process:", StringComparison.OrdinalIgnoreCase),
-            AudioProcessingMode.Opus => !line.StartsWith("process:", StringComparison.OrdinalIgnoreCase)
-                && !LooksLikeOpusCliProgressLine(line),
+            AudioProcessingMode.Eac3To or AudioProcessingMode.Opus => !ToolLogLineClassifier.IsAudioTransientLine(mode, line),
             _ => false
         };
     }
@@ -1207,14 +1205,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             return false;
         }
 
-        if (mode == AudioProcessingMode.Eac3To
-            && line.StartsWith("process:", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (mode == AudioProcessingMode.Opus
-            && (line.StartsWith("process:", StringComparison.OrdinalIgnoreCase) || LooksLikeOpusCliProgressLine(line)))
+        if (ToolLogLineClassifier.IsAudioTransientLine(mode, line))
         {
             return false;
         }
@@ -1224,7 +1215,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             return false;
         }
 
-        if (mode == AudioProcessingMode.Ddp && LooksLikeDeewConsoleProgressLine(line))
+        if (mode == AudioProcessingMode.Ddp && ToolLogLineClassifier.LooksLikeDeewConsoleProgressLine(line))
         {
             return false;
         }
@@ -1233,26 +1224,14 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         return true;
     }
 
-    private static bool LooksLikeDeewConsoleProgressLine(string line)
-    {
-        return line.IndexOf('%') >= 0
-            && line.IndexOf('[') >= 0
-            && line.IndexOf(']') >= 0;
-    }
-
-    private static bool LooksLikeOpusCliProgressLine(string line)
-    {
-        return OpusEncDisplayProgressRegex.IsMatch(line);
-    }
-
-    private static string NormalizeDetailLine(AudioProcessingRequest request, string line, double? parsedProgress)
+    private string NormalizeDetailLine(AudioProcessingRequest request, string line, double? parsedProgress)
     {
         return request.Mode == AudioProcessingMode.Ddp
             ? line
             : NormalizeDisplayLine(request, line, parsedProgress);
     }
 
-    private static string NormalizeDisplayLine(AudioProcessingRequest request, string line, double? parsedProgress)
+    private string NormalizeDisplayLine(AudioProcessingRequest request, string line, double? parsedProgress)
     {
         if (request.Mode == AudioProcessingMode.Ddp)
         {
@@ -1262,7 +1241,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             }
 
             return LooksLikeDeewWarmupLine(line)
-                ? DeewWarmupDisplayLine
+                ? GetDeewWarmupDisplayLine()
                 : line;
         }
 
@@ -1647,7 +1626,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         var exitCode = ffmpegExitCode != 0 ? ffmpegExitCode : opusExitCode;
         return new ProcessExecutionResult(
             exitCode,
-            $"ffmpeg 退出代码 {ffmpegExitCode}，opusenc 退出代码 {opusExitCode}");
+            $"FFmpeg exit code {ffmpegExitCode}, opusenc exit code {opusExitCode}");
     }
 
     private static async Task PumpProgressFileAsync(Process process, string path, Action<string> onLine)
@@ -1763,25 +1742,26 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         }
     }
 
-    private static string BuildStartingSummary(AudioProcessingMode mode)
+    private static string BuildStartingSummary(AppLanguage language, AudioProcessingMode mode)
     {
         return mode switch
         {
-            AudioProcessingMode.Eac3To => "eac3to 转换已启动",
-            AudioProcessingMode.Ddp => DeewWarmupDisplayLine,
-            AudioProcessingMode.Opus => "Opus 转换已启动",
-            _ => "音频处理已启动"
+            AudioProcessingMode.Eac3To => T(language, "eac3to started", "eac3to 转换已启动"),
+            AudioProcessingMode.Ddp => GetDeewWarmupDisplayLine(language),
+            AudioProcessingMode.Opus => T(language, "Opus started", "Opus 转换已启动"),
+            _ => T(language, "Audio processing started", "音频处理已启动")
         };
     }
 
-    private static string BuildStartingDetail(AudioProcessingMode mode)
+    private static string BuildStartingDetail(AppLanguage language, AudioProcessingMode mode)
     {
         return mode == AudioProcessingMode.Ddp
-            ? DeewWarmupDisplayLine
+            ? GetDeewWarmupDisplayLine(language)
             : string.Empty;
     }
 
     private static string BuildRunningSummary(
+        AppLanguage language,
         AudioProcessingMode mode,
         double progress,
         bool hasKnownProgress,
@@ -1793,54 +1773,54 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             return mode switch
             {
                 AudioProcessingMode.Eac3To => string.IsNullOrWhiteSpace(phaseLabel)
-                    ? $"eac3to 转换中 {progress * 100:0.#}%"
-                    : $"eac3to 转换中 {phaseLabel} · {progress * 100:0.#}%",
-                AudioProcessingMode.Ddp => $"DDP 转换中 {progress * 100:0.#}%",
-                AudioProcessingMode.Opus => $"Opus 转换中 {progress * 100:0.##}%",
-                _ => $"音频处理中 {progress * 100:0.#}%"
+                    ? T(language, $"eac3to {progress * 100:0.#}%", $"eac3to 转换中 {progress * 100:0.#}%")
+                    : T(language, $"eac3to {phaseLabel} · {progress * 100:0.#}%", $"eac3to 转换中 {phaseLabel} · {progress * 100:0.#}%"),
+                AudioProcessingMode.Ddp => T(language, $"DDP {progress * 100:0.#}%", $"DDP 转换中 {progress * 100:0.#}%"),
+                AudioProcessingMode.Opus => T(language, $"Opus {progress * 100:0.##}%", $"Opus 转换中 {progress * 100:0.##}%"),
+                _ => T(language, $"Audio processing {progress * 100:0.#}%", $"音频处理中 {progress * 100:0.#}%")
             };
         }
 
         if (mode == AudioProcessingMode.Eac3To && !string.IsNullOrWhiteSpace(phaseLabel))
         {
-            return $"eac3to 转换中 {phaseLabel}";
+            return T(language, $"eac3to {phaseLabel}", $"eac3to 转换中 {phaseLabel}");
         }
 
         return string.IsNullOrWhiteSpace(line)
-            ? "音频处理中"
+            ? T(language, "Audio processing", "音频处理中")
             : line.Trim();
     }
 
-    private static string BuildCompletedSummary(AudioProcessingMode mode)
+    private static string BuildCompletedSummary(AppLanguage language, AudioProcessingMode mode)
     {
         return mode switch
         {
-            AudioProcessingMode.Eac3To => "eac3to 转换完成",
-            AudioProcessingMode.Ddp => "DDP 转换完成",
-            AudioProcessingMode.Opus => "Opus 转换完成",
-            _ => "音频处理完成"
+            AudioProcessingMode.Eac3To => T(language, "eac3to completed", "eac3to 转换完成"),
+            AudioProcessingMode.Ddp => T(language, "DDP completed", "DDP 转换完成"),
+            AudioProcessingMode.Opus => T(language, "Opus completed", "Opus 转换完成"),
+            _ => T(language, "Audio processing completed", "音频处理完成")
         };
     }
 
-    private static string BuildCancelledSummary(AudioProcessingMode mode)
+    private static string BuildCancelledSummary(AppLanguage language, AudioProcessingMode mode)
     {
         return mode switch
         {
-            AudioProcessingMode.Eac3To => "eac3to 转换已取消",
-            AudioProcessingMode.Ddp => "DDP 转换已取消",
-            AudioProcessingMode.Opus => "Opus 转换已取消",
-            _ => "音频处理已取消"
+            AudioProcessingMode.Eac3To => T(language, "eac3to cancelled", "eac3to 转换已取消"),
+            AudioProcessingMode.Ddp => T(language, "DDP cancelled", "DDP 转换已取消"),
+            AudioProcessingMode.Opus => T(language, "Opus cancelled", "Opus 转换已取消"),
+            _ => T(language, "Audio processing cancelled", "音频处理已取消")
         };
     }
 
-    private static string BuildFailureSummary(AudioProcessingMode mode)
+    private static string BuildFailureSummary(AppLanguage language, AudioProcessingMode mode)
     {
         return mode switch
         {
-            AudioProcessingMode.Eac3To => "eac3to 转换失败",
-            AudioProcessingMode.Ddp => "DDP 转换失败",
-            AudioProcessingMode.Opus => "Opus 转换失败",
-            _ => "音频处理失败"
+            AudioProcessingMode.Eac3To => T(language, "eac3to failed", "eac3to 转换失败"),
+            AudioProcessingMode.Ddp => T(language, "DDP failed", "DDP 转换失败"),
+            AudioProcessingMode.Opus => T(language, "Opus failed", "Opus 转换失败"),
+            _ => T(language, "Audio processing failed", "音频处理失败")
         };
     }
 
@@ -1851,6 +1831,16 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             .LastOrDefault(static line => !string.IsNullOrWhiteSpace(line))
             ?? string.Empty;
     }
+
+    private AppLanguage GetLanguage() => _settingsService.Load().Language;
+
+    private string GetDeewWarmupDisplayLine() => GetDeewWarmupDisplayLine(GetLanguage());
+
+    private static string GetDeewWarmupDisplayLine(AppLanguage language) =>
+        T(language, "FFmpeg is preparing the source. Please wait...", "ffmpeg 处理中，请稍后...");
+
+    private static string T(AppLanguage language, string en, string zh) =>
+        language == AppLanguage.English ? en : zh;
 
     private static string Quote(string value) => $"\"{value}\"";
 
@@ -1872,13 +1862,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
     private static string NormalizeConsoleSegment(string text)
     {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return string.Empty;
-        }
-
-        var normalized = AnsiEscapeRegex.Replace(text, string.Empty).Trim();
-        return string.IsNullOrWhiteSpace(normalized) ? string.Empty : normalized;
+        return ConsoleOutputLineNormalizer.Normalize(text);
     }
 
     private sealed class ActiveExecution : IDisposable

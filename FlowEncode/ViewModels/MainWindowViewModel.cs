@@ -115,10 +115,13 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     private Guid? _activeAutoCompressionJobId;
     private EncodingJobState? _autoCompressionDisplayState;
     private readonly StringBuilder _autoCompressionLogBuilder = new();
+    private readonly List<string> _autoCompressionLogStageLines = [];
+    private string _autoCompressionLiveLogLine = string.Empty;
     private bool _isDisposed;
     private CancellationTokenSource? _previewRefreshCancellationTokenSource;
     private int _previewRefreshVersion;
     private const int AutoCompressionLogLimit = 120_000;
+    private const int AutoCompressionStageLogLimit = 240;
 
     public MainWindowViewModel(
         IEncoderToolchainService toolchainService,
@@ -1471,7 +1474,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             var request = CreateAutoCompressionRequest(requireSourceExists: true);
             sourceFileName = Path.GetFileName(request.SourcePath);
 
-            _autoCompressionLogBuilder.Clear();
+            ResetAutoCompressionLogState();
             AutoCompressionLog = string.Empty;
             AutoCompressionProgressPercent = 0;
             AutoCompressionProgressIsIndeterminate = true;
@@ -3018,27 +3021,72 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     private void AppendAutoCompressionLogLine(string line)
     {
+        var normalized = ConsoleOutputLineNormalizer.Normalize(line);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        if (ToolLogLineClassifier.IsAutoCompressionTransientLine(normalized))
+        {
+            if (!string.Equals(_autoCompressionLiveLogLine, normalized, StringComparison.Ordinal))
+            {
+                _autoCompressionLiveLogLine = normalized;
+                RefreshAutoCompressionLogText();
+            }
+
+            return;
+        }
+
+        _autoCompressionLiveLogLine = string.Empty;
+        AppendAutoCompressionStageLogLine(normalized);
+    }
+
+    private void AppendAutoCompressionStageLogLine(string line)
+    {
         if (string.IsNullOrWhiteSpace(line))
         {
             return;
         }
 
-        if (_autoCompressionLogBuilder.Length > 0)
+        if (_autoCompressionLogStageLines.Count > 0
+            && string.Equals(_autoCompressionLogStageLines[^1], line, StringComparison.Ordinal))
         {
-            _autoCompressionLogBuilder.AppendLine();
+            RefreshAutoCompressionLogText();
+            return;
         }
 
-        _autoCompressionLogBuilder.Append(line);
-
-        if (_autoCompressionLogBuilder.Length > AutoCompressionLogLimit)
+        _autoCompressionLogStageLines.Add(line);
+        if (_autoCompressionLogStageLines.Count > AutoCompressionStageLogLimit)
         {
-            var trimmed = _autoCompressionLogBuilder.ToString();
-            trimmed = trimmed[^AutoCompressionLogLimit..];
-            _autoCompressionLogBuilder.Clear();
-            _autoCompressionLogBuilder.Append(trimmed);
+            _autoCompressionLogStageLines.RemoveAt(0);
         }
 
-        AutoCompressionLog = _autoCompressionLogBuilder.ToString();
+        RefreshAutoCompressionLogText();
+    }
+
+    private void RefreshAutoCompressionLogText()
+    {
+        var lines = new List<string>(_autoCompressionLogStageLines);
+        if (!string.IsNullOrWhiteSpace(_autoCompressionLiveLogLine))
+        {
+            lines.Add(_autoCompressionLiveLogLine);
+        }
+
+        var joined = string.Join(Environment.NewLine, lines);
+        if (joined.Length > AutoCompressionLogLimit)
+        {
+            joined = joined[^AutoCompressionLogLimit..];
+        }
+
+        AutoCompressionLog = joined;
+    }
+
+    private void ResetAutoCompressionLogState()
+    {
+        _autoCompressionLogBuilder.Clear();
+        _autoCompressionLogStageLines.Clear();
+        _autoCompressionLiveLogLine = string.Empty;
     }
 
     private void SetAutoCompressionRunningState(bool isRunning, Guid? activeJobId)
