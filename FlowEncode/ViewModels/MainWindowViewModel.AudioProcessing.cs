@@ -1559,6 +1559,15 @@ public partial class MainWindowViewModel
         OnPropertyChanged(nameof(AudioProcessingProgressSecondaryVisibility));
         OnPropertyChanged(nameof(AudioProcessingProgressLabel));
         OnPropertyChanged(nameof(AudioProcessingProgressHintVisibility));
+
+        if (isRunning)
+        {
+            CancelPendingQueueCompletionActionWait();
+        }
+        else
+        {
+            TryScheduleQueueCompletionActionAfterSuccessfulQueueDrain();
+        }
     }
 
     private void SetAudioProcessingTelemetry(AudioProcessingTelemetry? telemetry)

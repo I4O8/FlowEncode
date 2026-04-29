@@ -3391,6 +3391,15 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         OnPropertyChanged(nameof(CanCancelAutoCompression));
         OnPropertyChanged(nameof(AutoCompressionProgressLabel));
         OnPropertyChanged(nameof(AutoCompressionProgressHintVisibility));
+
+        if (isRunning)
+        {
+            CancelPendingQueueCompletionActionWait();
+        }
+        else
+        {
+            TryScheduleQueueCompletionActionAfterSuccessfulQueueDrain();
+        }
     }
 
     private void SetAutoCompressionDisplayState(EncodingJobState? state)

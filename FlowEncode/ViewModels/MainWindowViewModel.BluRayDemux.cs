@@ -1197,6 +1197,15 @@ public partial class MainWindowViewModel
         _activeBluRayDemuxJobId = jobId;
         OnPropertyChanged(nameof(IsBluRayDemuxRunning));
         RaiseBluRayDemuxInputPropertyChanges();
+
+        if (isRunning)
+        {
+            CancelPendingQueueCompletionActionWait();
+        }
+        else
+        {
+            TryScheduleQueueCompletionActionAfterSuccessfulQueueDrain();
+        }
     }
 
     private void SetBluRayDemuxDisplayState(EncodingJobState? state)

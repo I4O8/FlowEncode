@@ -36,6 +36,7 @@ public sealed partial class MainWindow : Window
     private readonly SemaphoreSlim _externalVapourSynthOpenLock = new(1, 1);
     private readonly TaskCompletionSource<bool> _windowReadyCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _isWindowReady;
+    private bool _hasCompletedInitialization;
     private bool _isPersistingSettings;
     private bool _selectionSyncInProgress;
     private bool _isCloseConfirmationInProgress;
@@ -173,6 +174,7 @@ public sealed partial class MainWindow : Window
             TemplateLibraryList.SelectedIndex = 0;
         }
 
+        _hasCompletedInitialization = true;
         _windowReadyCompletionSource.TrySetResult(true);
     }
 
@@ -2317,7 +2319,7 @@ public sealed partial class MainWindow : Window
 
     private async Task<bool> PersistSettingsAsync(bool refreshTemplateLibrary)
     {
-        if (!_isWindowReady || _isPersistingSettings)
+        if (!_isWindowReady || !_hasCompletedInitialization || _isPersistingSettings)
         {
             return false;
         }
