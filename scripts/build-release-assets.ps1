@@ -139,7 +139,8 @@ else {
 }
 
 $publishRoot = Join-Path $repoRoot "artifacts\publish\v$resolvedVersion\app"
-$installerArtifactPath = Join-Path $resolvedOutputRoot "FlowEncode-Setup.exe"
+$installerBaseName = "FlowEncode_Setup_v$resolvedVersion"
+$installerArtifactPath = Join-Path $resolvedOutputRoot "$installerBaseName.exe"
 $publishDirArgument = if ($publishRoot.EndsWith("\") -or $publishRoot.EndsWith("/")) { $publishRoot } else { "$publishRoot\" }
 
 Remove-DirectoryIfExists -Path $publishRoot
@@ -176,7 +177,7 @@ Sanitize-ReleaseLayout -RootPath $publishRoot -SatelliteLanguageDirectories $Sat
     -SourceDirectoryPath $publishRoot `
     -Version $resolvedVersion `
     -OutputRoot $resolvedOutputRoot `
-    -ArtifactName "FlowEncode-Setup"
+    -ArtifactName $installerBaseName
 
 if (-not $?) {
     throw "Installer build failed."

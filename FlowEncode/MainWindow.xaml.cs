@@ -1041,23 +1041,20 @@ public sealed partial class MainWindow : Window
         await PickSourceFileAsync();
     }
 
-    private async Task PickSourceFileAsync()
+    private Task PickSourceFileAsync()
     {
-        var picker = new FileOpenPicker();
-        foreach (var extension in InputSourceSupport.PreferredPickerExtensions)
+        var filePath = PickFilteredFilePath(
+            ViewModel.Texts.SourceHeader,
+            ViewModel.SourcePath,
+            ViewModel.Texts.SupportedSourceFileTypeDescription(InputSourceSupport.PreferredPickerPattern),
+            InputSourceSupport.PreferredPickerPattern);
+
+        if (!string.IsNullOrWhiteSpace(filePath))
         {
-            picker.FileTypeFilter.Add(extension);
+            ViewModel.SourcePath = filePath;
         }
 
-        picker.FileTypeFilter.Add("*");
-        picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
-        InitializeWithWindow.Initialize(picker, GetMainWindowHandle());
-
-        var file = await picker.PickSingleFileAsync();
-        if (file is not null)
-        {
-            ViewModel.SourcePath = file.Path;
-        }
+        return Task.CompletedTask;
     }
 
     private async void BrowseOutputButton_Click(object sender, RoutedEventArgs e)
@@ -1091,23 +1088,20 @@ public sealed partial class MainWindow : Window
         await PickAutoSourceFileAsync();
     }
 
-    private async Task PickAutoSourceFileAsync()
+    private Task PickAutoSourceFileAsync()
     {
-        var picker = new FileOpenPicker();
-        foreach (var extension in InputSourceSupport.PreferredPickerExtensions)
+        var filePath = PickFilteredFilePath(
+            ViewModel.Texts.SourceHeader,
+            ViewModel.AutoCompressionSourcePath,
+            ViewModel.Texts.SupportedSourceFileTypeDescription(InputSourceSupport.PreferredPickerPattern),
+            InputSourceSupport.PreferredPickerPattern);
+
+        if (!string.IsNullOrWhiteSpace(filePath))
         {
-            picker.FileTypeFilter.Add(extension);
+            ViewModel.AutoCompressionSourcePath = filePath;
         }
 
-        picker.FileTypeFilter.Add("*");
-        picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
-        InitializeWithWindow.Initialize(picker, GetMainWindowHandle());
-
-        var file = await picker.PickSingleFileAsync();
-        if (file is not null)
-        {
-            ViewModel.AutoCompressionSourcePath = file.Path;
-        }
+        return Task.CompletedTask;
     }
 
     private async void BrowseAutoOutputButton_Click(object sender, RoutedEventArgs e)
@@ -1142,6 +1136,53 @@ public sealed partial class MainWindow : Window
 
         var folder = await picker.PickSingleFolderAsync();
         return folder?.Path;
+    }
+
+    private string? PickFilteredFilePath(
+        string dialogTitle,
+        string currentPath,
+        string primaryFilterLabel,
+        string primaryFilterPattern)
+    {
+        var initialDirectory = ResolveInitialFileDialogDirectory(currentPath);
+        return NativeFileDialogHelper.ShowOpenFileDialog(
+            GetMainWindowHandle(),
+            dialogTitle,
+            initialDirectory,
+            new NativeFileDialogHelper.FileDialogFilter(primaryFilterLabel, primaryFilterPattern),
+            new NativeFileDialogHelper.FileDialogFilter(ViewModel.Texts.AllFilesTypeDescription, "*.*"));
+    }
+
+    private static string ResolveInitialFileDialogDirectory(string? currentPath)
+    {
+        if (!string.IsNullOrWhiteSpace(currentPath))
+        {
+            try
+            {
+                if (Directory.Exists(currentPath))
+                {
+                    return currentPath;
+                }
+
+                var directory = Path.GetDirectoryName(currentPath);
+                if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+                {
+                    return directory;
+                }
+            }
+            catch (ArgumentException)
+            {
+            }
+            catch (NotSupportedException)
+            {
+            }
+            catch (PathTooLongException)
+            {
+            }
+        }
+
+        var documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        return string.IsNullOrWhiteSpace(documentsPath) ? Environment.CurrentDirectory : documentsPath;
     }
 
     private nint GetMainWindowHandle()

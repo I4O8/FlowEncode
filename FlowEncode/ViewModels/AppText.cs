@@ -53,6 +53,9 @@ public sealed class AppText
     public string ComposerTitle => Pick("新建任务", "New Job");
     public string SourceHeader => Pick("输入源", "Source");
     public string SourcePlaceholder => InputSourceSupport.PlaceholderExamples;
+    public string SupportedSourceFileTypeDescription(string pattern) => Pick($"支持的输入文件 ({pattern})", $"Supported source files ({pattern})");
+    public string SupportedAudioFileTypeDescription(string pattern) => Pick($"音频文件 ({pattern})", $"Audio files ({pattern})");
+    public string AllFilesTypeDescription => Pick("所有文件 (*.*)", "All files (*.*)");
     public string BrowseButton => Pick("浏览", "Browse");
     public string OutputHeader => Pick("输出路径", "Output");
     public string OutputDirectoryHeader => Pick("输出目录", "Output Directory");

@@ -4,9 +4,6 @@ using FlowEncode.Domain;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
-using Windows.Storage.Pickers;
-using WinRT.Interop;
-
 namespace FlowEncode;
 
 public sealed partial class MainWindow
@@ -51,18 +48,22 @@ public sealed partial class MainWindow
         await PickAudioSourceFileAsync();
     }
 
-    private async Task PickAudioSourceFileAsync()
+    private Task PickAudioSourceFileAsync()
     {
-        var picker = new FileOpenPicker();
-        picker.FileTypeFilter.Add("*");
-        picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
-        InitializeWithWindow.Initialize(picker, GetMainWindowHandle());
+        var selectedWorkflow = ViewModel.SelectedAudioWorkflow?.Value;
+        var preferredPattern = AudioSourceSupport.GetPreferredPickerPattern(selectedWorkflow);
+        var filePath = PickFilteredFilePath(
+            ViewModel.Texts.SourceHeader,
+            ViewModel.AudioProcessingSourcePath,
+            ViewModel.Texts.SupportedAudioFileTypeDescription(preferredPattern),
+            preferredPattern);
 
-        var file = await picker.PickSingleFileAsync();
-        if (file is not null)
+        if (!string.IsNullOrWhiteSpace(filePath))
         {
-            ViewModel.AudioProcessingSourcePath = file.Path;
+            ViewModel.AudioProcessingSourcePath = filePath;
         }
+
+        return Task.CompletedTask;
     }
 
     private async void BrowseAudioOutputButton_Click(object sender, RoutedEventArgs e)

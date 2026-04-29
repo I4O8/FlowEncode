@@ -15,7 +15,7 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly Regex VersionLabelRegex = new("^(?<base>\\d+\\.\\d+(?:\\.\\d+)*)(?<suffix>[0-9a-f]{7,12})?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-    private const string PreferredInstallerAssetName = "FlowEncode-Setup.exe";
+    private const string PreferredInstallerAssetNamePrefix = "FlowEncode_Setup_v";
     private const string ReleasesPageUrl = "https://github.com/frankie1024/FlowEncode/releases";
     private const string LatestReleaseApiUrl = "https://api.github.com/repos/frankie1024/FlowEncode/releases/latest";
     private const string ReleasesApiUrl = "https://api.github.com/repos/frankie1024/FlowEncode/releases?per_page=30";
@@ -58,7 +58,7 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
         var currentVersionNewerThanRelease = versionComparison is > 0;
         var installerAsset = latestRelease.Release.Assets?
             .Where(static asset => IsInstallerAsset(asset.Name))
-            .OrderByDescending(static asset => asset.Name.Equals(PreferredInstallerAssetName, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(static asset => asset.Name.StartsWith(PreferredInstallerAssetNamePrefix, StringComparison.OrdinalIgnoreCase))
             .ThenBy(static asset => asset.Name, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault();
 

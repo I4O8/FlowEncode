@@ -109,7 +109,7 @@ Download the latest Windows x64 installer from [GitHub Releases](https://github.
 Current release assets are installer-based:
 
 ```text
-FlowEncode-Setup.exe
+FlowEncode_Setup_v<version>.exe
 ```
 
 ### Runtime prerequisites

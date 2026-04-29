@@ -143,7 +143,7 @@ else {
 }
 
 $resolvedArtifactName = if ([string]::IsNullOrWhiteSpace($ArtifactName)) {
-    "FlowEncode-Setup"
+    "FlowEncode_Setup_v$Version"
 }
 else {
     $ArtifactName

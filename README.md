@@ -109,7 +109,7 @@ flowchart LR
 当前发布资产以安装版为主：
 
 ```text
-FlowEncode-Setup.exe
+FlowEncode_Setup_v<version>.exe
 ```
 
 ### 运行前置依赖

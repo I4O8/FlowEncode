@@ -23,7 +23,7 @@
   #define OutputDir "."
 #endif
 #ifndef OutputBaseName
-  #define OutputBaseName "FlowEncode-Setup"
+  #define OutputBaseName "FlowEncode_Setup_v" + AppVersion
 #endif
 #ifndef SourceDir
   #define SourceDir "."

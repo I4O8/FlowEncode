@@ -1254,6 +1254,9 @@ function registerLanguageProviders() {
 }
 
 function createEditor() {
+    const editorLineHeight = 22;
+    const editorBottomPaddingLines = 10;
+
     editorModel = monaco.editor.createModel(
         "",
         "python",
@@ -1268,13 +1271,13 @@ function createEditor() {
         detectIndentation: false,
         fontFamily: "Cascadia Code, Consolas, SFMono-Regular, monospace",
         fontSize: 14,
-        lineHeight: 22,
+        lineHeight: editorLineHeight,
         cursorBlinking: "solid",
         smoothScrolling: true,
-        scrollBeyondLastLine: true,
+        scrollBeyondLastLine: false,
         padding: {
             top: 8,
-            bottom: 48
+            bottom: editorLineHeight * editorBottomPaddingLines
         },
         minimap: { enabled: false },
         folding: true,

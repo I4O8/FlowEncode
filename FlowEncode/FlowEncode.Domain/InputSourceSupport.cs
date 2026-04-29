@@ -1,3 +1,5 @@
+using System.Linq;
+
 namespace FlowEncode.Domain;
 
 public static class InputSourceSupport
@@ -14,6 +16,8 @@ public static class InputSourceSupport
         ".yuv"
     ];
 
+    public static string PreferredPickerPattern => BuildDialogPattern(PreferredPickerExtensions);
+
     public static string PlaceholderExamples => ".avs / .vpy / .mkv / .mp4 / .avi / .flv / .y4m / .yuv";
 
     public static InputPipelineKind ResolvePipelineKind(string sourcePath)
@@ -29,4 +33,6 @@ public static class InputSourceSupport
             _ => throw new NotSupportedException("当前仅支持 .avs、.vpy、.mkv、.mp4、.avi、.flv、.y4m、.yuv 作为输入。")
         };
     }
+
+    private static string BuildDialogPattern(IReadOnlyList<string> extensions) => string.Join(";", extensions.Select(static extension => $"*{extension}"));
 }
