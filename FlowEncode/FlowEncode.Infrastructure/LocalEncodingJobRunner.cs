@@ -57,7 +57,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private readonly IEncoderDiscoveryService _discoveryService;
     private readonly IAppSettingsService _settingsService;
     private readonly LocalAppPaths _appPaths;
-    private readonly ConcurrentDictionary<Guid, Process> _activeProcesses = new();
+    private readonly ConcurrentDictionary<Guid, ManagedProcessExecution> _activeExecutions = new();
 
     public LocalEncodingJobRunner(
         LocalAppPaths paths,
@@ -79,9 +79,9 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
     public void AbortJob(Guid jobId)
     {
-        if (_activeProcesses.TryGetValue(jobId, out var process))
+        if (_activeExecutions.TryRemove(jobId, out var execution))
         {
-            TryTerminateProcess(jobId, process);
+            execution.Terminate();
         }
     }
 
@@ -104,7 +104,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         Task pumpOutput = Task.CompletedTask;
         Task pumpError = Task.CompletedTask;
         Process? activeProcess = null;
-        ProcessJobObject? activeProcessJob = null;
+        ManagedProcessExecution? activeExecution = null;
 
         if (!string.IsNullOrWhiteSpace(outputDirectory))
         {
@@ -155,14 +155,14 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     BuildStageStartingDetail(language, step),
                     BuildStageStartingSnapshot(plan, step)));
 
-                using var process = CreateProcess(step, encoderPath);
+                var process = CreateProcess(step, encoderPath);
                 activeProcess = process;
 
                 process.Start();
-                activeProcessJob = ProcessJobObject.TryAttach(
-                    process,
-                    message => WriteDiagnostic($"Encoding job {request.JobId}: {message}"));
-                _activeProcesses[request.JobId] = process;
+                activeExecution = new ManagedProcessExecution(
+                    message => WriteDiagnostic($"Encoding job {request.JobId}: {message}"),
+                    process);
+                _activeExecutions[request.JobId] = activeExecution;
 
                 void HandleLine(string line)
                 {
@@ -210,22 +210,23 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 pumpError = PumpAsync(process.StandardError, HandleLine, cancellationToken);
 
                 await process.WaitForExitAsync(cancellationToken);
-                activeProcessJob?.Terminate();
+                activeExecution.Terminate();
                 await Task.WhenAll(pumpOutput, pumpError);
-                _activeProcesses.TryRemove(request.JobId, out _);
-                activeProcessJob?.Dispose();
-                activeProcessJob = null;
+                var exitCode = process.ExitCode;
+                _activeExecutions.TryRemove(request.JobId, out _);
+                activeExecution.Dispose();
+                activeExecution = null;
                 activeProcess = null;
 
-                if (process.ExitCode != 0)
+                if (exitCode != 0)
                 {
                     currentState = EncodingJobState.Failed;
                     var failedSummary = step.StageCount > 1
-                        ? T(language, $"Pass {step.StageIndex}/{step.StageCount} failed (exit code {process.ExitCode})", $"第 {step.StageIndex}/{step.StageCount} 遍失败，退出代码 {process.ExitCode}")
-                        : T(language, $"Encoding failed (exit code {process.ExitCode})", $"编码失败，退出代码 {process.ExitCode}");
+                        ? T(language, $"Pass {step.StageIndex}/{step.StageCount} failed (exit code {exitCode})", $"第 {step.StageIndex}/{step.StageCount} 遍失败，退出代码 {exitCode}")
+                        : T(language, $"Encoding failed (exit code {exitCode})", $"编码失败，退出代码 {exitCode}");
                     var failedVisibleLog = visibleLogBuilder.ToString();
                     await CloseRawLogWriterAsync();
-                    var failedSidecarLogPath = await WriteSidecarLogAsync(request, plan.DisplayCommand, currentState, process.ExitCode, rawLogPath);
+                    var failedSidecarLogPath = await WriteSidecarLogAsync(request, plan.DisplayCommand, currentState, exitCode, rawLogPath);
 
                     progress?.Report(new EncodingJobProgress(
                         request.JobId,
@@ -237,7 +238,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     return new EncodingJobResult(
                         request.JobId,
                         currentState,
-                        process.ExitCode,
+                        exitCode,
                         failedSummary,
                         failedVisibleLog,
                         failedSidecarLogPath);
@@ -271,11 +272,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
             try
             {
-                activeProcessJob?.Terminate();
-                if (activeProcess is not null && !activeProcess.HasExited)
-                {
-                    TryTerminateProcess(request.JobId, activeProcess);
-                }
+                activeExecution?.Terminate();
             }
             catch
             {
@@ -310,8 +307,8 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         }
         finally
         {
-            _activeProcesses.TryRemove(request.JobId, out _);
-            activeProcessJob?.Dispose();
+            _activeExecutions.TryRemove(request.JobId, out _);
+            activeExecution?.Dispose();
             CleanupPlanArtifacts(plan);
 
             if (!rawLogWriterClosed)
@@ -1699,25 +1696,6 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         };
     }
 
-    private void TryTerminateProcess(Guid jobId, Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(true);
-                process.WaitForExit(2000);
-            }
-        }
-        catch
-        {
-        }
-        finally
-        {
-            _activeProcesses.TryRemove(jobId, out _);
-        }
-    }
-
     private static ParsedProgressSnapshot? ApplyStageProgress(ParsedProgressSnapshot? progressSnapshot, EncodingExecutionStep step)
     {
         if (progressSnapshot is null)
@@ -1853,7 +1831,10 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
     private void CleanupTemporaryRawLog(string path)
     {
-        TryDeleteFileWithRetry(path, $"temporary raw log '{path}'");
+        BestEffortCleanup.DeleteFile(
+            path,
+            $"temporary raw log '{path}'",
+            WriteDiagnostic);
     }
 
     private static void CleanupPlanArtifacts(EncodingExecutionPlan plan)
@@ -1897,107 +1878,13 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private void CleanupJobTempDirectory(EncodingJobRequest request)
     {
         var jobTempDirectory = GetJobTempDirectory(request);
-        TryDeleteDirectoryRecursivelyWithRetry(jobTempDirectory, $"job temp directory '{jobTempDirectory}'");
+        BestEffortCleanup.DeleteDirectoryRecursively(
+            jobTempDirectory,
+            $"job temp directory '{jobTempDirectory}'",
+            WriteDiagnostic);
 
         var rootDirectory = Path.GetDirectoryName(jobTempDirectory);
-        TryDeleteDirectoryIfEmpty(rootDirectory);
-    }
-
-    private static void TryDeleteDirectoryIfEmpty(string? directory)
-    {
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
-        {
-            return;
-        }
-
-        try
-        {
-            if (!Directory.EnumerateFileSystemEntries(directory).Any())
-            {
-                Directory.Delete(directory, false);
-            }
-        }
-        catch
-        {
-        }
-    }
-
-    private void TryDeleteFileWithRetry(string? path, string description)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return;
-        }
-
-        Exception? lastError = null;
-
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                if (!File.Exists(path))
-                {
-                    return;
-                }
-
-                File.Delete(path);
-                return;
-            }
-            catch (Exception ex) when (attempt < 2)
-            {
-                lastError = ex;
-                Thread.Sleep(150 * (attempt + 1));
-            }
-            catch (Exception ex)
-            {
-                lastError = ex;
-                break;
-            }
-        }
-
-        if (lastError is not null)
-        {
-            WriteDiagnostic($"Failed to delete {description}. {lastError.GetType().Name}: {lastError.Message}");
-        }
-    }
-
-    private void TryDeleteDirectoryRecursivelyWithRetry(string? directory, string description)
-    {
-        if (string.IsNullOrWhiteSpace(directory))
-        {
-            return;
-        }
-
-        Exception? lastError = null;
-
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                if (!Directory.Exists(directory))
-                {
-                    return;
-                }
-
-                Directory.Delete(directory, recursive: true);
-                return;
-            }
-            catch (Exception ex) when (attempt < 2)
-            {
-                lastError = ex;
-                Thread.Sleep(150 * (attempt + 1));
-            }
-            catch (Exception ex)
-            {
-                lastError = ex;
-                break;
-            }
-        }
-
-        if (lastError is not null)
-        {
-            WriteDiagnostic($"Failed to delete {description}. {lastError.GetType().Name}: {lastError.Message}");
-        }
+        BestEffortCleanup.DeleteDirectoryIfEmpty(rootDirectory, WriteDiagnostic);
     }
 
     private void WriteDiagnostic(string message)

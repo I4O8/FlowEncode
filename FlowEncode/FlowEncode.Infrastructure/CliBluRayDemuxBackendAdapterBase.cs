@@ -10,7 +10,7 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
 {
     private const int MaxLogLength = 240_000;
     private readonly IToolProbeService _toolProbeService;
-    private readonly ConcurrentDictionary<Guid, Process> _activeProcesses = new();
+    private readonly ConcurrentDictionary<Guid, ManagedProcessExecution> _activeExecutions = new();
 
     protected CliBluRayDemuxBackendAdapterBase(IToolProbeService toolProbeService)
     {
@@ -37,9 +37,9 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
 
     public void Abort(Guid jobId)
     {
-        if (_activeProcesses.TryGetValue(jobId, out var process))
+        if (_activeExecutions.TryRemove(jobId, out var execution))
         {
-            TryKillProcess(process);
+            execution.Terminate();
         }
     }
 
@@ -82,10 +82,15 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
             StartInfo = startInfo
         };
 
-        using var registration = cancellationToken.Register(() => TryKillProcess(process));
-
         process.Start();
-        using var processJob = ProcessJobObject.TryAttach(process);
+        using var execution = new ManagedProcessExecution(process);
+        using var registration = cancellationToken.Register(static state =>
+        {
+            if (state is ManagedProcessExecution activeExecution)
+            {
+                activeExecution.Terminate();
+            }
+        }, execution);
         var stdOutTask = ReadLinesAsync(process.StandardOutput, outputBuilder, null, cancellationToken);
         var stdErrTask = ReadLinesAsync(process.StandardError, outputBuilder, null, cancellationToken);
 
@@ -96,8 +101,7 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            processJob?.Terminate();
-            TryKillProcess(process);
+            execution.Terminate();
             throw;
         }
 
@@ -155,7 +159,7 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
         }
 
         Process? process = null;
-        ProcessJobObject? processJob = null;
+        ManagedProcessExecution? activeExecution = null;
         Task pumpOutput = Task.CompletedTask;
         Task pumpError = Task.CompletedTask;
         var exitCode = -1;
@@ -175,24 +179,28 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
                 StartInfo = startInfo
             };
 
-            _activeProcesses[request.JobId] = process;
-
-            using var registration = cancellationToken.Register(() => TryKillProcess(process));
-
             process.Start();
-            processJob = ProcessJobObject.TryAttach(process);
+            activeExecution = new ManagedProcessExecution(process);
+            _activeExecutions[request.JobId] = activeExecution;
+
+            using var registration = cancellationToken.Register(static state =>
+            {
+                if (state is ManagedProcessExecution execution)
+                {
+                    execution.Terminate();
+                }
+            }, activeExecution);
             pumpOutput = ReadLinesAsync(process.StandardOutput, null, HandleLine, cancellationToken);
             pumpError = ReadLinesAsync(process.StandardError, null, HandleLine, cancellationToken);
 
             await process.WaitForExitAsync(cancellationToken);
-            processJob?.Terminate();
+            activeExecution.Terminate();
             await Task.WhenAll(pumpOutput, pumpError);
             hasExitCode = TryGetExitCode(process, out exitCode);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            processJob?.Terminate();
-            TryKillProcess(process);
+            activeExecution?.Terminate();
             await Task.WhenAll(pumpOutput, pumpError);
             hasExitCode = TryGetExitCode(process, out exitCode);
 
@@ -215,11 +223,14 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
         }
         finally
         {
-            if (process is not null)
+            _activeExecutions.TryRemove(request.JobId, out _);
+            if (activeExecution is not null)
             {
-                _activeProcesses.TryRemove(request.JobId, out _);
-                processJob?.Dispose();
-                process.Dispose();
+                activeExecution.Dispose();
+            }
+            else
+            {
+                process?.Dispose();
             }
         }
 
@@ -347,25 +358,6 @@ public abstract class CliBluRayDemuxBackendAdapterBase : IBluRayDemuxBackendAdap
 
         sink?.AppendLine(normalized);
         lineHandler?.Invoke(normalized);
-    }
-
-    private static void TryKillProcess(Process? process)
-    {
-        if (process is null)
-        {
-            return;
-        }
-
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(true);
-            }
-        }
-        catch
-        {
-        }
     }
 
     private static bool TryGetExitCode(Process? process, out int exitCode)

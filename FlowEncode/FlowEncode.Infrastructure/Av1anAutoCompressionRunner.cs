@@ -22,7 +22,7 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
     private readonly ExternalToolLocator _toolLocator;
     private readonly IAppSettingsService _settingsService;
     private readonly LocalAppPaths _appPaths;
-    private readonly ConcurrentDictionary<Guid, Process> _activeProcesses = new();
+    private readonly ConcurrentDictionary<Guid, ManagedProcessExecution> _activeExecutions = new();
 
     public Av1anAutoCompressionRunner(LocalAppPaths paths, IAppSettingsService settingsService)
     {
@@ -40,9 +40,9 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
 
     public void Abort(Guid jobId)
     {
-        if (_activeProcesses.TryGetValue(jobId, out var process))
+        if (_activeExecutions.TryRemove(jobId, out var execution))
         {
-            TryTerminateProcess(jobId, process);
+            execution.Terminate();
         }
     }
 
@@ -152,7 +152,7 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         }
 
         Process? process = null;
-        ProcessJobObject? processJob = null;
+        ManagedProcessExecution? activeExecution = null;
         Task pumpOutput = Task.CompletedTask;
         Task pumpError = Task.CompletedTask;
 
@@ -160,19 +160,19 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         {
             process = CreateProcess(av1anPath, arguments);
             process.Start();
-            processJob = ProcessJobObject.TryAttach(
-                process,
-                message => WriteDiagnostic($"Auto compression job {request.JobId}: {message}"));
-            _activeProcesses[request.JobId] = process;
+            activeExecution = new ManagedProcessExecution(
+                message => WriteDiagnostic($"Auto compression job {request.JobId}: {message}"),
+                process);
+            _activeExecutions[request.JobId] = activeExecution;
 
             pumpOutput = PumpAsync(process.StandardOutput, HandleLine, cancellationToken);
             pumpError = PumpAsync(process.StandardError, HandleLine, cancellationToken);
 
             await process.WaitForExitAsync(cancellationToken);
-            processJob?.Terminate();
+            activeExecution.Terminate();
             await Task.WhenAll(pumpOutput, pumpError);
 
-            _activeProcesses.TryRemove(request.JobId, out _);
+            _activeExecutions.TryRemove(request.JobId, out _);
 
             var log = logBuilder.ToString();
             if (process.ExitCode == 0)
@@ -210,11 +210,7 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         }
         catch (OperationCanceledException)
         {
-            processJob?.Terminate();
-            if (process is not null && !process.HasExited)
-            {
-                TryTerminateProcess(request.JobId, process);
-            }
+            activeExecution?.Terminate();
 
             try
             {
@@ -242,8 +238,8 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         }
         finally
         {
-            _activeProcesses.TryRemove(request.JobId, out _);
-            processJob?.Dispose();
+            _activeExecutions.TryRemove(request.JobId, out _);
+            activeExecution?.Dispose();
             CleanupJobTempDirectory(request);
         }
     }
@@ -303,67 +299,12 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
     private void CleanupJobTempDirectory(AutoCompressionRequest request)
     {
         var jobTempDirectory = GetTempDirectory(request);
-        TryDeleteDirectoryRecursivelyWithRetry(jobTempDirectory, $"auto compression temp directory '{jobTempDirectory}'");
-        TryDeleteDirectoryIfEmpty(Path.GetDirectoryName(jobTempDirectory));
-        TryDeleteDirectoryIfEmpty(Path.GetDirectoryName(Path.GetDirectoryName(jobTempDirectory)));
-    }
-
-    private static void TryDeleteDirectoryIfEmpty(string? directory)
-    {
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
-        {
-            return;
-        }
-
-        try
-        {
-            if (!Directory.EnumerateFileSystemEntries(directory).Any())
-            {
-                Directory.Delete(directory, false);
-            }
-        }
-        catch
-        {
-        }
-    }
-
-    private void TryDeleteDirectoryRecursivelyWithRetry(string? directory, string description)
-    {
-        if (string.IsNullOrWhiteSpace(directory))
-        {
-            return;
-        }
-
-        Exception? lastError = null;
-
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                if (!Directory.Exists(directory))
-                {
-                    return;
-                }
-
-                Directory.Delete(directory, recursive: true);
-                return;
-            }
-            catch (Exception ex) when (attempt < 2)
-            {
-                lastError = ex;
-                Thread.Sleep(150 * (attempt + 1));
-            }
-            catch (Exception ex)
-            {
-                lastError = ex;
-                break;
-            }
-        }
-
-        if (lastError is not null)
-        {
-            WriteDiagnostic($"Failed to delete {description}. {lastError.GetType().Name}: {lastError.Message}");
-        }
+        BestEffortCleanup.DeleteDirectoryRecursively(
+            jobTempDirectory,
+            $"auto compression temp directory '{jobTempDirectory}'",
+            WriteDiagnostic);
+        BestEffortCleanup.DeleteDirectoryIfEmpty(Path.GetDirectoryName(jobTempDirectory), WriteDiagnostic);
+        BestEffortCleanup.DeleteDirectoryIfEmpty(Path.GetDirectoryName(Path.GetDirectoryName(jobTempDirectory)), WriteDiagnostic);
     }
 
     private void WriteDiagnostic(string message)
@@ -596,25 +537,6 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         if (!builder.ToString().StartsWith(VisibleLogTruncationMarker, StringComparison.Ordinal))
         {
             builder.Insert(0, $"{VisibleLogTruncationMarker}{Environment.NewLine}");
-        }
-    }
-
-    private void TryTerminateProcess(Guid jobId, Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(true);
-                process.WaitForExit(2000);
-            }
-        }
-        catch
-        {
-        }
-        finally
-        {
-            _activeProcesses.TryRemove(jobId, out _);
         }
     }
 

@@ -1,12 +1,10 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using FlowEncode.Application;
 using FlowEncode.Domain;
-using Microsoft.Win32.SafeHandles;
 
 namespace FlowEncode.Infrastructure;
 
@@ -26,7 +24,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
     private const double SignificantProgressDelta = 0.01;
     private readonly IToolProbeService _toolProbeService;
     private readonly IAppSettingsService _settingsService;
-    private readonly ConcurrentDictionary<Guid, ActiveExecution> _activeExecutions = new();
+    private readonly ConcurrentDictionary<Guid, ManagedProcessExecution> _activeExecutions = new();
 
     public CliAudioProcessingRunner(IToolProbeService toolProbeService, IAppSettingsService settingsService)
     {
@@ -47,7 +45,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
     public void Abort(Guid jobId)
     {
-        if (_activeExecutions.TryGetValue(jobId, out var execution))
+        if (_activeExecutions.TryRemove(jobId, out var execution))
         {
             execution.Terminate();
         }
@@ -185,16 +183,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         }
         finally
         {
-            try
-            {
-                if (File.Exists(progressFilePath))
-                {
-                    File.Delete(progressFilePath);
-                }
-            }
-            catch
-            {
-            }
+            BestEffortCleanup.DeleteFile(progressFilePath, $"Opus progress file '{progressFilePath}'");
         }
     }
 
@@ -491,7 +480,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         string? supplementalProgressFilePath)
     {
         Process? process = null;
-        ActiveExecution? activeExecution = null;
+        ManagedProcessExecution? activeExecution = null;
         Task pumpOutput = Task.CompletedTask;
         Task pumpError = Task.CompletedTask;
         Task pumpSupplementalProgress = Task.CompletedTask;
@@ -500,12 +489,12 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         {
             process = new Process { StartInfo = startInfo };
             process.Start();
-            activeExecution = new ActiveExecution(process);
+            activeExecution = new ManagedProcessExecution(process);
             _activeExecutions[request.JobId] = activeExecution;
 
             using var cancellationRegistration = cancellationToken.Register(static state =>
             {
-                if (state is ActiveExecution execution)
+                if (state is ManagedProcessExecution execution)
                 {
                     execution.Terminate();
                 }
@@ -580,7 +569,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
     {
         Process? ffmpegProcess = null;
         Process? opusProcess = null;
-        ActiveExecution? activeExecution = null;
+        ManagedProcessExecution? activeExecution = null;
         Task copyPcmToOpus = Task.CompletedTask;
         Task pumpFfmpegError = Task.CompletedTask;
         Task pumpOpusOutput = Task.CompletedTask;
@@ -603,12 +592,12 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                 throw;
             }
 
-            activeExecution = new ActiveExecution(ffmpegProcess, opusProcess);
+            activeExecution = new ManagedProcessExecution(ffmpegProcess, opusProcess);
             _activeExecutions[request.JobId] = activeExecution;
 
             using var cancellationRegistration = cancellationToken.Register(static state =>
             {
-                if (state is ActiveExecution execution)
+                if (state is ManagedProcessExecution execution)
                 {
                     execution.Terminate();
                 }
@@ -1865,220 +1854,4 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         return ConsoleOutputLineNormalizer.Normalize(text);
     }
 
-    private sealed class ActiveExecution : IDisposable
-    {
-        private readonly IReadOnlyList<Process> _processes;
-        private readonly IReadOnlyList<JobObjectHandle> _jobObjectHandles;
-        private int _disposed;
-
-        public ActiveExecution(params Process[] processes)
-        {
-            _processes = processes;
-            _jobObjectHandles = processes
-                .Select(JobObjectHandle.TryAttach)
-                .Where(static handle => handle is not null)
-                .Select(static handle => handle!)
-                .ToArray();
-        }
-
-        public void Terminate()
-        {
-            foreach (var jobObjectHandle in _jobObjectHandles)
-            {
-                jobObjectHandle.Terminate();
-            }
-
-            foreach (var process in _processes)
-            {
-                TryTerminate(process);
-            }
-        }
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            {
-                return;
-            }
-
-            foreach (var jobObjectHandle in _jobObjectHandles)
-            {
-                jobObjectHandle.Dispose();
-            }
-
-            foreach (var process in _processes)
-            {
-                process.Dispose();
-            }
-        }
-    }
-
-    private sealed class JobObjectHandle : IDisposable
-    {
-        private readonly SafeJobHandle _handle;
-        private int _disposed;
-
-        private JobObjectHandle(SafeJobHandle handle)
-        {
-            _handle = handle;
-        }
-
-        public static JobObjectHandle? TryAttach(Process process)
-        {
-            SafeJobHandle? handle = null;
-
-            try
-            {
-                handle = CreateJobObject(IntPtr.Zero, null);
-                if (handle.IsInvalid)
-                {
-                    handle.Dispose();
-                    return null;
-                }
-
-                var limits = new JobObjectExtendedLimitInformation
-                {
-                    BasicLimitInformation = new JobObjectBasicLimitInformation
-                    {
-                        LimitFlags = JobObjectLimitFlags.KillOnJobClose
-                    }
-                };
-
-                if (!SetInformationJobObject(
-                        handle,
-                        JobObjectInfoClass.ExtendedLimitInformation,
-                        ref limits,
-                        (uint)Marshal.SizeOf<JobObjectExtendedLimitInformation>()))
-                {
-                    handle.Dispose();
-                    return null;
-                }
-
-                if (!AssignProcessToJobObject(handle, process.Handle))
-                {
-                    handle.Dispose();
-                    return null;
-                }
-
-                return new JobObjectHandle(handle);
-            }
-            catch
-            {
-                handle?.Dispose();
-                return null;
-            }
-        }
-
-        public void Terminate()
-        {
-            if (Interlocked.CompareExchange(ref _disposed, 0, 0) != 0)
-            {
-                return;
-            }
-
-            try
-            {
-                if (!_handle.IsInvalid)
-                {
-                    TerminateJobObject(_handle, 1);
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            {
-                return;
-            }
-
-            _handle.Dispose();
-        }
-    }
-
-    [Flags]
-    private enum JobObjectLimitFlags : uint
-    {
-        KillOnJobClose = 0x00002000
-    }
-
-    private enum JobObjectInfoClass
-    {
-        ExtendedLimitInformation = 9
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct JobObjectBasicLimitInformation
-    {
-        public long PerProcessUserTimeLimit;
-        public long PerJobUserTimeLimit;
-        public JobObjectLimitFlags LimitFlags;
-        public nuint MinimumWorkingSetSize;
-        public nuint MaximumWorkingSetSize;
-        public uint ActiveProcessLimit;
-        public nuint Affinity;
-        public uint PriorityClass;
-        public uint SchedulingClass;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct IoCounters
-    {
-        public ulong ReadOperationCount;
-        public ulong WriteOperationCount;
-        public ulong OtherOperationCount;
-        public ulong ReadTransferCount;
-        public ulong WriteTransferCount;
-        public ulong OtherTransferCount;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct JobObjectExtendedLimitInformation
-    {
-        public JobObjectBasicLimitInformation BasicLimitInformation;
-        public IoCounters IoInfo;
-        public nuint ProcessMemoryLimit;
-        public nuint JobMemoryLimit;
-        public nuint PeakProcessMemoryUsed;
-        public nuint PeakJobMemoryUsed;
-    }
-
-    private sealed class SafeJobHandle : SafeHandleZeroOrMinusOneIsInvalid
-    {
-        public SafeJobHandle()
-            : base(true)
-        {
-        }
-
-        protected override bool ReleaseHandle()
-        {
-            return CloseHandle(handle);
-        }
-    }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern SafeJobHandle CreateJobObject(IntPtr lpJobAttributes, string? lpName);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetInformationJobObject(
-        SafeJobHandle hJob,
-        JobObjectInfoClass jobObjectInfoClass,
-        ref JobObjectExtendedLimitInformation lpJobObjectInfo,
-        uint cbJobObjectInfoLength);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool AssignProcessToJobObject(SafeJobHandle job, IntPtr process);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool TerminateJobObject(SafeJobHandle job, uint exitCode);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CloseHandle(IntPtr handle);
 }

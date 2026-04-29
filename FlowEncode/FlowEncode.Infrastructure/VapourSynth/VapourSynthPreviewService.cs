@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -20,18 +19,14 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly IToolProbeService _toolProbeService;
     private readonly LocalAppPaths _appPaths;
+    private readonly IVapourSynthPreviewHostFactory _hostFactory;
     private readonly string _sessionRootPath;
     private readonly SemaphoreSlim _stateLock = new(1, 1);
-    private readonly SemaphoreSlim _pythonPathLock = new(1, 1);
     private readonly TimeSpan _closeTimeout = TimeSpan.FromSeconds(2);
     private readonly TimeSpan _killWaitTimeout = TimeSpan.FromSeconds(5);
     private readonly StringBuilder _stderrBuffer = new();
-    private string? _pythonPath;
-    private Process? _hostProcess;
-    private StreamWriter? _hostInputWriter;
-    private StreamReader? _hostOutputReader;
+    private IVapourSynthPreviewHostSession? _hostSession;
     private string? _activeSessionPath;
     private int _commandCounter;
     private bool _stderrTracebackActive;
@@ -42,10 +37,20 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
     public VapourSynthPreviewService(
         IToolProbeService toolProbeService,
         LocalAppPaths appPaths)
+        : this(appPaths, new ProcessVapourSynthPreviewHostFactory(toolProbeService))
     {
-        _toolProbeService = toolProbeService;
+    }
+
+    internal VapourSynthPreviewService(
+        LocalAppPaths appPaths,
+        IVapourSynthPreviewHostFactory hostFactory,
+        string? sessionRootPath = null)
+    {
         _appPaths = appPaths;
-        _sessionRootPath = Path.Combine(appPaths.DataRootPath, "vapoursynth-preview");
+        _hostFactory = hostFactory;
+        _sessionRootPath = string.IsNullOrWhiteSpace(sessionRootPath)
+            ? Path.Combine(appPaths.DataRootPath, "vapoursynth-preview")
+            : sessionRootPath;
         Directory.CreateDirectory(_sessionRootPath);
     }
 
@@ -77,40 +82,8 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
             var startupJson = JsonSerializer.Serialize(startupPayload, JsonOptions);
             await File.WriteAllTextAsync(startupPath, startupJson, new UTF8Encoding(false), cancellationToken);
 
-            var pythonPath = await ResolvePythonPathAsync(cancellationToken);
-            var helperPath = GetHelperPath();
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = pythonPath,
-                UseShellExecute = false,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                WorkingDirectory = normalizedWorkingDirectory,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            };
-            PythonProcessStartInfoHelper.ApplyUtf8(startInfo);
-            startInfo.ArgumentList.Add(helperPath);
-            startInfo.ArgumentList.Add(startupPath);
-            VapourSynthRuntimePathResolver.EnrichProcessPath(startInfo);
-
-            _hostProcess = new Process
-            {
-                StartInfo = startInfo,
-                EnableRaisingEvents = true
-            };
-            _hostProcess.ErrorDataReceived += HostProcess_ErrorDataReceived;
-
-            using var _ = ErrorDialogSuppression.Enter();
-            _hostProcess.Start();
-            _hostProcess.BeginErrorReadLine();
-
-            _hostInputWriter = _hostProcess.StandardInput;
-            _hostInputWriter.AutoFlush = true;
-            _hostOutputReader = _hostProcess.StandardOutput;
+            _hostSession = await _hostFactory.StartAsync(normalizedWorkingDirectory, startupPath, cancellationToken);
+            _hostSession.StderrLineReceived += HostSession_StderrLineReceived;
 
             var response = await ReadResponseAsync(cancellationToken);
             if (!string.Equals(response.Type, "ready", StringComparison.Ordinal))
@@ -167,15 +140,12 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         try
         {
             ThrowIfDisposed();
-            if (_hostProcess is null
-                || _hostInputWriter is null
-                || _hostOutputReader is null
-                || string.IsNullOrWhiteSpace(_activeSessionPath))
+            if (_hostSession is null || string.IsNullOrWhiteSpace(_activeSessionPath))
             {
                 throw new InvalidOperationException("Preview session is not open.");
             }
 
-            if (_hostProcess.HasExited)
+            if (_hostSession.HasExited)
             {
                 throw new InvalidOperationException(BuildHostFailureMessage(
                     "Preview helper exited unexpectedly before rendering a frame."));
@@ -185,7 +155,7 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
             var rawPath = Path.Combine(_activeSessionPath, $"frame-{requestId:D6}.bgra");
             var command = new FrameCommandDto("renderFrame", requestId, outputIndex, frameNumber, rawPath);
             var commandJson = JsonSerializer.Serialize(command, JsonOptions);
-            await _hostInputWriter.WriteLineAsync(commandJson);
+            await _hostSession.WriteLineAsync(commandJson, cancellationToken);
 
             var response = await ReadResponseAsync(cancellationToken);
             if (!string.Equals(response.Type, "frame", StringComparison.Ordinal))
@@ -258,62 +228,11 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         _disposed = true;
         CloseHostCoreAsync().GetAwaiter().GetResult();
         _stateLock.Dispose();
-        _pythonPathLock.Dispose();
     }
 
-    private async Task<string> ResolvePythonPathAsync(CancellationToken cancellationToken)
+    private void HostSession_StderrLineReceived(string line)
     {
-        if (!string.IsNullOrWhiteSpace(_pythonPath))
-        {
-            return _pythonPath;
-        }
-
-        await _pythonPathLock.WaitAsync(cancellationToken);
-
-        try
-        {
-            if (!string.IsNullOrWhiteSpace(_pythonPath))
-            {
-                return _pythonPath;
-            }
-
-            var probe = await _toolProbeService.ProbeAsync(RegisteredToolKind.Python, cancellationToken);
-            if (!probe.IsReady || string.IsNullOrWhiteSpace(probe.ExecutablePath))
-            {
-                throw new InvalidOperationException(string.IsNullOrWhiteSpace(probe.FailureReason)
-                    ? "Python runtime is unavailable."
-                    : probe.FailureReason);
-            }
-
-            _pythonPath = probe.ExecutablePath;
-            return _pythonPath;
-        }
-        finally
-        {
-            _pythonPathLock.Release();
-        }
-    }
-
-    private static string GetHelperPath()
-    {
-        var helperPath = Path.Combine(
-            AppContext.BaseDirectory,
-            "Assets",
-            "VapourSynthEditor",
-            "python",
-            "preview_host.py");
-
-        if (!File.Exists(helperPath))
-        {
-            throw new FileNotFoundException("VapourSynth preview helper was not found.", helperPath);
-        }
-
-        return helperPath;
-    }
-
-    private void HostProcess_ErrorDataReceived(object sender, DataReceivedEventArgs e)
-    {
-        if (string.IsNullOrWhiteSpace(e.Data))
+        if (string.IsNullOrWhiteSpace(line))
         {
             return;
         }
@@ -325,25 +244,25 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
                 _stderrBuffer.AppendLine();
             }
 
-            _stderrBuffer.Append(e.Data);
+            _stderrBuffer.Append(line);
         }
 
         EmitLog(
-            ClassifyHelperStderrLine(e.Data),
+            ClassifyHelperStderrLine(line),
             "helper",
-            e.Data);
+            line);
     }
 
     private async Task<HostResponseDto> ReadResponseAsync(CancellationToken cancellationToken)
     {
-        if (_hostOutputReader is null || _hostProcess is null)
+        if (_hostSession is null)
         {
             throw new InvalidOperationException("Preview helper output is unavailable.");
         }
 
         while (true)
         {
-            var line = await _hostOutputReader.ReadLineAsync(cancellationToken);
+            var line = await _hostSession.ReadLineAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(line))
             {
                 throw new InvalidOperationException(BuildHostFailureMessage(
@@ -371,57 +290,53 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
 
     private async Task CloseHostCoreAsync()
     {
-        var process = _hostProcess;
-        if (process is not null)
+        var session = _hostSession;
+        if (session is not null)
         {
             try
             {
-                if (!process.HasExited)
+                if (!session.HasExited)
                 {
-                    if (_hostInputWriter is not null)
-                    {
-                        var closeJson = JsonSerializer.Serialize(new CloseCommandDto("close"), JsonOptions);
-                        await _hostInputWriter.WriteLineAsync(closeJson);
-                    }
+                    var closeJson = JsonSerializer.Serialize(new CloseCommandDto("close"), JsonOptions);
+                    await session.WriteLineAsync(closeJson);
 
                     using var timeoutCancellationTokenSource = new CancellationTokenSource(_closeTimeout);
-                    await process.WaitForExitAsync(timeoutCancellationTokenSource.Token);
+                    await session.WaitForExitAsync(timeoutCancellationTokenSource.Token);
                 }
             }
             catch (Exception ex)
             {
-                WriteDiagnostic($"Preview helper graceful shutdown failed for PID {TryGetProcessId(process)}. {ex.GetType().Name}: {ex.Message}");
+                WriteDiagnostic($"Preview helper graceful shutdown failed for PID {session.ProcessId}. {ex.GetType().Name}: {ex.Message}");
 
                 try
                 {
-                    if (!process.HasExited)
+                    if (!session.HasExited)
                     {
-                        process.Kill(entireProcessTree: true);
+                        session.Kill(entireProcessTree: true);
                         using var killTimeoutCancellationTokenSource = new CancellationTokenSource(_killWaitTimeout);
-                        await process.WaitForExitAsync(killTimeoutCancellationTokenSource.Token);
+                        await session.WaitForExitAsync(killTimeoutCancellationTokenSource.Token);
                     }
                 }
                 catch (Exception killEx)
                 {
-                    WriteDiagnostic($"Preview helper forced shutdown failed for PID {TryGetProcessId(process)}. {killEx.GetType().Name}: {killEx.Message}");
+                    WriteDiagnostic($"Preview helper forced shutdown failed for PID {session.ProcessId}. {killEx.GetType().Name}: {killEx.Message}");
                 }
             }
 
-            process.ErrorDataReceived -= HostProcess_ErrorDataReceived;
-            process.Dispose();
+            session.StderrLineReceived -= HostSession_StderrLineReceived;
+            session.Dispose();
         }
 
-        _hostInputWriter?.Dispose();
-        _hostOutputReader?.Dispose();
-        _hostInputWriter = null;
-        _hostOutputReader = null;
-        _hostProcess = null;
+        _hostSession = null;
         _commandCounter = 0;
         _stderrTracebackActive = false;
 
         if (!string.IsNullOrWhiteSpace(_activeSessionPath))
         {
-            TryDeleteDirectory(_activeSessionPath);
+            BestEffortCleanup.DeleteDirectoryRecursively(
+                _activeSessionPath,
+                $"preview session directory '{_activeSessionPath}'",
+                WriteDiagnostic);
             _activeSessionPath = null;
         }
 
@@ -474,55 +389,9 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         }
     }
 
-    private void TryDeleteDirectory(string path)
-    {
-        Exception? lastError = null;
-
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                if (!Directory.Exists(path))
-                {
-                    return;
-                }
-
-                Directory.Delete(path, recursive: true);
-                return;
-            }
-            catch (Exception ex) when (attempt < 2)
-            {
-                lastError = ex;
-                Thread.Sleep(150 * (attempt + 1));
-            }
-            catch (Exception ex)
-            {
-                lastError = ex;
-                break;
-            }
-        }
-
-        if (lastError is not null)
-        {
-            WriteDiagnostic($"Failed to delete preview session directory '{path}'. {lastError.GetType().Name}: {lastError.Message}");
-        }
-    }
-
     private void WriteDiagnostic(string message)
     {
         AppDiagnosticsLog.Write(_appPaths, nameof(VapourSynthPreviewService), message);
-    }
-
-    private static int TryGetProcessId(Process process)
-    {
-        try
-        {
-            return process.Id;
-        }
-        catch
-        {
-            return -1;
-        }
     }
 
     private string BuildHostFailureMessage(string fallbackMessage)
