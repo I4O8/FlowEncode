@@ -408,7 +408,7 @@ public partial class MainWindowViewModel
         }
 
         AudioProcessingResult result;
-        string workflowLabel;
+        var workflowLabel = Texts.AudioWorkflowLabel(SelectedAudioWorkflow?.Value ?? AudioProcessingMode.Ddp);
 
         try
         {
