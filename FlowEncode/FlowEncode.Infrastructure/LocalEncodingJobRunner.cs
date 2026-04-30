@@ -74,7 +74,10 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     public string BuildDisplayCommand(EncodingJobRequest request)
     {
         var encoderPath = ResolveEncoderPath(request);
-        return BuildPlan(request, encoderPath, includeSourceMetadata: false).DisplayCommand;
+        return BuildPlan(
+            request,
+            encoderPath,
+            includeSourceMetadata: request.Profile.Kind == EncoderKind.SvtAv1).DisplayCommand;
     }
 
     public void AbortJob(Guid jobId)
@@ -375,6 +378,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 pumpOutput = PumpAsync(process.StandardOutput, HandleLine, cancellationToken);
                 pumpError = PumpAsync(process.StandardError, HandleLine, cancellationToken);
 
+                var sourceExitCodeShouldBeIgnored = false;
                 if (sourceProcess is null)
                 {
                     await process.WaitForExitAsync(cancellationToken);
@@ -383,21 +387,14 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 {
                     var encoderExitTask = process.WaitForExitAsync(cancellationToken);
                     var sourceExitTask = sourceProcess.WaitForExitAsync(cancellationToken);
-                    var pipeCopyTask = ObservePipeCopyAsync(copySourceToEncoder);
-                    var firstCompletedTask = await Task.WhenAny(
-                        encoderExitTask,
+                    var pipeCopyTask = ProcessPipelineMonitor.ObservePipeCopyAsync(copySourceToEncoder);
+                    var ignoreSourceExitCode = false;
+                    var firstCompletion = await ProcessPipelineMonitor.WaitForFirstCompletionAsync(
                         sourceExitTask,
+                        encoderExitTask,
                         pipeCopyTask);
 
-                    if (ReferenceEquals(firstCompletedTask, encoderExitTask))
-                    {
-                        var encoderExitCode = await GetExitCodeAsync(process, encoderExitTask);
-                        if (encoderExitCode != 0)
-                        {
-                            activeExecution.Terminate();
-                        }
-                    }
-                    else if (ReferenceEquals(firstCompletedTask, sourceExitTask))
+                    if (firstCompletion == PipelineFirstCompletion.ProducerExited)
                     {
                         var firstSourceExitCode = await GetExitCodeAsync(sourceProcess, sourceExitTask);
                         if (firstSourceExitCode != 0)
@@ -405,17 +402,33 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                             activeExecution.Terminate();
                         }
                     }
+                    else if (firstCompletion == PipelineFirstCompletion.ConsumerExited)
+                    {
+                        ignoreSourceExitCode = true;
+                        TryTerminateProcess(sourceProcess);
+                    }
+                    else if (firstCompletion == PipelineFirstCompletion.PipeBroken)
+                    {
+                        ignoreSourceExitCode = true;
+                        TryTerminateProcess(sourceProcess);
+                    }
 
                     await Task.WhenAll(
                         encoderExitTask,
                         sourceExitTask,
                         pipeCopyTask);
+
+                    sourceExitCodeShouldBeIgnored = ignoreSourceExitCode;
                 }
 
                 activeExecution.Terminate();
                 await Task.WhenAll(pumpOutput, pumpError, pumpSourceError);
                 var exitCode = process.ExitCode;
                 var sourceExitCode = sourceProcess?.ExitCode;
+                if (sourceExitCodeShouldBeIgnored)
+                {
+                    sourceExitCode = null;
+                }
                 _activeExecutions.TryRemove(request.JobId, out _);
                 activeExecution.Dispose();
                 activeExecution = null;
@@ -492,7 +505,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
             try
             {
-                await Task.WhenAll(ObservePipeCopyAsync(copySourceToEncoder), pumpOutput, pumpError, pumpSourceError);
+                await Task.WhenAll(ProcessPipelineMonitor.ObservePipeCopyAsync(copySourceToEncoder), pumpOutput, pumpError, pumpSourceError);
             }
             catch (OperationCanceledException)
             {
@@ -2130,24 +2143,29 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         }
     }
 
-    private static async Task ObservePipeCopyAsync(Task copyTask)
-    {
-        try
-        {
-            await copyTask;
-        }
-        catch (IOException)
-        {
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-    }
-
     private static async Task<int> GetExitCodeAsync(Process process, Task waitForExitTask)
     {
         await waitForExitTask;
         return process.ExitCode;
+    }
+
+    private static bool TryTerminateProcess(Process process)
+    {
+        try
+        {
+            if (process.HasExited)
+            {
+                return false;
+            }
+
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(2000);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static ParsedProgressSnapshot? ApplyStageProgress(ParsedProgressSnapshot? progressSnapshot, EncodingExecutionStep step)

@@ -210,6 +210,38 @@ public sealed class LocalEncodingJobRunnerSmokeTests
     }
 
     [TestMethod]
+    public void BuildDisplayCommand_SvtAv1Y4m_IncludesSourceMetadataArguments()
+    {
+        var sourcePath = EnsureSmokeSource();
+        var outputPath = Path.Combine(SmokeRoot, "svt-preview.ivf");
+        var runner = CreateRunner(EncoderKind.SvtAv1, @"E:\cmct_encode\encoders\svt-av1\x64\SvtAv1EncApp.exe");
+
+        var command = runner.BuildDisplayCommand(new EncodingJobRequest(
+            Guid.NewGuid(),
+            new EncodingProfile(
+                EncoderKind.SvtAv1,
+                "preview-svt",
+                "preview",
+                "8",
+                string.Empty,
+                string.Empty,
+                RateControlMode.Crf,
+                40,
+                null,
+                "ivf",
+                string.Empty,
+                string.Empty),
+            sourcePath,
+            outputPath,
+            InputPipelineKind.Y4mFile,
+            EncoderArchitecture.X64));
+
+        StringAssert.Contains(command, "--width 64");
+        StringAssert.Contains(command, "--height 64");
+        StringAssert.Contains(command, "--input-depth 8");
+    }
+
+    [TestMethod]
     public async Task RunAsync_X264_FfmpegPipeSinglePass_Completes()
     {
         var sourcePath = EnsureSmokeMp4();

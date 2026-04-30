@@ -661,13 +661,14 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
             var ffmpegExitTask = ffmpegProcess.WaitForExitAsync(cancellationToken);
             var opusExitTask = opusProcess.WaitForExitAsync(cancellationToken);
-            var pipeCopyTask = ObservePipeCopyAsync(copyPcmToOpus);
-            var firstCompletedTask = await Task.WhenAny(
+            var pipeCopyTask = ProcessPipelineMonitor.ObservePipeCopyAsync(copyPcmToOpus);
+            var ffmpegExitCodeShouldBeIgnored = false;
+            var firstCompletion = await ProcessPipelineMonitor.WaitForFirstCompletionAsync(
                 ffmpegExitTask,
                 opusExitTask,
                 pipeCopyTask);
 
-            if (ReferenceEquals(firstCompletedTask, ffmpegExitTask))
+            if (firstCompletion == PipelineFirstCompletion.ProducerExited)
             {
                 var ffmpegExitCode = await GetExitCodeAsync(ffmpegProcess, ffmpegExitTask);
                 if (ffmpegExitCode != 0)
@@ -675,13 +676,23 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                     activeExecution.Terminate();
                 }
             }
-            else if (ReferenceEquals(firstCompletedTask, opusExitTask))
+            else if (firstCompletion == PipelineFirstCompletion.ConsumerExited)
             {
                 var opusExitCode = await GetExitCodeAsync(opusProcess, opusExitTask);
                 if (opusExitCode != 0)
                 {
                     activeExecution.Terminate();
                 }
+                else
+                {
+                    ffmpegExitCodeShouldBeIgnored = true;
+                    TryTerminate(ffmpegProcess);
+                }
+            }
+            else if (firstCompletion == PipelineFirstCompletion.PipeBroken)
+            {
+                ffmpegExitCodeShouldBeIgnored = true;
+                TryTerminate(ffmpegProcess);
             }
 
             await Task.WhenAll(
@@ -690,7 +701,8 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                 pipeCopyTask);
             await Task.WhenAll(pumpFfmpegError, pumpOpusOutput, pumpOpusError, pumpSupplementalProgress);
 
-            return BuildOpusPipelineExecutionResult(ffmpegProcess.ExitCode, opusProcess.ExitCode);
+            var ffmpegExitCode = ffmpegExitCodeShouldBeIgnored ? 0 : ffmpegProcess.ExitCode;
+            return BuildOpusPipelineExecutionResult(ffmpegExitCode, opusProcess.ExitCode);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -699,7 +711,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             try
             {
                 await Task.WhenAll(
-                    ObservePipeCopyAsync(copyPcmToOpus),
+                    ProcessPipelineMonitor.ObservePipeCopyAsync(copyPcmToOpus),
                     pumpFfmpegError,
                     pumpOpusOutput,
                     pumpOpusError,
@@ -718,7 +730,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             try
             {
                 await Task.WhenAll(
-                    ObservePipeCopyAsync(copyPcmToOpus),
+                    ProcessPipelineMonitor.ObservePipeCopyAsync(copyPcmToOpus),
                     pumpFfmpegError,
                     pumpOpusOutput,
                     pumpOpusError,
@@ -1842,20 +1854,6 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         }
     }
 
-    private static async Task ObservePipeCopyAsync(Task copyTask)
-    {
-        try
-        {
-            await copyTask;
-        }
-        catch (IOException)
-        {
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-    }
-
     private static ProcessExecutionResult BuildOpusPipelineExecutionResult(int ffmpegExitCode, int opusExitCode)
     {
         if (ffmpegExitCode == 0 && opusExitCode == 0)
@@ -1974,17 +1972,21 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         return process.ExitCode;
     }
 
-    private static void TryTerminate(Process process)
+    private static bool TryTerminate(Process process)
     {
         try
         {
-            if (!process.HasExited)
+            if (process.HasExited)
             {
-                process.Kill(true);
+                return false;
             }
+
+            process.Kill(true);
+            return true;
         }
         catch
         {
+            return false;
         }
     }
 
