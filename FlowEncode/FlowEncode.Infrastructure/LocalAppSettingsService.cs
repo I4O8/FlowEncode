@@ -14,6 +14,7 @@ public sealed class LocalAppSettingsService : IAppSettingsService
     private readonly LocalAppPaths _paths;
     private readonly object _gate = new();
     private AppSettings? _cache;
+    private SettingsLoadRecoveryInfo? _lastLoadRecoveryInfo;
 
     public LocalAppSettingsService(LocalAppPaths paths)
     {
@@ -32,6 +33,7 @@ public sealed class LocalAppSettingsService : IAppSettingsService
             if (!File.Exists(_paths.SettingsPath))
             {
                 _cache = AppSettings.Default;
+                _lastLoadRecoveryInfo = null;
                 return _cache;
             }
 
@@ -39,9 +41,11 @@ public sealed class LocalAppSettingsService : IAppSettingsService
             {
                 var json = File.ReadAllText(_paths.SettingsPath);
                 _cache = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? AppSettings.Default;
+                _lastLoadRecoveryInfo = null;
             }
-            catch
+            catch (Exception ex)
             {
+                _lastLoadRecoveryInfo = RecoverBrokenSettingsFileUnsafe(ex);
                 _cache = AppSettings.Default;
             }
 
@@ -54,8 +58,93 @@ public sealed class LocalAppSettingsService : IAppSettingsService
         lock (_gate)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_paths.SettingsPath) ?? _paths.SettingsRootPath);
-            File.WriteAllText(_paths.SettingsPath, JsonSerializer.Serialize(settings, JsonOptions));
+            var tempPath = _paths.SettingsPath + ".tmp";
+            try
+            {
+                File.WriteAllText(tempPath, JsonSerializer.Serialize(settings, JsonOptions));
+                File.Move(tempPath, _paths.SettingsPath, true);
+            }
+            finally
+            {
+                TryDeleteFile(tempPath);
+            }
+
             _cache = settings;
         }
     }
+
+    public SettingsLoadRecoveryInfo? ConsumeLastLoadRecoveryInfo()
+    {
+        lock (_gate)
+        {
+            var info = _lastLoadRecoveryInfo;
+            _lastLoadRecoveryInfo = null;
+            return info;
+        }
+    }
+
+    private SettingsLoadRecoveryInfo RecoverBrokenSettingsFileUnsafe(Exception exception)
+    {
+        var brokenPath = BuildBrokenSettingsBackupPath();
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_paths.SettingsPath) ?? _paths.SettingsRootPath);
+            File.Move(_paths.SettingsPath, brokenPath, overwrite: false);
+        }
+        catch (Exception moveException)
+        {
+            return new SettingsLoadRecoveryInfo(
+                _paths.SettingsPath,
+                null,
+                exception.Message,
+                moveException.Message);
+        }
+
+        return new SettingsLoadRecoveryInfo(
+            _paths.SettingsPath,
+            brokenPath,
+            exception.Message,
+            null);
+    }
+
+    private string BuildBrokenSettingsBackupPath()
+    {
+        var directory = Path.GetDirectoryName(_paths.SettingsPath) ?? _paths.SettingsRootPath;
+        var fileName = Path.GetFileName(_paths.SettingsPath);
+
+        for (var attempt = 0; attempt < 1000; attempt++)
+        {
+            var suffix = attempt == 0
+                ? DateTime.Now.ToString("yyyyMMdd_HHmmss")
+                : $"{DateTime.Now:yyyyMMdd_HHmmss}_{attempt + 1}";
+            var candidate = Path.Combine(directory, $"{fileName}.broken-{suffix}");
+            if (!File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return Path.Combine(directory, $"{fileName}.broken-{Guid.NewGuid():N}");
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
+    }
 }
+
+public sealed record SettingsLoadRecoveryInfo(
+    string SettingsPath,
+    string? BackupPath,
+    string LoadError,
+    string? BackupError);

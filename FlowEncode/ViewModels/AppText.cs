@@ -1418,6 +1418,26 @@ public sealed class AppText
     public string ErrorDeleteFailedTitle => Pick("删除失败", "Delete Failed");
     public string ErrorPinFailedTitle => Pick("置顶操作失败", "Pin Action Failed");
     public string ErrorSaveSettingsFailedTitle => Pick("保存设置失败", "Save Settings Failed");
+    public string SettingsRecoveredTitle => Pick("设置已恢复默认值", "Settings Reset to Defaults");
+    public string SettingsRecoveredMessage(string? backupPath, string loadError, string? backupError)
+    {
+        if (IsChinese)
+        {
+            if (!string.IsNullOrWhiteSpace(backupPath))
+            {
+                return $"设置文件读取失败，程序已回退到默认设置，并备份损坏文件：{backupPath}\n\n原始错误：{loadError}";
+            }
+
+            return $"设置文件读取失败，程序已回退到默认设置，但未能备份原文件。\n\n读取错误：{loadError}\n备份错误：{backupError ?? "未知错误"}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(backupPath))
+        {
+            return $"The settings file could not be read. FlowEncode reset to defaults and backed up the broken file to:\n{backupPath}\n\nOriginal error: {loadError}";
+        }
+
+        return $"The settings file could not be read. FlowEncode reset to defaults, but the original file could not be backed up.\n\nLoad error: {loadError}\nBackup error: {backupError ?? "Unknown error"}";
+    }
     public string ErrorCannotSaveTemplateTitle => Pick("无法保存模板", "Unable to Save Template");
     public string EmptyTemplateNameMessage => Pick("模板名称不能为空。", "Template name cannot be empty.");
     public string IncompleteTemplateMessage => Pick("请先选择一个预设，并填写模板名称。", "Select a preset and provide a template name first.");

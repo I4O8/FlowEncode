@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FlowEncode.Application;
 using FlowEncode.Domain;
+using FlowEncode.Infrastructure;
 using FlowEncode.ViewModels;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
@@ -33,8 +34,11 @@ public sealed partial class MainWindow : Window
     private const int DashboardCardCount = 6;
     private static readonly TimeSpan SetupGuideWheelPageTurnCooldown = TimeSpan.FromMilliseconds(280);
     private readonly AppLaunchActivation _launchActivation;
+    private readonly LocalAppSettingsService _localAppSettingsService;
     private readonly SemaphoreSlim _externalVapourSynthOpenLock = new(1, 1);
     private readonly TaskCompletionSource<bool> _windowReadyCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private DataPackageView? _activeDragDataView;
+    private bool? _activeDragContainsSupportedScript;
     private bool _isWindowReady;
     private bool _hasCompletedInitialization;
     private bool _isPersistingSettings;
@@ -66,10 +70,11 @@ public sealed partial class MainWindow : Window
 
     public MainWindowViewModel ViewModel { get; }
 
-    public MainWindow(MainWindowViewModel viewModel, AppLaunchActivation launchActivation)
+    public MainWindow(MainWindowViewModel viewModel, AppLaunchActivation launchActivation, LocalAppSettingsService localAppSettingsService)
     {
         ViewModel = viewModel;
         _launchActivation = launchActivation;
+        _localAppSettingsService = localAppSettingsService;
         InitializeComponent();
 
         RootLayout.DataContext = ViewModel;
@@ -163,6 +168,7 @@ public sealed partial class MainWindow : Window
         UpdateAdaptiveLayout(RootLayout.ActualWidth);
         await Task.Yield();
         await ViewModel.InitializeAsync();
+        await ShowRecoveredSettingsNoticeIfNeededAsync();
         ApplyTheme(ViewModel.CurrentThemePreference);
         if (_launchActivation.HasRequestedVapourSynthFile)
         {
@@ -178,11 +184,19 @@ public sealed partial class MainWindow : Window
         _windowReadyCompletionSource.TrySetResult(true);
     }
 
-    private void RootLayout_DragOver(object sender, DragEventArgs e)
+    private async void RootLayout_DragOver(object sender, DragEventArgs e)
     {
-        e.AcceptedOperation = ContainsSupportedScriptFile(e.DataView)
+        var deferral = e.GetDeferral();
+        try
+        {
+            e.AcceptedOperation = await ContainsSupportedScriptFileAsync(e.DataView)
             ? DataPackageOperation.Copy
             : DataPackageOperation.None;
+        }
+        finally
+        {
+            deferral.Complete();
+        }
     }
 
     private async void RootLayout_Drop(object sender, DragEventArgs e)
@@ -203,7 +217,13 @@ public sealed partial class MainWindow : Window
         }
 
         e.AcceptedOperation = DataPackageOperation.Copy;
+        ResetActiveDragState();
         await HandleExternalVapourSynthOpenAsync(file.Path);
+    }
+
+    private void RootLayout_DragLeave(object sender, DragEventArgs e)
+    {
+        ResetActiveDragState();
     }
 
     private void RootLayout_ActualThemeChanged(FrameworkElement sender, object args)
@@ -1999,6 +2019,22 @@ public sealed partial class MainWindow : Window
         await dialog.ShowAsync();
     }
 
+    private async Task ShowRecoveredSettingsNoticeIfNeededAsync()
+    {
+        var recoveryInfo = _localAppSettingsService.ConsumeLastLoadRecoveryInfo();
+        if (recoveryInfo is null)
+        {
+            return;
+        }
+
+        await ShowMessageAsync(
+            ViewModel.Texts.SettingsRecoveredTitle,
+            ViewModel.Texts.SettingsRecoveredMessage(
+                recoveryInfo.BackupPath,
+                recoveryInfo.LoadError,
+                recoveryInfo.BackupError));
+    }
+
     private async Task<SavedTemplate?> TrySaveCurrentTemplateAsync()
     {
         var normalizedTemplateName = ViewModel.DraftTemplateName?.Trim() ?? string.Empty;
@@ -2297,24 +2333,40 @@ public sealed partial class MainWindow : Window
         ApplyTitleBarColors(RootLayout.ActualTheme);
     }
 
-    private static bool ContainsSupportedScriptFile(DataPackageView dataView)
+    private async Task<bool> ContainsSupportedScriptFileAsync(DataPackageView dataView)
     {
         if (!dataView.Contains(StandardDataFormats.StorageItems))
         {
             return false;
         }
 
+        if (ReferenceEquals(_activeDragDataView, dataView) && _activeDragContainsSupportedScript.HasValue)
+        {
+            return _activeDragContainsSupportedScript.Value;
+        }
+
         try
         {
-            var storageItems = dataView.GetStorageItemsAsync().AsTask().GetAwaiter().GetResult();
-            return storageItems
+            var storageItems = await dataView.GetStorageItemsAsync().AsTask();
+            var containsSupportedScript = storageItems
                 .OfType<StorageFile>()
                 .Any(static item => AppLaunchActivation.IsSupportedScriptExtension(item.Path));
+            _activeDragDataView = dataView;
+            _activeDragContainsSupportedScript = containsSupportedScript;
+            return containsSupportedScript;
         }
         catch
         {
+            _activeDragDataView = dataView;
+            _activeDragContainsSupportedScript = false;
             return false;
         }
+    }
+
+    private void ResetActiveDragState()
+    {
+        _activeDragDataView = null;
+        _activeDragContainsSupportedScript = null;
     }
 
     private async Task<bool> PersistSettingsAsync(bool refreshTemplateLibrary)
