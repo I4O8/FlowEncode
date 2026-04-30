@@ -57,4 +57,25 @@ public sealed class LocalEncodingJobRunnerProgressParsingTests
 
         Assert.IsNull(parsed);
     }
+
+    [TestMethod]
+    public void ShouldSurfaceLineDuringSourcePreparationForTesting_WithNeutralLine_ReturnsFalse()
+    {
+        const string line = "x265 [info]: HEVC encoder version 4.1";
+
+        var result = LocalEncodingJobRunner.ShouldSurfaceLineDuringSourcePreparationForTesting(line);
+
+        Assert.IsFalse(result);
+    }
+
+    [TestMethod]
+    public void ShouldSurfaceLineDuringSourcePreparationForTesting_WithFailureLine_ReturnsTrue()
+    {
+        const string line = "x265 [error]: failed to open output file";
+
+        var result = LocalEncodingJobRunner.ShouldSurfaceLineDuringSourcePreparationForTesting(line);
+
+        Assert.IsTrue(result);
+    }
+
 }

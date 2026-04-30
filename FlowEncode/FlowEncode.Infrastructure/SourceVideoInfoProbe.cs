@@ -16,11 +16,15 @@ internal sealed partial class SourceVideoInfoProbe
         _toolLocator = toolLocator;
     }
 
-    public SourceVideoInfo? Probe(string sourcePath, InputPipelineKind pipelineKind)
+    public SourceVideoInfo? Probe(
+        string sourcePath,
+        InputPipelineKind pipelineKind,
+        Action<string>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         return pipelineKind switch
         {
-            InputPipelineKind.VapourSynth => ProbeVapourSynth(sourcePath),
+            InputPipelineKind.VapourSynth => ProbeVapourSynth(sourcePath, progress, cancellationToken),
             InputPipelineKind.Y4mFile => ProbeY4m(sourcePath),
             InputPipelineKind.FfmpegPipe => ProbeFfprobe(sourcePath),
             InputPipelineKind.RawYuvFile => null,
@@ -28,9 +32,11 @@ internal sealed partial class SourceVideoInfoProbe
         };
     }
 
-    private SourceVideoInfo ProbeVapourSynth(string sourcePath)
+    private SourceVideoInfo ProbeVapourSynth(string sourcePath, Action<string>? progress, CancellationToken cancellationToken)
     {
         var executablePath = _toolLocator.ResolveVspipe();
+        var errorBuilder = new StringBuilder();
+        var errorGate = new object();
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo
@@ -44,11 +50,58 @@ internal sealed partial class SourceVideoInfoProbe
             }
         };
 
+        process.ErrorDataReceived += (_, e) =>
+        {
+            var normalized = ConsoleOutputLineNormalizer.Normalize(e.Data);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return;
+            }
+
+            lock (errorGate)
+            {
+                if (errorBuilder.Length > 0)
+                {
+                    errorBuilder.AppendLine();
+                }
+
+                errorBuilder.Append(normalized);
+            }
+
+            progress?.Invoke(normalized);
+        };
+
         VapourSynthRuntimePathResolver.EnrichProcessPath(process.StartInfo);
         process.Start();
+        using var cancellationRegistration = cancellationToken.Register(static state =>
+        {
+            if (state is not Process cancellableProcess)
+            {
+                return;
+            }
+
+            try
+            {
+                if (!cancellableProcess.HasExited)
+                {
+                    cancellableProcess.Kill(entireProcessTree: true);
+                }
+            }
+            catch
+            {
+            }
+        }, process);
+
+        process.BeginErrorReadLine();
         var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
         process.WaitForExit();
+
+        cancellationToken.ThrowIfCancellationRequested();
+        string error;
+        lock (errorGate)
+        {
+            error = errorBuilder.ToString();
+        }
 
         if (process.ExitCode != 0)
         {

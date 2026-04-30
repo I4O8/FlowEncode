@@ -11,7 +11,7 @@ namespace FlowEncode.Infrastructure;
 public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 {
     private static readonly Regex DeewStageProgressRegex = new(@"Stage progress:\s*(?<value>\d{1,3}(?:\.\d+)?)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex DeewDisplayProgressRegex = new(@"\[\s*(?<stage>DEE:[^\]]+)\]\s*[- ]*(?<value>\d{1,3}(?:\.\d+)?)\s*%", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex DeewDisplayProgressRegex = new(@"\[\s*(?<stage>DEE\s*:[^\]]+)\]\s*.*?(?<value>\d{1,3}(?:\.\d+)?)\s*%", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex Eac3ToProcessProgressRegex = new(@"^\s*process:\s*(?<value>\d{1,3}(?:\.\d+)?)\s*%", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex Eac3ToAdditionalPassNeededRegex = new(@"(?<pass>\d+)(?:st|nd|rd|th)\s+pass\s+will\s+be\s+necessary", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex Eac3ToStartingPassRegex = new(@"Starting\s+(?<pass>\d+)(?:st|nd|rd|th)\s+pass", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -249,6 +249,9 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         var hasReportedProgress = false;
         var lastReportedLine = string.Empty;
         var lastReportedDetailLine = string.Empty;
+        var deewPhase = request.Mode == AudioProcessingMode.Ddp
+            ? DeewProgressPhase.FfmpegPreparation
+            : DeewProgressPhase.None;
         AudioProcessingTelemetry? lastReportedTelemetry = null;
         var lastReportedPhaseLabel = string.Empty;
         var lastLoggedLine = string.Empty;
@@ -271,10 +274,16 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             lock (gate)
             {
                 var now = DateTimeOffset.UtcNow;
-                var rawLine = line;
-                eac3ToProgressState?.Update(line);
-                opusTelemetryState?.Update(line);
-                var parsedProgress = ParseProgress(request, line);
+                var rawLine = ConsoleOutputLineNormalizer.Normalize(line);
+                if (string.IsNullOrWhiteSpace(rawLine))
+                {
+                    return;
+                }
+
+                deewPhase = UpdateDeewPhase(request.Mode, deewPhase, rawLine);
+                eac3ToProgressState?.Update(rawLine);
+                opusTelemetryState?.Update(rawLine);
+                var parsedProgress = ParseProgress(request, rawLine);
                 if (parsedProgress.HasValue)
                 {
                     if (eac3ToProgressState is not null)
@@ -293,8 +302,8 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
                 var phaseLabel = eac3ToProgressState?.PhaseLabel ?? string.Empty;
                 var telemetry = opusTelemetryState?.Build(hasKnownProgress ? lastProgress : null);
-                var detailLine = NormalizeDetailLine(request, rawLine, parsedProgress);
-                line = NormalizeDisplayLine(request, rawLine, parsedProgress);
+                var detailLine = NormalizeDetailLine(request, rawLine, parsedProgress, deewPhase);
+                line = NormalizeDisplayLine(request, rawLine, parsedProgress, deewPhase);
                 var telemetryChanged = !EqualityComparer<AudioProcessingTelemetry?>.Default.Equals(telemetry, lastReportedTelemetry);
                 var phaseChanged = !string.Equals(phaseLabel, lastReportedPhaseLabel, StringComparison.Ordinal);
                 if (string.IsNullOrWhiteSpace(line))
@@ -315,7 +324,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                             request.JobId,
                             EncodingJobState.Running,
                             hasKnownProgress ? lastProgress : null,
-                            BuildRunningSummary(language, request.Mode, lastProgress, hasKnownProgress, lastReportedLine, phaseLabel),
+                            BuildRunningSummary(language, request.Mode, lastProgress, hasKnownProgress, lastReportedLine, phaseLabel, deewPhase),
                             lastReportedDetailLine,
                             telemetry,
                             phaseLabel);
@@ -336,7 +345,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                             request.JobId,
                             EncodingJobState.Running,
                             hasKnownProgress ? lastProgress : null,
-                            BuildRunningSummary(language, request.Mode, lastProgress, hasKnownProgress, lastReportedLine, phaseLabel),
+                            BuildRunningSummary(language, request.Mode, lastProgress, hasKnownProgress, lastReportedLine, phaseLabel, deewPhase),
                             lastReportedDetailLine,
                             null,
                             phaseLabel);
@@ -383,7 +392,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                     request.JobId,
                     EncodingJobState.Running,
                     hasKnownProgress ? lastProgress : null,
-                    BuildRunningSummary(language, request.Mode, lastProgress, hasKnownProgress, line, phaseLabel),
+                    BuildRunningSummary(language, request.Mode, lastProgress, hasKnownProgress, line, phaseLabel, deewPhase),
                     detailLine,
                     telemetry,
                     phaseLabel);
@@ -1099,9 +1108,9 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
     {
         startInfo.Environment["PYTHONUTF8"] = "1";
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
-        startInfo.Environment["NO_COLOR"] = "1";
-        startInfo.Environment["TERM"] = "dumb";
-        startInfo.Environment.Remove("FORCE_COLOR");
+        startInfo.Environment["FORCE_COLOR"] = "1";
+        startInfo.Environment["TERM"] = "xterm-256color";
+        startInfo.Environment.Remove("NO_COLOR");
 
         var pathEntries = new[]
         {
@@ -1149,6 +1158,9 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             : null;
     }
 
+    internal static double? ParseDeewProgressForTesting(string line)
+        => ParseDeewProgress(ConsoleOutputLineNormalizer.Normalize(line));
+
     private static double? ParseEac3ToProgress(string line)
     {
         var match = Eac3ToProcessProgressRegex.Match(line);
@@ -1187,7 +1199,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
     {
         if (parsedProgress.HasValue)
         {
-            return (reachedReportWindow || progressAdvancedEnough) && (lineChanged || progressAdvancedEnough);
+            return progressAdvancedEnough || (reachedReportWindow && lineChanged);
         }
 
         if (ToolLogLineClassifier.LooksLikeDeewConsoleProgressLine(line))
@@ -1259,14 +1271,14 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         return true;
     }
 
-    private string NormalizeDetailLine(AudioProcessingRequest request, string line, double? parsedProgress)
+    private string NormalizeDetailLine(AudioProcessingRequest request, string line, double? parsedProgress, DeewProgressPhase deewPhase)
     {
         return request.Mode == AudioProcessingMode.Ddp
             ? line
-            : NormalizeDisplayLine(request, line, parsedProgress);
+            : NormalizeDisplayLine(request, line, parsedProgress, deewPhase);
     }
 
-    private string NormalizeDisplayLine(AudioProcessingRequest request, string line, double? parsedProgress)
+    private string NormalizeDisplayLine(AudioProcessingRequest request, string line, double? parsedProgress, DeewProgressPhase deewPhase)
     {
         if (request.Mode == AudioProcessingMode.Ddp)
         {
@@ -1275,9 +1287,11 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                 return $"process: {NormalizeRunningProgress(parsedProgress.Value) * 100:0.#}%";
             }
 
-            return LooksLikeDeewWarmupLine(line)
+            return deewPhase == DeewProgressPhase.FfmpegPreparation && LooksLikeDeewWarmupLine(line)
                 ? GetDeewWarmupDisplayLine()
-                : line;
+                : deewPhase == DeewProgressPhase.DeeEncoding && LooksLikeDeewPhaseTransitionLine(line)
+                    ? GetDeewEncodeDisplayLine(GetLanguage())
+                    : line;
         }
 
         if (request.Mode != AudioProcessingMode.Opus)
@@ -1321,8 +1335,38 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
         return line.Contains("ffmpeg", StringComparison.OrdinalIgnoreCase)
             || line.Contains("starting", StringComparison.OrdinalIgnoreCase)
-            || line.Contains("dee -x", StringComparison.OrdinalIgnoreCase)
             || line.Contains("[output]", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeDeewPhaseTransitionLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line) || LooksLikeFailureLine(line))
+        {
+            return false;
+        }
+
+        return line.Contains("running the following commands", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("dee -x", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("encoding summary", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("dolby encoding engine wrapper", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("dee version", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("[ dee:", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("[dee:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static DeewProgressPhase UpdateDeewPhase(AudioProcessingMode mode, DeewProgressPhase currentPhase, string line)
+    {
+        if (mode != AudioProcessingMode.Ddp)
+        {
+            return DeewProgressPhase.None;
+        }
+
+        if (ParseDeewProgress(line).HasValue || LooksLikeDeewPhaseTransitionLine(line))
+        {
+            return DeewProgressPhase.DeeEncoding;
+        }
+
+        return currentPhase;
     }
 
     private static bool LooksLikeFailureLine(string line)
@@ -1606,7 +1650,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                     continue;
                 }
 
-                if (!char.IsControl(character) || character == '\t')
+                if (!char.IsControl(character) || character is '\t' or '\u001B')
                 {
                     segmentBuilder.Append(character);
                 }
@@ -1807,7 +1851,8 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         double progress,
         bool hasKnownProgress,
         string line,
-        string? phaseLabel = null)
+        string? phaseLabel = null,
+        DeewProgressPhase deewPhase = DeewProgressPhase.None)
     {
         if (hasKnownProgress)
         {
@@ -1816,7 +1861,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                 AudioProcessingMode.Eac3To => string.IsNullOrWhiteSpace(phaseLabel)
                     ? T(language, $"eac3to {progress * 100:0.#}%", $"eac3to 转换中 {progress * 100:0.#}%")
                     : T(language, $"eac3to {phaseLabel} · {progress * 100:0.#}%", $"eac3to 转换中 {phaseLabel} · {progress * 100:0.#}%"),
-                AudioProcessingMode.Ddp => T(language, $"DDP {progress * 100:0.#}%", $"DDP 转换中 {progress * 100:0.#}%"),
+                AudioProcessingMode.Ddp => T(language, $"DEE encoding {progress * 100:0.#}%", $"DEE 编码中 {progress * 100:0.#}%"),
                 AudioProcessingMode.Opus => T(language, $"Opus {progress * 100:0.##}%", $"Opus 转换中 {progress * 100:0.##}%"),
                 _ => T(language, $"Audio processing {progress * 100:0.#}%", $"音频处理中 {progress * 100:0.#}%")
             };
@@ -1825,6 +1870,11 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         if (mode == AudioProcessingMode.Eac3To && !string.IsNullOrWhiteSpace(phaseLabel))
         {
             return T(language, $"eac3to {phaseLabel}", $"eac3to 转换中 {phaseLabel}");
+        }
+
+        if (mode == AudioProcessingMode.Ddp && deewPhase == DeewProgressPhase.DeeEncoding)
+        {
+            return GetDeewEncodeDisplayLine(language);
         }
 
         return string.IsNullOrWhiteSpace(line)
@@ -1880,6 +1930,9 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
     private static string GetDeewWarmupDisplayLine(AppLanguage language) =>
         T(language, "FFmpeg is preparing the source. Please wait...", "ffmpeg 处理中，请稍后...");
 
+    private static string GetDeewEncodeDisplayLine(AppLanguage language) =>
+        T(language, "DEE encoding in progress...", "DEE 编码中，请稍后...");
+
     private static string T(AppLanguage language, string en, string zh) =>
         language == AppLanguage.English ? en : zh;
 
@@ -1904,6 +1957,25 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
     private static string NormalizeConsoleSegment(string text)
     {
         return ConsoleOutputLineNormalizer.Normalize(text);
+    }
+
+    internal string NormalizeDisplayLineForTesting(
+        AudioProcessingRequest request,
+        string line,
+        double? parsedProgress,
+        string deewPhase)
+    {
+        var phase = Enum.TryParse<DeewProgressPhase>(deewPhase, ignoreCase: true, out var parsedPhase)
+            ? parsedPhase
+            : DeewProgressPhase.None;
+        return NormalizeDisplayLine(request, line, parsedProgress, phase);
+    }
+
+    private enum DeewProgressPhase
+    {
+        None,
+        FfmpegPreparation,
+        DeeEncoding
     }
 
 }

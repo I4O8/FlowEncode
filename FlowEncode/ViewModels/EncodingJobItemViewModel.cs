@@ -26,8 +26,10 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     private long? _estimatedFileSizeBytes;
     private string _summary;
     private string _detailLine;
+    private bool _isSourcePreparation;
     private string _log;
     private string _logFilePath;
+    private string _displayCommand;
     private CancellationTokenSource? _cancellationTokenSource;
     private readonly StringBuilder _logBuilder = new();
     private string _lastMeaningfulLogLine;
@@ -38,7 +40,7 @@ public sealed class EncodingJobItemViewModel : ObservableObject
         AppLanguage language = AppLanguage.Chinese)
     {
         Request = request;
-        DisplayCommand = displayCommand;
+        _displayCommand = displayCommand;
         _language = language;
         _state = EncodingJobState.Queued;
         _summary = T("等待编码器空闲", "Waiting for the encoder");
@@ -77,7 +79,11 @@ public sealed class EncodingJobItemViewModel : ObservableObject
         _ => T("未知", "Unknown")
     };
 
-    public string DisplayCommand { get; }
+    public string DisplayCommand
+    {
+        get => _displayCommand;
+        private set => SetProperty(ref _displayCommand, value);
+    }
 
     public EncodingJobState State
     {
@@ -131,6 +137,13 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     {
         get
         {
+            if (IsSourcePreparation)
+            {
+                return string.IsNullOrWhiteSpace(Summary)
+                    ? T("源处理中...", "Preparing source...")
+                    : Summary;
+            }
+
             var segments = new List<string> { ProgressPercentLabel };
 
             if (CurrentFrame.HasValue || TotalFrames.HasValue)
@@ -156,6 +169,11 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     {
         get
         {
+            if (IsSourcePreparation)
+            {
+                return DetailLine;
+            }
+
             var etaLabel = $"{T("预计剩余", "eta")} {FormatEta(Eta)}";
             var estimatedSizeLabel = $"{T("预计大小", "est. size")} {FormatByteSize(EstimatedFileSizeBytes)}";
 
@@ -202,13 +220,42 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     public string Summary
     {
         get => _summary;
-        private set => SetProperty(ref _summary, value);
+        private set
+        {
+            if (SetProperty(ref _summary, value))
+            {
+                OnPropertyChanged(nameof(ProgressTelemetryLabel));
+                OnPropertyChanged(nameof(ProgressTelemetryPrimaryLine));
+            }
+        }
     }
 
     public string DetailLine
     {
         get => _detailLine;
-        private set => SetProperty(ref _detailLine, value);
+        private set
+        {
+            if (SetProperty(ref _detailLine, value))
+            {
+                OnPropertyChanged(nameof(ProgressTelemetryLabel));
+                OnPropertyChanged(nameof(ProgressTelemetrySecondaryLine));
+            }
+        }
+    }
+
+    public bool IsSourcePreparation
+    {
+        get => _isSourcePreparation;
+        private set
+        {
+            if (SetProperty(ref _isSourcePreparation, value))
+            {
+                OnPropertyChanged(nameof(ProgressTelemetryLabel));
+                OnPropertyChanged(nameof(ProgressTelemetryPrimaryLine));
+                OnPropertyChanged(nameof(ProgressTelemetrySecondaryLine));
+                OnPropertyChanged(nameof(IsProgressIndeterminate));
+            }
+        }
     }
 
     public string Log
@@ -231,7 +278,10 @@ public sealed class EncodingJobItemViewModel : ObservableObject
 
     public bool CanRemove => State != EncodingJobState.Running;
 
-    public bool IsProgressIndeterminate => State == EncodingJobState.Running && !ProgressFraction.HasValue && !CurrentFrame.HasValue;
+    public bool IsProgressIndeterminate => State == EncodingJobState.Running
+        && !ProgressFraction.HasValue
+        && !CurrentFrame.HasValue
+        && !IsSourcePreparation;
 
     public string StateLabel => State switch
     {
@@ -269,6 +319,14 @@ public sealed class EncodingJobItemViewModel : ObservableObject
         _cancellationTokenSource = null;
     }
 
+    public void UpdateDisplayCommand(string displayCommand)
+    {
+        if (!string.IsNullOrWhiteSpace(displayCommand))
+        {
+            DisplayCommand = displayCommand;
+        }
+    }
+
     public void RequestCancellation()
     {
         _cancellationTokenSource?.Cancel();
@@ -285,6 +343,7 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     {
         State = progress.State;
         ProgressFraction = progress.ProgressFraction;
+        IsSourcePreparation = progress.IsSourcePreparation;
         ApplySnapshot(progress.Snapshot);
         Summary = progress.Summary;
         DetailLine = progress.DetailLine;
@@ -298,6 +357,7 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     public void ApplyResult(EncodingJobResult result)
     {
         State = result.State;
+        IsSourcePreparation = false;
         ProgressFraction = result.State == EncodingJobState.Completed ? 1.0 : ProgressFraction;
         Eta = result.State == EncodingJobState.Completed ? TimeSpan.Zero : null;
 
@@ -315,6 +375,7 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     public void MarkCancelled(string summary, string detail)
     {
         State = EncodingJobState.Cancelled;
+        IsSourcePreparation = false;
         Eta = null;
         Summary = summary;
         DetailLine = detail;
@@ -324,6 +385,7 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     public void MarkFailed(string summary, string detail)
     {
         State = EncodingJobState.Failed;
+        IsSourcePreparation = false;
         Eta = null;
         Summary = summary;
         DetailLine = detail;

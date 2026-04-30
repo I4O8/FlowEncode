@@ -279,7 +279,8 @@ public partial class MainWindowViewModel
             : _isAudioProcessingRunning
                 && AudioProcessingProgressIsIndeterminate
                 && (_activeAudioProcessingMode ?? SelectedAudioWorkflow?.Value) == AudioProcessingMode.Ddp
-                    ? Texts.AudioProcessingDdpWarmupHint
+                    && string.Equals(AudioProcessingStatusText, Texts.AudioProcessingDdpWarmupHint, StringComparison.Ordinal)
+                        ? Texts.AudioProcessingDdpWarmupHint
                     : string.Empty;
 
     public Visibility AudioProcessingProgressSecondaryVisibility =>
@@ -1357,6 +1358,14 @@ public partial class MainWindowViewModel
 
         if (string.IsNullOrWhiteSpace(normalized))
         {
+            RefreshCompactAudioProcessingLogText();
+            return;
+        }
+
+        if ((_activeAudioProcessingMode ?? SelectedAudioWorkflow?.Value) == AudioProcessingMode.Ddp
+            && string.Equals(normalized, Texts.AudioProcessingDdpWarmupHint, StringComparison.Ordinal))
+        {
+            _audioProcessingLiveLogLine = normalized;
             RefreshCompactAudioProcessingLogText();
             return;
         }

@@ -191,6 +191,108 @@ public sealed class CliAudioProcessingRunnerTests
         Assert.IsFalse(Directory.EnumerateFiles(outputDirectory).Any(file => new FileInfo(file).Length == 0));
     }
 
+    [TestMethod]
+    public async Task RunAsync_Ddp_WithStereoSource_ReportsDeeProgressUpdates()
+    {
+        var sourcePath = EnsureStereoSmokeWav();
+        var outputDirectory = Path.Combine(AudioSmokeRoot, "ddp-stereo-progress");
+        if (Directory.Exists(outputDirectory))
+        {
+            Directory.Delete(outputDirectory, recursive: true);
+        }
+
+        Directory.CreateDirectory(outputDirectory);
+        var runner = CreateRunner(new StubToolProbeService(new Dictionary<RegisteredToolKind, string>
+        {
+            [RegisteredToolKind.Deew] = GetDetectedPath("deew.exe"),
+            [RegisteredToolKind.Dee] = GetDetectedPath("dee.exe"),
+            [RegisteredToolKind.Ffmpeg] = GetDetectedPath("ffmpeg.exe"),
+            [RegisteredToolKind.Ffprobe] = GetDetectedPath("ffprobe.exe")
+        }));
+
+        var request = CreateDdpRequest(sourcePath, outputDirectory);
+        var progressUpdates = new List<AudioProcessingProgress>();
+        var progress = new Progress<AudioProcessingProgress>(update => progressUpdates.Add(update));
+
+        var result = await runner.RunAsync(request, progress);
+
+        Assert.AreEqual(EncodingJobState.Completed, result.State);
+        Assert.IsTrue(
+            progressUpdates.Any(update => update.ProgressFraction is > 0 and < 1),
+            "Expected at least one in-flight DEE progress update.");
+        Assert.IsTrue(
+            progressUpdates.Any(update =>
+                !string.IsNullOrWhiteSpace(update.Summary)
+                && update.Summary.Contains("DEE", StringComparison.OrdinalIgnoreCase)
+                && update.ProgressFraction is > 0 and < 1),
+            "Expected DEE progress updates to surface DEE stage summary.");
+    }
+
+    [TestMethod]
+    public void NormalizeDisplayLineForTesting_DdpSwitchesFromWarmupToDeeStage()
+    {
+        var runner = CreateRunner();
+        var request = CreateDdpRequest(@"D:\audio\input.wav", @"D:\audio\out");
+
+        var warmupDisplay = runner.NormalizeDisplayLineForTesting(
+            request,
+            "ffmpeg -y -drc_scale 0 -i [input] ...",
+            parsedProgress: null,
+            deewPhase: "FfmpegPreparation");
+        var deeDisplay = runner.NormalizeDisplayLineForTesting(
+            request,
+            "Running the following commands:",
+            parsedProgress: null,
+            deewPhase: "DeeEncoding");
+
+        StringAssert.Contains(warmupDisplay, "FFmpeg", StringComparison.OrdinalIgnoreCase);
+        StringAssert.Contains(deeDisplay, "DEE", StringComparison.OrdinalIgnoreCase);
+        Assert.IsFalse(deeDisplay.Contains("FFmpeg", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [TestMethod]
+    public void ParseDeewProgressForTesting_WithRichFfmpegProgressLine_ReturnsNull()
+    {
+        const string line = "[ ffmpeg | demo.wav                           ] ----------------------- 100.00%";
+
+        var parsed = CliAudioProcessingRunner.ParseDeewProgressForTesting(line);
+
+        Assert.IsNull(parsed);
+    }
+
+    [TestMethod]
+    public void ParseDeewProgressForTesting_WithRichDeeProgressLine_ParsesPercent()
+    {
+        const string line = "[ DEE: encode | demo.wav      (-18 dB) ] ------ ----------------- 25.00%";
+
+        var parsed = CliAudioProcessingRunner.ParseDeewProgressForTesting(line);
+
+        Assert.IsNotNull(parsed);
+        Assert.AreEqual(0.25, parsed.Value, 0.000001);
+    }
+
+    [TestMethod]
+    public void ParseDeewProgressForTesting_WithAnsiRichDeeProgressLine_ParsesPercent()
+    {
+        const string line = "\u001b[38;5;39m[ DEE: measure | demo.wav ] ------------------------- 17.43%\u001b[0m";
+
+        var parsed = CliAudioProcessingRunner.ParseDeewProgressForTesting(line);
+
+        Assert.IsNotNull(parsed);
+        Assert.AreEqual(0.1743, parsed.Value, 0.000001);
+    }
+
+    [TestMethod]
+    public void ParseDeewProgressForTesting_WithRealDeeProgressLine_ParsesPercent()
+    {
+        const string line = "[ DEE: measure | 5280 PID 4352 48000 8ch e... ] - ----------------------- 6.25%";
+
+        var parsed = CliAudioProcessingRunner.ParseDeewProgressForTesting(line);
+
+        Assert.IsNotNull(parsed);
+        Assert.AreEqual(0.0625, parsed.Value, 0.000001);
+    }
+
     private static readonly string AudioSmokeRoot = Path.Combine(
         Path.GetTempPath(),
         "FlowEncodeAudioSmoke");

@@ -975,6 +975,14 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     public string SelectedJobProgressPercentText => SelectedJob?.ProgressPercentLabel ?? "0%";
 
+    public Visibility SelectedJobDetailedMetricsVisibility => SelectedJob?.IsSourcePreparation == true
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+
+    public Visibility SelectedJobSourcePreparationVisibility => SelectedJob?.IsSourcePreparation == true
+        ? Visibility.Visible
+        : Visibility.Collapsed;
+
     public string SelectedJobFramesText => BuildSelectedJobFramesText();
 
     public string SelectedJobFpsText => SelectedJob?.FramesPerSecond is > 0
@@ -1654,32 +1662,34 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public async Task<string?> QueueCurrentJobAsync(bool startImmediately = false)
+    public Task<string?> QueueCurrentJobAsync(bool startImmediately = false)
     {
         try
         {
             var hasRunningJob = GetRunningEncodingJobCount() >= GetMaxConcurrentEncodingJobCount();
             var request = CreateDraftRequest();
-            var displayCommand = await BuildDisplayCommandAsync(request);
-
-            var job = new EncodingJobItemViewModel(request, displayCommand, CurrentLanguagePreference);
+            var job = new EncodingJobItemViewModel(
+                request,
+                Texts.Pick("正在生成实际执行命令...", "Resolving the actual command..."),
+                CurrentLanguagePreference);
 
             Jobs.Add(job);
             SelectedJob = job;
             RaiseJobSummaryPropertyChanges();
 
             StatusText = Texts.JobQueuedStatus(Path.GetFileName(request.SourcePath), startImmediately, hasRunningJob);
+            _ = ResolveJobDisplayCommandAsync(job, request);
 
             if (startImmediately)
             {
-                _ = ProcessQueueAsync();
+                _ = ProcessQueueAfterUiRefreshAsync();
             }
 
-            return null;
+            return Task.FromResult<string?>(null);
         }
         catch (Exception ex)
         {
-            return ex.Message;
+            return Task.FromResult<string?>(ex.Message);
         }
     }
 
@@ -1724,37 +1734,39 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return Task.CompletedTask;
     }
 
-    public async Task<string?> RestartJobAsync(EncodingJobItemViewModel? job)
+    public Task<string?> RestartJobAsync(EncodingJobItemViewModel? job)
     {
         if (job is null)
         {
-            return Texts.Pick("未找到要重启的任务。", "The job to restart was not found.");
+            return Task.FromResult<string?>(Texts.Pick("未找到要重启的任务。", "The job to restart was not found."));
         }
 
         if (!job.CanRestart)
         {
-            return Texts.Pick("只有已完成、失败或已取消的任务才能重启。", "Only completed, failed, or cancelled jobs can be restarted.");
+            return Task.FromResult<string?>(Texts.Pick("只有已完成、失败或已取消的任务才能重启。", "Only completed, failed, or cancelled jobs can be restarted."));
         }
 
         try
         {
             var request = job.Request with { JobId = Guid.NewGuid() };
             EnsureRequestConstraintsSatisfied(request);
-            var displayCommand = await BuildDisplayCommandAsync(request);
-
-            var restartedJob = new EncodingJobItemViewModel(request, displayCommand, CurrentLanguagePreference);
+            var restartedJob = new EncodingJobItemViewModel(
+                request,
+                Texts.Pick("正在生成实际执行命令...", "Resolving the actual command..."),
+                CurrentLanguagePreference);
 
             Jobs.Add(restartedJob);
             SelectedJob = restartedJob;
             RaiseJobSummaryPropertyChanges();
 
             StatusText = Texts.JobRestartedStatus(restartedJob.SourceFileName);
-            _ = ProcessQueueAsync();
-            return null;
+            _ = ResolveJobDisplayCommandAsync(restartedJob, request);
+            _ = ProcessQueueAfterUiRefreshAsync();
+            return Task.FromResult<string?>(null);
         }
         catch (Exception ex)
         {
-            return ex.Message;
+            return Task.FromResult<string?>(ex.Message);
         }
     }
 
@@ -1877,6 +1889,13 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
 
         return Task.CompletedTask;
+    }
+
+    private async Task ProcessQueueAfterUiRefreshAsync()
+    {
+        await Task.Yield();
+        await Task.Delay(50);
+        await ProcessQueueAsync();
     }
 
     private int GetRunningEncodingJobCount()
@@ -3490,6 +3509,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         OnPropertyChanged(nameof(SelectedJobProgressPrimaryText));
         OnPropertyChanged(nameof(SelectedJobProgressSecondaryText));
         OnPropertyChanged(nameof(SelectedJobProgressPercentText));
+        OnPropertyChanged(nameof(SelectedJobDetailedMetricsVisibility));
+        OnPropertyChanged(nameof(SelectedJobSourcePreparationVisibility));
         OnPropertyChanged(nameof(SelectedJobFramesText));
         OnPropertyChanged(nameof(SelectedJobFpsText));
         OnPropertyChanged(nameof(SelectedJobBitrateText));
@@ -3517,8 +3538,13 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 OnPropertyChanged(nameof(SelectedJobSummary));
                 break;
 
+            case nameof(EncodingJobItemViewModel.DisplayCommand):
+                OnPropertyChanged(nameof(SelectedJobCommandText));
+                break;
+
             case nameof(EncodingJobItemViewModel.ProgressValue):
             case nameof(EncodingJobItemViewModel.ProgressPercentLabel):
+            case nameof(EncodingJobItemViewModel.IsSourcePreparation):
             case nameof(EncodingJobItemViewModel.CurrentFrame):
             case nameof(EncodingJobItemViewModel.TotalFrames):
             case nameof(EncodingJobItemViewModel.FramesPerSecond):
@@ -3866,6 +3892,22 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         CancellationToken cancellationToken = default)
     {
         return Task.Run(() => _jobRunner.BuildDisplayCommand(request), cancellationToken);
+    }
+
+    private async Task ResolveJobDisplayCommandAsync(EncodingJobItemViewModel job, EncodingJobRequest request)
+    {
+        try
+        {
+            var displayCommand = await BuildDisplayCommandAsync(request);
+            job.UpdateDisplayCommand(displayCommand);
+            if (ReferenceEquals(SelectedJob, job))
+            {
+                OnPropertyChanged(nameof(SelectedJobCommandText));
+            }
+        }
+        catch
+        {
+        }
     }
 
     private DiscoveredEncoderBinary? ResolveEncoderFromCachedSources(

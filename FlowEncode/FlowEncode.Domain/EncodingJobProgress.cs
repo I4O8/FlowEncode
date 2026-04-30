@@ -6,4 +6,5 @@ public sealed record EncodingJobProgress(
     double? ProgressFraction,
     string Summary,
     string DetailLine,
-    EncodingProgressSnapshot? Snapshot = null);
+    EncodingProgressSnapshot? Snapshot = null,
+    bool IsSourcePreparation = false);

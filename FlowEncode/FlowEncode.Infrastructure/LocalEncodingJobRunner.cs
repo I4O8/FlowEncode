@@ -92,10 +92,10 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     {
         var language = GetLanguage();
         var encoderPath = ResolveEncoderPath(request);
-        var plan = BuildPlan(request, encoderPath, includeSourceMetadata: true);
         var visibleLogBuilder = new StringBuilder();
         var currentState = EncodingJobState.Running;
         var progressDispatchState = new ProgressDispatchState(DateTimeOffset.UtcNow, 0.0, 0, string.Empty);
+        var pipelineKind = ResolvePipelineKind(request);
         var outputDirectory = Path.GetDirectoryName(request.OutputPath);
         var rawLogPath = CreateTemporaryRawLogPath(request);
         var lineGate = new object();
@@ -108,10 +108,41 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         Process? activeProcess = null;
         Process? activeSourceProcess = null;
         ManagedProcessExecution? activeExecution = null;
+        EncodingExecutionPlan? plan = null;
 
         if (!string.IsNullOrWhiteSpace(outputDirectory))
         {
             Directory.CreateDirectory(outputDirectory);
+        }
+
+        void ReportSourceProbeProgress(string line)
+        {
+            var normalizedLine = EncoderConsoleLineNormalizer.Normalize(line);
+            if (string.IsNullOrWhiteSpace(normalizedLine))
+            {
+                return;
+            }
+
+            var sourceDisplayLine = $"[source] {normalizedLine}";
+            var sourcePreparationProgressPercent = ParseSourcePreparationProgressPercent(normalizedLine);
+
+            lock (lineGate)
+            {
+                rawLogWriter.WriteLine(sourceDisplayLine);
+                visibleLogBuilder.AppendLine(sourceDisplayLine);
+                TrimVisibleLogIfNeeded(visibleLogBuilder);
+            }
+
+            progress?.Report(new EncodingJobProgress(
+                request.JobId,
+                currentState,
+                sourcePreparationProgressPercent.HasValue
+                    ? Math.Clamp(sourcePreparationProgressPercent.Value / 100.0, 0.0, 1.0)
+                    : null,
+                BuildSourceProbeSummary(language, sourcePreparationProgressPercent),
+                sourceDisplayLine,
+                Snapshot: null,
+                IsSourcePreparation: true));
         }
 
         async Task CloseRawLogWriterAsync()
@@ -135,16 +166,36 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             await rawLogWriter.DisposeAsync();
         }
 
-        progress?.Report(new EncodingJobProgress(
-            request.JobId,
-            EncodingJobState.Running,
-            0.0,
-            BuildStageStartingSummary(language, plan.Steps[0]),
-            plan.DisplayCommand,
-            BuildInitialSnapshot(plan)));
-
         try
         {
+            if (pipelineKind == InputPipelineKind.VapourSynth)
+            {
+                progress?.Report(new EncodingJobProgress(
+                    request.JobId,
+                    EncodingJobState.Running,
+                    null,
+                    BuildSourceProbeSummary(language, null),
+                    "[source] Probing source metadata...",
+                    Snapshot: null,
+                    IsSourcePreparation: true));
+            }
+
+            plan = BuildPlan(
+                request,
+                encoderPath,
+                includeSourceMetadata: true,
+                pipelineKind,
+                pipelineKind == InputPipelineKind.VapourSynth ? ReportSourceProbeProgress : null,
+                cancellationToken);
+
+            progress?.Report(new EncodingJobProgress(
+                request.JobId,
+                EncodingJobState.Running,
+                0.0,
+                BuildStageStartingSummary(language, plan.Steps[0]),
+                plan.DisplayCommand,
+                BuildInitialSnapshot(plan)));
+
             foreach (var step in plan.Steps)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -226,6 +277,14 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
                         var progressSnapshot = ParseProgressSnapshot(plan.Kind, plan.TotalFrames, plan.SourceFramesPerSecond, normalizedLine);
                         var stageAwareProgress = ApplyStageProgress(progressSnapshot, step);
+                        if (sourceProcess is not null
+                            && !sourceProcess.HasExited
+                            && stageAwareProgress?.ProgressFraction is null
+                            && !ShouldSurfaceLineDuringSourcePreparation(normalizedLine))
+                        {
+                            return;
+                        }
+
                         if (!ShouldReportProgress(plan.Kind, normalizedLine, stageAwareProgress, ref progressDispatchState))
                         {
                             return;
@@ -267,9 +326,13 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                         pendingProgress = new EncodingJobProgress(
                             request.JobId,
                             currentState,
-                            null,
+                            sourcePreparationProgressPercent.HasValue
+                                ? Math.Clamp(sourcePreparationProgressPercent.Value / 100.0, 0.0, 1.0)
+                                : null,
                             BuildSourceRunningSummary(language, step, sourcePreparationProgressPercent),
-                            sourceDisplayLine);
+                            sourceDisplayLine,
+                            Snapshot: null,
+                            IsSourcePreparation: true);
                     }
 
                     if (pendingProgress is not null)
@@ -280,6 +343,17 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
                 if (sourceProcess is not null)
                 {
+                    progress?.Report(new EncodingJobProgress(
+                        request.JobId,
+                        currentState,
+                        null,
+                        BuildSourceRunningSummary(language, step, null),
+                        step.StageCount > 1
+                            ? $"[source] Pass {step.StageIndex}/{step.StageCount}: preparing source..."
+                            : "[source] Preparing source...",
+                        Snapshot: null,
+                        IsSourcePreparation: true));
+
                     copySourceToEncoder = CopyPipeAsync(
                         sourceProcess.StandardOutput.BaseStream,
                         process.StandardInput.BaseStream,
@@ -419,7 +493,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             }
 
             await CloseRawLogWriterAsync();
-            var cancelledLogPath = await WriteSidecarLogAsync(request, plan.DisplayCommand, currentState, -1, rawLogPath);
+            var cancelledLogPath = await WriteSidecarLogAsync(request, plan?.DisplayCommand ?? string.Empty, currentState, -1, rawLogPath);
             return new EncodingJobResult(
                 request.JobId,
                 currentState,
@@ -468,15 +542,20 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private EncodingExecutionPlan BuildPlan(
         EncodingJobRequest request,
         string encoderPath,
-        bool includeSourceMetadata)
+        bool includeSourceMetadata,
+        InputPipelineKind? pipelineKindOverride = null,
+        Action<string>? sourceProbeProgress = null,
+        CancellationToken cancellationToken = default)
     {
         var profile = request.Profile;
-        var pipelineKind = ResolvePipelineKind(request);
-        var sourceInfo = includeSourceMetadata || profile.Kind == EncoderKind.SvtAv1
+        var pipelineKind = pipelineKindOverride ?? ResolvePipelineKind(request);
+        var sourceInfo = includeSourceMetadata
             ? ResolveSourceInfo(
                 request,
                 pipelineKind,
-                profile.Kind == EncoderKind.SvtAv1 && pipelineKind != InputPipelineKind.RawYuvFile)
+                profile.Kind == EncoderKind.SvtAv1 && pipelineKind != InputPipelineKind.RawYuvFile,
+                sourceProbeProgress,
+                cancellationToken)
             : null;
         var preset = EncoderArgumentValueNormalizer.NormalizePresetForCli(profile.Kind, profile.Preset);
         var tune = EncoderArgumentValueNormalizer.NormalizeTuneForCli(profile.Kind, profile.Tune);
@@ -881,11 +960,17 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         }
     }
 
-    private SourceVideoInfo? ResolveSourceInfo(EncodingJobRequest request, InputPipelineKind pipelineKind, bool required)
+    private SourceVideoInfo? ResolveSourceInfo(
+        EncodingJobRequest request,
+        InputPipelineKind pipelineKind,
+        bool required,
+        Action<string>? sourceProbeProgress = null,
+        CancellationToken cancellationToken = default)
     {
         try
         {
-            var sourceInfo = _sourceInfoProbe.Probe(request.SourcePath, pipelineKind);
+            cancellationToken.ThrowIfCancellationRequested();
+            var sourceInfo = _sourceInfoProbe.Probe(request.SourcePath, pipelineKind, sourceProbeProgress, cancellationToken);
             if (sourceInfo is not null)
             {
                 return sourceInfo;
@@ -1475,6 +1560,14 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return true;
     }
 
+    private static bool ShouldSurfaceLineDuringSourcePreparation(string line)
+    {
+        return line.Contains("error", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("exception", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("traceback", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static ParsedProgressSnapshot? ParseProgressSnapshot(
         EncoderKind kind,
         long? totalFrames,
@@ -1703,6 +1796,9 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
     internal static int? ParseSourcePreparationProgressPercentForTesting(string line)
         => ParseSourcePreparationProgressPercent(EncoderConsoleLineNormalizer.Normalize(line));
+
+    internal static bool ShouldSurfaceLineDuringSourcePreparationForTesting(string line)
+        => ShouldSurfaceLineDuringSourcePreparation(EncoderConsoleLineNormalizer.Normalize(line));
 
     internal static string TrimVisibleLogForTesting(string text)
     {
@@ -2149,7 +2245,28 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     $"正在准备源 {sourcePreparationProgressPercent.Value}%");
         }
 
-        return BuildRunningSummary(language, step, progressFraction: null);
+        return step.StageCount > 1
+            ? T(
+                language,
+                $"Pass {step.StageIndex}/{step.StageCount}: preparing source...",
+                $"第 {step.StageIndex}/{step.StageCount} 遍：正在准备源...")
+            : T(
+                language,
+                "Preparing source...",
+                "正在准备源...");
+    }
+
+    private static string BuildSourceProbeSummary(AppLanguage language, int? sourcePreparationProgressPercent)
+    {
+        return sourcePreparationProgressPercent.HasValue
+            ? T(
+                language,
+                $"Preparing source {sourcePreparationProgressPercent.Value}%",
+                $"正在准备源 {sourcePreparationProgressPercent.Value}%")
+            : T(
+                language,
+                "Preparing source...",
+                "正在准备源...");
     }
 
     private static string BuildStageStartingDetail(AppLanguage language, EncodingExecutionStep step)
@@ -2277,9 +2394,9 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             WriteDiagnostic);
     }
 
-    private static void CleanupPlanArtifacts(EncodingExecutionPlan plan)
+    private static void CleanupPlanArtifacts(EncodingExecutionPlan? plan)
     {
-        if (plan.CleanupPaths is null)
+        if (plan?.CleanupPaths is null)
         {
             return;
         }
