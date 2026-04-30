@@ -617,6 +617,10 @@ allowed. Valid value(s): 1,2,6.
 
             throw new NotSupportedException();
         }
+
+        public void InvalidateCache()
+        {
+        }
     }
 
     private sealed class StubSettingsService : IAppSettingsService

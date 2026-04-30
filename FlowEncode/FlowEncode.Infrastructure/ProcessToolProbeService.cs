@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using FlowEncode.Application;
@@ -14,6 +15,7 @@ public sealed class ProcessToolProbeService : IToolProbeService
     private readonly LocalAppPaths _paths;
     private readonly IEncoderDiscoveryService _encoderDiscoveryService;
     private readonly IAppSettingsService _settingsService;
+    private readonly ConcurrentDictionary<ToolProbeCacheKey, Lazy<ToolProbeResult>> _probeCache = new();
 
     public ProcessToolProbeService(
         IToolRegistryService toolRegistryService,
@@ -36,7 +38,7 @@ public sealed class ProcessToolProbeService : IToolProbeService
 
             return _toolRegistryService
                 .GetTools()
-                .Select(definition => Probe(definition, cancellationToken, vsrepoInstalledCache))
+                .Select(definition => ProbeCached(definition, cancellationToken, vsrepoInstalledCache))
                 .ToList();
         }, cancellationToken);
     }
@@ -47,8 +49,42 @@ public sealed class ProcessToolProbeService : IToolProbeService
         {
             var definition = _toolRegistryService.GetTool(kind);
             var vsrepoInstalledCache = new Dictionary<string, VsrepoInstalledProbeResult>(StringComparer.OrdinalIgnoreCase);
-            return Probe(definition, cancellationToken, vsrepoInstalledCache);
+            return ProbeCached(definition, cancellationToken, vsrepoInstalledCache);
         }, cancellationToken);
+    }
+
+    public void InvalidateCache()
+    {
+        _probeCache.Clear();
+    }
+
+    private ToolProbeResult ProbeCached(
+        ToolDefinition definition,
+        CancellationToken cancellationToken,
+        IDictionary<string, VsrepoInstalledProbeResult> vsrepoInstalledCache)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var key = new ToolProbeCacheKey(definition.Kind, BuildProbeSignature(definition));
+        var lazy = _probeCache.GetOrAdd(
+            key,
+            _ => new Lazy<ToolProbeResult>(
+                () => Probe(definition, CancellationToken.None, vsrepoInstalledCache),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+
+        ToolProbeResult result;
+        try
+        {
+            result = lazy.Value;
+        }
+        catch
+        {
+            _probeCache.TryRemove(key, out _);
+            throw;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return result;
     }
 
     private ToolProbeResult Probe(
@@ -471,6 +507,255 @@ public sealed class ProcessToolProbeService : IToolProbeService
             failureReason,
             definition.ReleaseUrl,
             definition.ManagedExternalToolKind);
+    }
+
+    private string BuildProbeSignature(ToolDefinition definition)
+    {
+        var builder = new System.Text.StringBuilder();
+        builder.Append(definition.Kind)
+            .Append('|')
+            .Append(definition.ProbeMode)
+            .Append('|')
+            .Append(definition.VersionArguments)
+            .Append('|')
+            .Append(definition.ProbeValue)
+            .AppendLine();
+
+        AppendManualToolPath(builder, ManualToolPathKeys.ForRegisteredTool(definition.Kind));
+
+        foreach (var variableName in definition.EnvironmentVariableNames)
+        {
+            AppendEnvironmentValue(builder, variableName, EnvironmentVariableTarget.Process);
+            AppendEnvironmentValue(builder, variableName, EnvironmentVariableTarget.User);
+            AppendEnvironmentValue(builder, variableName, EnvironmentVariableTarget.Machine);
+        }
+
+        AppendEnvironmentValue(builder, "PATH", EnvironmentVariableTarget.Process);
+        AppendEnvironmentValue(builder, "PATH", EnvironmentVariableTarget.User);
+        AppendEnvironmentValue(builder, "PATH", EnvironmentVariableTarget.Machine);
+        builder.Append("toolsRoot=")
+            .Append(_paths.ToolsRootPath)
+            .AppendLine();
+
+        if (TryGetEncoderKind(definition.Kind) is { } encoderKind)
+        {
+            AppendEncoderProbeInputs(builder, encoderKind);
+        }
+
+        foreach (var candidate in EnumerateCandidates(definition).OrderBy(static item => item.Path, StringComparer.OrdinalIgnoreCase))
+        {
+            AppendCandidateFingerprint(builder, candidate.Path, candidate.Source, candidate.SourceLabel);
+        }
+
+        return builder.ToString();
+    }
+
+    private void AppendManualToolPath(System.Text.StringBuilder builder, string key)
+    {
+        var settings = _settingsService.Load();
+        settings.EffectiveManualToolPaths.TryGetValue(key, out var value);
+        builder.Append("manual:")
+            .Append(key)
+            .Append('=')
+            .Append(value)
+            .AppendLine();
+    }
+
+    private void AppendEncoderProbeInputs(System.Text.StringBuilder builder, EncoderKind encoderKind)
+    {
+        var executableNames = GetEncoderExecutableNames(encoderKind);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AppendManualToolPath(builder, ManualToolPathKeys.ForEncoder(encoderKind));
+        AppendResolvedManualToolFingerprint(
+            builder,
+            ManualToolPathKeys.ForEncoder(encoderKind),
+            executableNames,
+            seen);
+
+        foreach (var variableName in GetEncoderEnvironmentVariableNames(encoderKind))
+        {
+            AppendEnvironmentValueAndResolvedFingerprint(
+                builder,
+                variableName,
+                EnvironmentVariableTarget.Process,
+                executableNames,
+                seen);
+            AppendEnvironmentValueAndResolvedFingerprint(
+                builder,
+                variableName,
+                EnvironmentVariableTarget.User,
+                executableNames,
+                seen);
+            AppendEnvironmentValueAndResolvedFingerprint(
+                builder,
+                variableName,
+                EnvironmentVariableTarget.Machine,
+                executableNames,
+                seen);
+        }
+
+        foreach (var architecture in Enum.GetValues<EncoderArchitecture>())
+        {
+            AppendCandidateFingerprintIfNew(
+                builder,
+                _paths.GetBinaryPath(encoderKind, architecture),
+                ToolDetectionSource.LocalToolset,
+                architecture.ToString(),
+                seen);
+        }
+
+        foreach (var root in EnumeratePathRoots())
+        {
+            foreach (var executableName in executableNames)
+            {
+                var pathCandidate = Path.Combine(root, executableName);
+                if (File.Exists(pathCandidate))
+                {
+                    AppendCandidateFingerprintIfNew(
+                        builder,
+                        pathCandidate,
+                        ToolDetectionSource.Path,
+                        "PATH",
+                        seen);
+                }
+            }
+        }
+    }
+
+    private void AppendResolvedManualToolFingerprint(
+        System.Text.StringBuilder builder,
+        string key,
+        IReadOnlyList<string> executableNames,
+        ISet<string> seen)
+    {
+        var settings = _settingsService.Load();
+        if (!settings.EffectiveManualToolPaths.TryGetValue(key, out var value))
+        {
+            return;
+        }
+
+        var resolved = ResolveFromInput(value, executableNames);
+        if (!string.IsNullOrWhiteSpace(resolved))
+        {
+            AppendCandidateFingerprintIfNew(
+                builder,
+                resolved,
+                ToolDetectionSource.ManualSelection,
+                "manual",
+                seen);
+        }
+    }
+
+    private static void AppendEnvironmentValueAndResolvedFingerprint(
+        System.Text.StringBuilder builder,
+        string variableName,
+        EnvironmentVariableTarget target,
+        IReadOnlyList<string> executableNames,
+        ISet<string> seen)
+    {
+        var value = Environment.GetEnvironmentVariable(variableName, target);
+        builder.Append("env:")
+            .Append(target)
+            .Append(':')
+            .Append(variableName)
+            .Append('=')
+            .Append(value)
+            .AppendLine();
+
+        var resolved = ResolveFromInput(value, executableNames);
+        if (!string.IsNullOrWhiteSpace(resolved))
+        {
+            AppendCandidateFingerprintIfNew(
+                builder,
+                resolved,
+                ToolDetectionSource.EnvironmentVariable,
+                variableName,
+                seen);
+        }
+    }
+
+    private static void AppendCandidateFingerprintIfNew(
+        System.Text.StringBuilder builder,
+        string path,
+        ToolDetectionSource source,
+        string sourceLabel,
+        ISet<string> seen)
+    {
+        var normalizedPath = Path.GetFullPath(path);
+        if (!seen.Add(normalizedPath))
+        {
+            return;
+        }
+
+        AppendCandidateFingerprint(builder, normalizedPath, source, sourceLabel);
+    }
+
+    private static void AppendEnvironmentValue(
+        System.Text.StringBuilder builder,
+        string variableName,
+        EnvironmentVariableTarget target)
+    {
+        builder.Append("env:")
+            .Append(target)
+            .Append(':')
+            .Append(variableName)
+            .Append('=')
+            .Append(Environment.GetEnvironmentVariable(variableName, target))
+            .AppendLine();
+    }
+
+    private static void AppendCandidateFingerprint(
+        System.Text.StringBuilder builder,
+        string path,
+        ToolDetectionSource source,
+        string sourceLabel)
+    {
+        var normalizedPath = Path.GetFullPath(path);
+        var fileInfo = new FileInfo(normalizedPath);
+        builder.Append("candidate:")
+            .Append(source)
+            .Append('|')
+            .Append(sourceLabel)
+            .Append('|')
+            .Append(normalizedPath)
+            .Append('|')
+            .Append(fileInfo.Exists ? fileInfo.Length : -1)
+            .Append('|')
+            .Append(fileInfo.Exists ? fileInfo.LastWriteTimeUtc.Ticks : -1)
+            .AppendLine();
+    }
+
+    private static EncoderKind? TryGetEncoderKind(RegisteredToolKind kind)
+    {
+        return kind switch
+        {
+            RegisteredToolKind.X264 => EncoderKind.X264,
+            RegisteredToolKind.X265 => EncoderKind.X265,
+            RegisteredToolKind.SvtAv1 => EncoderKind.SvtAv1,
+            _ => null
+        };
+    }
+
+    private static IReadOnlyList<string> GetEncoderEnvironmentVariableNames(EncoderKind kind)
+    {
+        return kind switch
+        {
+            EncoderKind.X264 => ["FLOWENCODE_X264", "X264_PATH", "X264_EXE", "X264"],
+            EncoderKind.X265 => ["FLOWENCODE_X265", "X265_PATH", "X265_EXE", "X265"],
+            EncoderKind.SvtAv1 => ["FLOWENCODE_AV1", "SVT_AV1_PATH", "SVTAV1_PATH", "SVTAV1", "AV1_ENCODER", "AV1"],
+            _ => []
+        };
+    }
+
+    private static IReadOnlyList<string> GetEncoderExecutableNames(EncoderKind kind)
+    {
+        return kind switch
+        {
+            EncoderKind.X264 => ["x264.exe"],
+            EncoderKind.X265 => ["x265.exe"],
+            EncoderKind.SvtAv1 => ["SvtAv1EncApp.exe", "svt-av1.exe"],
+            _ => []
+        };
     }
 
     private IEnumerable<ToolCandidate> EnumerateCandidates(ToolDefinition definition)
@@ -904,6 +1189,8 @@ public sealed class ProcessToolProbeService : IToolProbeService
         string FailureReason);
 
     private sealed record VsrepoInstalledLine(string DisplayName, string Namespace, string Identifier);
+
+    private sealed record ToolProbeCacheKey(RegisteredToolKind Kind, string Signature);
 
     private sealed record ToolCandidate(string Path, ToolDetectionSource Source, string SourceLabel);
 }

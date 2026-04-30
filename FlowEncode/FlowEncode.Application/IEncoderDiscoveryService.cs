@@ -10,4 +10,6 @@ public interface IEncoderDiscoveryService
         EncoderKind kind,
         EncoderArchitecture preferredArchitecture,
         bool preferSystemEncoders);
+
+    void InvalidateCache();
 }

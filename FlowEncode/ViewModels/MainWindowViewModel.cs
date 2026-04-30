@@ -41,6 +41,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     private readonly IAppSettingsService _settingsService;
     private readonly ISetupGuideCacheService _setupGuideCacheService;
     private readonly IToolRegistryService _toolRegistryService;
+    private readonly IToolProbeService _toolProbeService;
     private readonly IEncoderDiscoveryService _encoderDiscoveryService;
     private readonly IEnvironmentReadinessService _environmentReadinessService;
     private readonly ISetupBootstrapService _setupBootstrapService;
@@ -158,6 +159,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         IAppSettingsService settingsService,
         ISetupGuideCacheService setupGuideCacheService,
         IToolRegistryService toolRegistryService,
+        IToolProbeService toolProbeService,
         IEncoderDiscoveryService encoderDiscoveryService,
         IEnvironmentReadinessService environmentReadinessService,
         ISetupBootstrapService setupBootstrapService,
@@ -177,6 +179,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         _settingsService = settingsService;
         _setupGuideCacheService = setupGuideCacheService;
         _toolRegistryService = toolRegistryService;
+        _toolProbeService = toolProbeService;
         _encoderDiscoveryService = encoderDiscoveryService;
         _environmentReadinessService = environmentReadinessService;
         _setupBootstrapService = setupBootstrapService;
@@ -1305,6 +1308,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 QueueCompletionAction);
 
             _settingsService.Save(settings);
+            _encoderDiscoveryService.InvalidateCache();
+            _toolProbeService.InvalidateCache();
             WorkspaceRootPath = normalizedWorkspaceRootPath;
             if (updateStatusText)
             {

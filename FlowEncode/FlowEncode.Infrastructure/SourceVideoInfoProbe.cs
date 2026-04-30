@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
@@ -10,6 +11,7 @@ namespace FlowEncode.Infrastructure;
 internal sealed partial class SourceVideoInfoProbe
 {
     private readonly ExternalToolLocator _toolLocator;
+    private readonly ConcurrentDictionary<SourceVideoInfoCacheKey, Lazy<SourceVideoInfo?>> _cache = new();
 
     public SourceVideoInfoProbe(ExternalToolLocator toolLocator)
     {
@@ -20,7 +22,48 @@ internal sealed partial class SourceVideoInfoProbe
         string sourcePath,
         InputPipelineKind pipelineKind,
         Action<string>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowCached = false)
+    {
+        if (allowCached && TryBuildCacheKey(sourcePath, pipelineKind) is { } cacheKey)
+        {
+            return ProbeCached(cacheKey, sourcePath, pipelineKind, progress, cancellationToken);
+        }
+
+        return ProbeCore(sourcePath, pipelineKind, progress, cancellationToken);
+    }
+
+    private SourceVideoInfo? ProbeCached(
+        SourceVideoInfoCacheKey cacheKey,
+        string sourcePath,
+        InputPipelineKind pipelineKind,
+        Action<string>? progress,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var lazy = _cache.GetOrAdd(
+            cacheKey,
+            _ => new Lazy<SourceVideoInfo?>(
+                () => ProbeCore(sourcePath, pipelineKind, progress, cancellationToken),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+
+        try
+        {
+            return lazy.Value;
+        }
+        catch
+        {
+            _cache.TryRemove(cacheKey, out _);
+            throw;
+        }
+    }
+
+    private SourceVideoInfo? ProbeCore(
+        string sourcePath,
+        InputPipelineKind pipelineKind,
+        Action<string>? progress,
+        CancellationToken cancellationToken)
     {
         return pipelineKind switch
         {
@@ -30,6 +73,36 @@ internal sealed partial class SourceVideoInfoProbe
             InputPipelineKind.RawYuvFile => null,
             _ => null
         };
+    }
+
+    private static SourceVideoInfoCacheKey? TryBuildCacheKey(string sourcePath, InputPipelineKind pipelineKind)
+    {
+        if (pipelineKind == InputPipelineKind.RawYuvFile || string.IsNullOrWhiteSpace(sourcePath))
+        {
+            return null;
+        }
+
+        string normalizedPath;
+        try
+        {
+            normalizedPath = Path.GetFullPath(sourcePath);
+        }
+        catch
+        {
+            normalizedPath = sourcePath.Trim();
+        }
+
+        var fileInfo = new FileInfo(normalizedPath);
+        if (!fileInfo.Exists)
+        {
+            return null;
+        }
+
+        return new SourceVideoInfoCacheKey(
+            normalizedPath,
+            pipelineKind,
+            fileInfo.Length,
+            fileInfo.LastWriteTimeUtc.Ticks);
     }
 
     private SourceVideoInfo ProbeVapourSynth(string sourcePath, Action<string>? progress, CancellationToken cancellationToken)
@@ -990,4 +1063,10 @@ if __name__ == "__main__":
 
     [GeneratedRegex(@"(?<bits>8|9|10|12|14|16)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex BitDepthRegex();
+
+    private sealed record SourceVideoInfoCacheKey(
+        string SourcePath,
+        InputPipelineKind PipelineKind,
+        long Length,
+        long LastWriteTimeUtcTicks);
 }

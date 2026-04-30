@@ -573,6 +573,10 @@ public sealed class LocalEncodingJobRunnerSmokeTests
                     "test")
                 : null;
         }
+
+        public void InvalidateCache()
+        {
+        }
     }
 
     private sealed class FakeAppSettingsService : IAppSettingsService

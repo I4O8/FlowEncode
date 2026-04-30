@@ -7,11 +7,16 @@ public sealed class LocalEncoderToolchainService : IEncoderToolchainService
 {
     private readonly LocalAppPaths _paths;
     private readonly IEncoderDiscoveryService _discoveryService;
+    private readonly IToolProbeService _toolProbeService;
 
-    public LocalEncoderToolchainService(LocalAppPaths paths, IEncoderDiscoveryService discoveryService)
+    public LocalEncoderToolchainService(
+        LocalAppPaths paths,
+        IEncoderDiscoveryService discoveryService,
+        IToolProbeService toolProbeService)
     {
         _paths = paths;
         _discoveryService = discoveryService;
+        _toolProbeService = toolProbeService;
     }
 
     public Task<IReadOnlyList<EncoderCatalogItem>> GetCatalogAsync(CancellationToken cancellationToken = default)
@@ -52,6 +57,7 @@ public sealed class LocalEncoderToolchainService : IEncoderToolchainService
         await using var sourceStream = File.Open(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         await using var targetStream = File.Open(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
         await sourceStream.CopyToAsync(targetStream, cancellationToken);
+        InvalidateProbeCaches();
     }
 
     public Task RemoveBinaryAsync(
@@ -74,6 +80,7 @@ public sealed class LocalEncoderToolchainService : IEncoderToolchainService
             }
 
             TryDeleteDirectoryIfEmpty(Path.Combine(_paths.ToolsetRootPath, kind.ToShortName()));
+            InvalidateProbeCaches();
         }, cancellationToken);
     }
 
@@ -92,6 +99,12 @@ public sealed class LocalEncoderToolchainService : IEncoderToolchainService
         }
 
         Directory.Delete(directory, false);
+    }
+
+    private void InvalidateProbeCaches()
+    {
+        _discoveryService.InvalidateCache();
+        _toolProbeService.InvalidateCache();
     }
 
     private EncoderCatalogItem CreateCatalogItem(EncoderCapability capability)

@@ -21,6 +21,8 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
 
     private readonly LocalAppPaths _paths;
     private readonly IAppSettingsService _settingsService;
+    private readonly object _systemDiscoveryCacheGate = new();
+    private SystemDiscoveryCacheSnapshot? _systemDiscoveryCache;
 
     public LocalEncoderDiscoveryService(LocalAppPaths paths, IAppSettingsService settingsService)
     {
@@ -30,7 +32,54 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
 
     public IReadOnlyList<DiscoveredEncoderBinary> DiscoverSystemBinaries()
     {
-        var results = new List<DiscoveredEncoderBinary>();
+        var candidates = DiscoverSystemCandidateDescriptors();
+        var signature = BuildSystemDiscoverySignature(candidates);
+
+        lock (_systemDiscoveryCacheGate)
+        {
+            if (_systemDiscoveryCache is { } cached
+                && string.Equals(cached.Signature, signature, StringComparison.Ordinal))
+            {
+                return cached.Results;
+            }
+        }
+
+        var results = candidates
+            .Select(static candidate => CreateCandidate(
+                candidate.Kind,
+                candidate.ExecutablePath,
+                candidate.Source,
+                candidate.SourceLabel))
+            .OrderBy(static item => item.Kind)
+            .ThenBy(static item => item.Source)
+            .ThenBy(static item => item.ExecutablePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        lock (_systemDiscoveryCacheGate)
+        {
+            if (_systemDiscoveryCache is { } cached
+                && string.Equals(cached.Signature, signature, StringComparison.Ordinal))
+            {
+                return cached.Results;
+            }
+
+            _systemDiscoveryCache = new SystemDiscoveryCacheSnapshot(signature, results);
+        }
+
+        return results;
+    }
+
+    public void InvalidateCache()
+    {
+        lock (_systemDiscoveryCacheGate)
+        {
+            _systemDiscoveryCache = null;
+        }
+    }
+
+    private IReadOnlyList<EncoderCandidateDescriptor> DiscoverSystemCandidateDescriptors()
+    {
+        var results = new List<EncoderCandidateDescriptor>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var kind in Enum.GetValues<EncoderKind>())
@@ -42,7 +91,7 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
                     continue;
                 }
 
-                results.Add(CreateCandidate(kind, resolvedPath, EncoderBinarySource.ManualSelection, "manual"));
+                results.Add(CreateCandidateDescriptor(kind, resolvedPath, EncoderBinarySource.ManualSelection, "manual"));
             }
 
             foreach (var variableName in EnvironmentVariableNames[kind])
@@ -57,7 +106,7 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
                     continue;
                 }
 
-                results.Add(CreateCandidate(kind, resolvedPath, EncoderBinarySource.EnvironmentVariable, variableName));
+                results.Add(CreateCandidateDescriptor(kind, resolvedPath, EncoderBinarySource.EnvironmentVariable, variableName));
             }
 
             foreach (var resolvedPath in EnumeratePathMatches(kind))
@@ -67,7 +116,7 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
                     continue;
                 }
 
-                results.Add(CreateCandidate(kind, resolvedPath, EncoderBinarySource.Path, "PATH"));
+                results.Add(CreateCandidateDescriptor(kind, resolvedPath, EncoderBinarySource.Path, "PATH"));
             }
         }
 
@@ -75,7 +124,7 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
             .OrderBy(static item => item.Kind)
             .ThenBy(static item => item.Source)
             .ThenBy(static item => item.ExecutablePath, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            .ToArray();
     }
 
     public DiscoveredEncoderBinary? ResolveEncoder(
@@ -142,6 +191,84 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
             source,
             sourceLabel,
             EncoderBinaryProbe.ProbeVersion(executablePath, kind));
+    }
+
+    private static EncoderCandidateDescriptor CreateCandidateDescriptor(
+        EncoderKind kind,
+        string executablePath,
+        EncoderBinarySource source,
+        string sourceLabel)
+    {
+        var normalizedPath = Path.GetFullPath(executablePath);
+        var fileInfo = new FileInfo(normalizedPath);
+        return new EncoderCandidateDescriptor(
+            kind,
+            normalizedPath,
+            source,
+            sourceLabel,
+            fileInfo.Exists ? fileInfo.Length : -1,
+            fileInfo.Exists ? fileInfo.LastWriteTimeUtc.Ticks : -1);
+    }
+
+    private string BuildSystemDiscoverySignature(IReadOnlyList<EncoderCandidateDescriptor> candidates)
+    {
+        var builder = new System.Text.StringBuilder();
+        var settings = _settingsService.Load();
+
+        foreach (var kind in Enum.GetValues<EncoderKind>())
+        {
+            var manualKey = ManualToolPathKeys.ForEncoder(kind);
+            settings.EffectiveManualToolPaths.TryGetValue(manualKey, out var manualValue);
+            builder.Append("manual:")
+                .Append(manualKey)
+                .Append('=')
+                .Append(manualValue)
+                .AppendLine();
+
+            foreach (var variableName in EnvironmentVariableNames[kind])
+            {
+                AppendEnvironmentValue(builder, variableName, EnvironmentVariableTarget.Process);
+                AppendEnvironmentValue(builder, variableName, EnvironmentVariableTarget.User);
+                AppendEnvironmentValue(builder, variableName, EnvironmentVariableTarget.Machine);
+            }
+        }
+
+        builder.Append("path=")
+            .Append(Environment.GetEnvironmentVariable("PATH"))
+            .AppendLine();
+
+        foreach (var candidate in candidates)
+        {
+            builder.Append("candidate:")
+                .Append(candidate.Kind)
+                .Append('|')
+                .Append(candidate.Source)
+                .Append('|')
+                .Append(candidate.SourceLabel)
+                .Append('|')
+                .Append(candidate.ExecutablePath)
+                .Append('|')
+                .Append(candidate.Length)
+                .Append('|')
+                .Append(candidate.LastWriteTimeUtcTicks)
+                .AppendLine();
+        }
+
+        return builder.ToString();
+    }
+
+    private static void AppendEnvironmentValue(
+        System.Text.StringBuilder builder,
+        string variableName,
+        EnvironmentVariableTarget target)
+    {
+        builder.Append("env:")
+            .Append(target)
+            .Append(':')
+            .Append(variableName)
+            .Append('=')
+            .Append(Environment.GetEnvironmentVariable(variableName, target))
+            .AppendLine();
     }
 
     private static IEnumerable<string> EnumeratePathMatches(EncoderKind kind)
@@ -225,4 +352,16 @@ public sealed class LocalEncoderDiscoveryService : IEncoderDiscoveryService
 
         return null;
     }
+
+    private sealed record SystemDiscoveryCacheSnapshot(
+        string Signature,
+        IReadOnlyList<DiscoveredEncoderBinary> Results);
+
+    private sealed record EncoderCandidateDescriptor(
+        EncoderKind Kind,
+        string ExecutablePath,
+        EncoderBinarySource Source,
+        string SourceLabel,
+        long Length,
+        long LastWriteTimeUtcTicks);
 }

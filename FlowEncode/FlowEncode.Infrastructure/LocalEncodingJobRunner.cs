@@ -77,7 +77,8 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return BuildPlan(
             request,
             encoderPath,
-            includeSourceMetadata: request.Profile.Kind == EncoderKind.SvtAv1).DisplayCommand;
+            includeSourceMetadata: request.Profile.Kind == EncoderKind.SvtAv1,
+            allowCachedSourceInfo: true).DisplayCommand;
     }
 
     public void AbortJob(Guid jobId)
@@ -564,7 +565,8 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         bool includeSourceMetadata,
         InputPipelineKind? pipelineKindOverride = null,
         Action<string>? sourceProbeProgress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool allowCachedSourceInfo = false)
     {
         var profile = request.Profile;
         var pipelineKind = pipelineKindOverride ?? ResolvePipelineKind(request);
@@ -573,6 +575,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 request,
                 pipelineKind,
                 profile.Kind == EncoderKind.SvtAv1 && pipelineKind != InputPipelineKind.RawYuvFile,
+                allowCachedSourceInfo,
                 sourceProbeProgress,
                 cancellationToken)
             : null;
@@ -983,13 +986,19 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         EncodingJobRequest request,
         InputPipelineKind pipelineKind,
         bool required,
+        bool allowCached,
         Action<string>? sourceProbeProgress = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var sourceInfo = _sourceInfoProbe.Probe(request.SourcePath, pipelineKind, sourceProbeProgress, cancellationToken);
+            var sourceInfo = _sourceInfoProbe.Probe(
+                request.SourcePath,
+                pipelineKind,
+                sourceProbeProgress,
+                cancellationToken,
+                allowCached);
             if (sourceInfo is not null)
             {
                 return sourceInfo;
