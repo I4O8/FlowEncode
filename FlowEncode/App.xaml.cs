@@ -134,14 +134,15 @@ public partial class App : Microsoft.UI.Xaml.Application
         ShutdownServices();
     }
 
-    private static void TrySetProcessAppUserModelId()
+    private void TrySetProcessAppUserModelId()
     {
         try
         {
             SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
         }
-        catch
+        catch (Exception ex)
         {
+            WriteLifecycleDiagnostic($"Failed to set AppUserModelID '{AppUserModelId}'. {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -349,6 +350,24 @@ public partial class App : Microsoft.UI.Xaml.Application
         catch
         {
         }
+    }
+
+    private void WriteLifecycleDiagnostic(string message)
+    {
+        try
+        {
+            var paths = _services.GetService<LocalAppPaths>();
+            if (paths is not null)
+            {
+                AppDiagnosticsLog.Write(paths, nameof(App), message);
+                return;
+            }
+        }
+        catch
+        {
+        }
+
+        TryWriteShutdownErrorLog(new InvalidOperationException(message));
     }
 
     private static void TryWriteShutdownErrorLog(Exception exception)

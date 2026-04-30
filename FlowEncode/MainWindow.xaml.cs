@@ -1192,14 +1192,17 @@ public sealed partial class MainWindow : Window
                     return directory;
                 }
             }
-            catch (ArgumentException)
+            catch (ArgumentException ex)
             {
+                TryWriteWindowDiagnostic($"Invalid file dialog path '{currentPath}'. {ex.GetType().Name}: {ex.Message}");
             }
-            catch (NotSupportedException)
+            catch (NotSupportedException ex)
             {
+                TryWriteWindowDiagnostic($"Unsupported file dialog path '{currentPath}'. {ex.GetType().Name}: {ex.Message}");
             }
-            catch (PathTooLongException)
+            catch (PathTooLongException ex)
             {
+                TryWriteWindowDiagnostic($"Overlong file dialog path '{currentPath}'. {ex.GetType().Name}: {ex.Message}");
             }
         }
 
@@ -2314,8 +2317,9 @@ public sealed partial class MainWindow : Window
                 };
             }
         }
-        catch
+        catch (Exception ex)
         {
+            TryWriteWindowDiagnostic($"Failed to resolve theme resource '{resourceKey}' from '{themeKey}'. {ex.GetType().Name}: {ex.Message}");
         }
 
         return actualTheme == ElementTheme.Light ? Colors.Black : Colors.White;
@@ -2355,10 +2359,11 @@ public sealed partial class MainWindow : Window
             _activeDragContainsSupportedScript = containsSupportedScript;
             return containsSupportedScript;
         }
-        catch
+        catch (Exception ex)
         {
             _activeDragDataView = dataView;
             _activeDragContainsSupportedScript = false;
+            TryWriteWindowDiagnostic($"Failed to inspect drag-and-drop storage items. {ex.GetType().Name}: {ex.Message}");
             return false;
         }
     }
@@ -2461,8 +2466,9 @@ public sealed partial class MainWindow : Window
 
             ApplyWindowIconHandles(windowHandle);
         }
-        catch
+        catch (Exception ex)
         {
+            TryWriteWindowDiagnostic($"Failed to apply embedded app icon from '{processPath}'. {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
@@ -2490,8 +2496,9 @@ public sealed partial class MainWindow : Window
             AppWindow.SetIcon(iconId);
             AppWindow.SetTaskbarIcon(iconId);
         }
-        catch
+        catch (Exception ex)
         {
+            TryWriteWindowDiagnostic($"Failed to assign AppWindow icon handles. {ex.GetType().Name}: {ex.Message}");
         }
 
         if (largeIcon != IntPtr.Zero)
@@ -2519,6 +2526,18 @@ public sealed partial class MainWindow : Window
         foreach (var iconHandle in iconHandles.Where(handle => handle != IntPtr.Zero).Distinct())
         {
             DestroyIcon(iconHandle);
+        }
+    }
+
+    private static void TryWriteWindowDiagnostic(string message)
+    {
+        try
+        {
+            var paths = App.GetService<LocalAppPaths>();
+            AppDiagnosticsLog.Write(paths, nameof(MainWindow), message);
+        }
+        catch
+        {
         }
     }
 

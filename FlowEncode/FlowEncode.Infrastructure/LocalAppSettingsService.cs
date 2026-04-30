@@ -66,7 +66,7 @@ public sealed class LocalAppSettingsService : IAppSettingsService
             }
             finally
             {
-                TryDeleteFile(tempPath);
+                TryDeleteTemporarySettingsFile(tempPath);
             }
 
             _cache = settings;
@@ -128,7 +128,7 @@ public sealed class LocalAppSettingsService : IAppSettingsService
         return Path.Combine(directory, $"{fileName}.broken-{Guid.NewGuid():N}");
     }
 
-    private static void TryDeleteFile(string path)
+    private void TryDeleteTemporarySettingsFile(string path)
     {
         try
         {
@@ -137,8 +137,9 @@ public sealed class LocalAppSettingsService : IAppSettingsService
                 File.Delete(path);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            AppDiagnosticsLog.Write(_paths, nameof(LocalAppSettingsService), $"Failed to delete temporary settings file '{path}'. {ex.GetType().Name}: {ex.Message}");
         }
     }
 }
