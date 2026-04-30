@@ -1657,6 +1657,13 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             : (snapshot.ProgressFraction, snapshot.Snapshot);
     }
 
+    internal static string TrimVisibleLogForTesting(string text)
+    {
+        var builder = new StringBuilder(text);
+        TrimVisibleLogIfNeeded(builder);
+        return builder.ToString();
+    }
+
     private static ParsedProgressSnapshot? TryParseLooseX26xMetrics(
         string line,
         long? totalFrames,
@@ -2112,17 +2119,48 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             builder.Remove(0, removeCount);
         }
 
-        var retainedText = builder.ToString();
-        var firstLineBreak = retainedText.IndexOfAny(['\r', '\n']);
+        var firstLineBreak = IndexOfLineBreak(builder);
         if (firstLineBreak >= 0 && firstLineBreak + 1 < builder.Length)
         {
             builder.Remove(0, firstLineBreak + 1);
         }
 
-        if (!builder.ToString().StartsWith(VisibleLogTruncationMarker, StringComparison.Ordinal))
+        if (!StartsWith(builder, VisibleLogTruncationMarker))
         {
             builder.Insert(0, $"{VisibleLogTruncationMarker}{Environment.NewLine}");
         }
+    }
+
+    private static int IndexOfLineBreak(StringBuilder builder)
+    {
+        for (var index = 0; index < builder.Length; index++)
+        {
+            var character = builder[index];
+            if (character is '\r' or '\n')
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool StartsWith(StringBuilder builder, string value)
+    {
+        if (builder.Length < value.Length)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (builder[index] != value[index])
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private string CreateTemporaryRawLogPath(EncodingJobRequest request)
