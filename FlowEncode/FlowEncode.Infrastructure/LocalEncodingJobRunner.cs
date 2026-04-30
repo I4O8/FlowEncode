@@ -29,6 +29,8 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private static readonly Regex X26xLooseEtaRegex = new(@"(?:eta|time)\s*:?\s*(?<eta>-?\d+:\d{2}:\d{2})(?:\s*\[(?<remainingeta>-?\d+:\d{2}:\d{2})\])?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex X26xLooseSizeRegex = new(@"(?:est\.\s*file\s*size|size)\s*:?\s*(?<size>\d+(?:\.\d+)?)\s*(?<unit>[KMGTP]?B)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex X26xBracketedSizeRegex = new(@"\[(?<size>\d+(?:\.\d+)?)\s*(?<unit>[KMGTP]?B)\]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex LsmasLwiIndexProgressRegex = new(@"^Creating lwi index file\s+(?<progress>\d{1,3})%$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex BestSourceIndexProgressRegex = new(@"^(?:Information:\s+)?VideoSource\s+track\s+#\d+\s+index\s+progress\s+(?<progress>\d{1,3})%$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SvtFrameRegex = new(@"Encoding\s+frame\s+(?<frame>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SvtOutputRegex = new(@"Output\s+(?<frame>\d+)\s+frames", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SvtStatusPrefixRegex = new(
@@ -252,11 +254,27 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                         return;
                     }
 
+                    var sourceDisplayLine = $"[source] {normalizedLine}";
+                    var sourcePreparationProgressPercent = ParseSourcePreparationProgressPercent(normalizedLine);
+                    EncodingJobProgress? pendingProgress = null;
+
                     lock (lineGate)
                     {
-                        rawLogWriter.WriteLine($"[source] {normalizedLine}");
-                        visibleLogBuilder.AppendLine($"[source] {normalizedLine}");
+                        rawLogWriter.WriteLine(sourceDisplayLine);
+                        visibleLogBuilder.AppendLine(sourceDisplayLine);
                         TrimVisibleLogIfNeeded(visibleLogBuilder);
+
+                        pendingProgress = new EncodingJobProgress(
+                            request.JobId,
+                            currentState,
+                            null,
+                            BuildSourceRunningSummary(language, step, sourcePreparationProgressPercent),
+                            sourceDisplayLine);
+                    }
+
+                    if (pendingProgress is not null)
+                    {
+                        progress?.Report(pendingProgress);
                     }
                 }
 
@@ -283,10 +301,35 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 }
                 else
                 {
+                    var encoderExitTask = process.WaitForExitAsync(cancellationToken);
+                    var sourceExitTask = sourceProcess.WaitForExitAsync(cancellationToken);
+                    var pipeCopyTask = ObservePipeCopyAsync(copySourceToEncoder);
+                    var firstCompletedTask = await Task.WhenAny(
+                        encoderExitTask,
+                        sourceExitTask,
+                        pipeCopyTask);
+
+                    if (ReferenceEquals(firstCompletedTask, encoderExitTask))
+                    {
+                        var encoderExitCode = await GetExitCodeAsync(process, encoderExitTask);
+                        if (encoderExitCode != 0)
+                        {
+                            activeExecution.Terminate();
+                        }
+                    }
+                    else if (ReferenceEquals(firstCompletedTask, sourceExitTask))
+                    {
+                        var firstSourceExitCode = await GetExitCodeAsync(sourceProcess, sourceExitTask);
+                        if (firstSourceExitCode != 0)
+                        {
+                            activeExecution.Terminate();
+                        }
+                    }
+
                     await Task.WhenAll(
-                        sourceProcess.WaitForExitAsync(cancellationToken),
-                        process.WaitForExitAsync(cancellationToken),
-                        ObservePipeCopyAsync(copySourceToEncoder));
+                        encoderExitTask,
+                        sourceExitTask,
+                        pipeCopyTask);
                 }
 
                 activeExecution.Terminate();
@@ -346,7 +389,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 visibleLog,
                 sidecarLogPath);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             currentState = EncodingJobState.Cancelled;
 
@@ -391,6 +434,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             activeExecution?.Dispose();
             activeSourceProcess?.Dispose();
             CleanupPlanArtifacts(plan);
+            CleanupPartialOutputFile(request, currentState);
 
             if (!rawLogWriterClosed)
             {
@@ -1657,6 +1701,9 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             : (snapshot.ProgressFraction, snapshot.Snapshot);
     }
 
+    internal static int? ParseSourcePreparationProgressPercentForTesting(string line)
+        => ParseSourcePreparationProgressPercent(EncoderConsoleLineNormalizer.Normalize(line));
+
     internal static string TrimVisibleLogForTesting(string text)
     {
         var builder = new StringBuilder(text);
@@ -1987,6 +2034,12 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         }
     }
 
+    private static async Task<int> GetExitCodeAsync(Process process, Task waitForExitTask)
+    {
+        await waitForExitTask;
+        return process.ExitCode;
+    }
+
     private static ParsedProgressSnapshot? ApplyStageProgress(ParsedProgressSnapshot? progressSnapshot, EncodingExecutionStep step)
     {
         if (progressSnapshot is null)
@@ -1999,6 +2052,28 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             : (double?)null;
 
         return progressSnapshot with { ProgressFraction = overallProgress };
+    }
+
+    private static int? ParseSourcePreparationProgressPercent(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return null;
+        }
+
+        var match = LsmasLwiIndexProgressRegex.Match(line);
+        if (!match.Success)
+        {
+            match = BestSourceIndexProgressRegex.Match(line);
+            if (!match.Success)
+            {
+                return null;
+            }
+        }
+
+        return int.TryParse(match.Groups["progress"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var progress)
+            ? Math.Clamp(progress, 0, 100)
+            : null;
     }
 
     private static double BuildStageStartingProgress(EncodingExecutionStep step)
@@ -2057,6 +2132,24 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return progressFraction is { } progressValue
             ? T(language, $"Encoding {progressValue:P0}", $"编码中 {progressValue:P0}")
             : T(language, "Encoding", "编码中");
+    }
+
+    private static string BuildSourceRunningSummary(AppLanguage language, EncodingExecutionStep step, int? sourcePreparationProgressPercent)
+    {
+        if (sourcePreparationProgressPercent.HasValue)
+        {
+            return step.StageCount > 1
+                ? T(
+                    language,
+                    $"Pass {step.StageIndex}/{step.StageCount}: preparing source {sourcePreparationProgressPercent.Value}%",
+                    $"第 {step.StageIndex}/{step.StageCount} 遍：正在准备源 {sourcePreparationProgressPercent.Value}%")
+                : T(
+                    language,
+                    $"Preparing source {sourcePreparationProgressPercent.Value}%",
+                    $"正在准备源 {sourcePreparationProgressPercent.Value}%");
+        }
+
+        return BuildRunningSummary(language, step, progressFraction: null);
     }
 
     private static string BuildStageStartingDetail(AppLanguage language, EncodingExecutionStep step)
@@ -2204,6 +2297,19 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             {
             }
         }
+    }
+
+    private void CleanupPartialOutputFile(EncodingJobRequest request, EncodingJobState state)
+    {
+        if (state == EncodingJobState.Completed)
+        {
+            return;
+        }
+
+        BestEffortCleanup.DeleteFileIfZeroLength(
+            request.OutputPath,
+            $"partial output '{request.OutputPath}'",
+            WriteDiagnostic);
     }
 
     private string BuildMultipassStatsPath(EncodingJobRequest request, EncoderKind kind)

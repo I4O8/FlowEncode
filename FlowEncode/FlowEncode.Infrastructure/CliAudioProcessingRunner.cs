@@ -37,7 +37,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         return request.Mode switch
         {
             AudioProcessingMode.Eac3To => $"eac3to.exe {BuildEac3ToArguments(request)}",
-            AudioProcessingMode.Ddp => $"deew.exe -i {Quote(request.SourcePath)} -o {Quote(request.OutputPath)}",
+            AudioProcessingMode.Ddp => $"deew.exe -i {Quote(request.SourcePath)} -o {Quote(request.OutputPath)} -np",
             AudioProcessingMode.Opus => BuildOpusCommand(request, "ffmpeg.exe", "opusenc.exe"),
             _ => throw new ArgumentOutOfRangeException(nameof(request), request.Mode, null)
         };
@@ -113,11 +113,11 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             : request.OutputPath;
         Directory.CreateDirectory(outputDirectory);
 
-        var command = $"{Quote(deewPath)} -i {Quote(request.SourcePath)} -o {Quote(outputDirectory)}";
+        var command = $"{Quote(deewPath)} -i {Quote(request.SourcePath)} -o {Quote(outputDirectory)} -np";
         var startInfo = new ProcessStartInfo
         {
             FileName = deewPath,
-            Arguments = $"-i {Quote(request.SourcePath)} -o {Quote(outputDirectory)}",
+            Arguments = $"-i {Quote(request.SourcePath)} -o {Quote(outputDirectory)} -np",
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -453,7 +453,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                 log,
                 displayCommand);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             DeletePartialOutputFile(runPlan);
 
@@ -513,7 +513,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
             return new ProcessExecutionResult(process.ExitCode);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             activeExecution?.Terminate();
 
@@ -615,15 +615,40 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
                 pumpSupplementalProgress = PumpProgressFileAsync(ffmpegProcess, supplementalProgressFilePath, handleLine);
             }
 
+            var ffmpegExitTask = ffmpegProcess.WaitForExitAsync(cancellationToken);
+            var opusExitTask = opusProcess.WaitForExitAsync(cancellationToken);
+            var pipeCopyTask = ObservePipeCopyAsync(copyPcmToOpus);
+            var firstCompletedTask = await Task.WhenAny(
+                ffmpegExitTask,
+                opusExitTask,
+                pipeCopyTask);
+
+            if (ReferenceEquals(firstCompletedTask, ffmpegExitTask))
+            {
+                var ffmpegExitCode = await GetExitCodeAsync(ffmpegProcess, ffmpegExitTask);
+                if (ffmpegExitCode != 0)
+                {
+                    activeExecution.Terminate();
+                }
+            }
+            else if (ReferenceEquals(firstCompletedTask, opusExitTask))
+            {
+                var opusExitCode = await GetExitCodeAsync(opusProcess, opusExitTask);
+                if (opusExitCode != 0)
+                {
+                    activeExecution.Terminate();
+                }
+            }
+
             await Task.WhenAll(
-                ffmpegProcess.WaitForExitAsync(cancellationToken),
-                opusProcess.WaitForExitAsync(cancellationToken),
-                ObservePipeCopyAsync(copyPcmToOpus));
+                ffmpegExitTask,
+                opusExitTask,
+                pipeCopyTask);
             await Task.WhenAll(pumpFfmpegError, pumpOpusOutput, pumpOpusError, pumpSupplementalProgress);
 
             return BuildOpusPipelineExecutionResult(ffmpegProcess.ExitCode, opusProcess.ExitCode);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             activeExecution?.Terminate();
 
@@ -982,13 +1007,13 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
     private static void DeletePartialOutputFile(AudioProcessingRunPlan runPlan)
     {
-        if (string.IsNullOrWhiteSpace(runPlan.StagedOutputPath))
+        if (!string.IsNullOrWhiteSpace(runPlan.StagedOutputPath))
         {
-            return;
+            TryDeleteFile(runPlan.StagedOutputPath);
+            TryDeleteOrphanedBackupFile(runPlan);
         }
 
-        TryDeleteFile(runPlan.StagedOutputPath);
-        TryDeleteOrphanedBackupFile(runPlan);
+        TryDeleteZeroLengthFile(runPlan.DisplayRequest.OutputPath);
     }
 
     private static string CreateStagedOutputPath(string outputPath, Guid jobId, string suffix = "staging")
@@ -1007,6 +1032,26 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         try
         {
             if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDeleteZeroLengthFile(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return;
+            }
+
+            var fileInfo = new FileInfo(path);
+            if (fileInfo.Length == 0)
             {
                 File.Delete(path);
             }
@@ -1054,8 +1099,9 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
     {
         startInfo.Environment["PYTHONUTF8"] = "1";
         startInfo.Environment["PYTHONIOENCODING"] = "utf-8";
-        startInfo.Environment["FORCE_COLOR"] = "1";
         startInfo.Environment["NO_COLOR"] = "1";
+        startInfo.Environment["TERM"] = "dumb";
+        startInfo.Environment.Remove("FORCE_COLOR");
 
         var pathEntries = new[]
         {
@@ -1715,6 +1761,12 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         }
 
         return null;
+    }
+
+    private static async Task<int> GetExitCodeAsync(Process process, Task waitForExitTask)
+    {
+        await waitForExitTask;
+        return process.ExitCode;
     }
 
     private static void TryTerminate(Process process)

@@ -381,6 +381,16 @@ public partial class MainWindowViewModel
             _bluRayDemuxCancellationTokenSource = new CancellationTokenSource();
             result = await _bluRayDemuxRunner.RunAsync(request, new Progress<BluRayDemuxProgress>(ApplyBluRayDemuxProgress), _bluRayDemuxCancellationTokenSource.Token);
         }
+        catch (OperationCanceledException) when (_bluRayDemuxCancellationTokenSource?.IsCancellationRequested == true)
+        {
+            SetBluRayDemuxRunningState(false, null);
+            DisposeBluRayDemuxCancellation();
+            SetBluRayDemuxDisplayState(EncodingJobState.Cancelled);
+            ClampBluRayDemuxProgressForTerminalState(EncodingJobState.Cancelled);
+            BluRayDemuxStatusText = Texts.BluRayDemuxCancelledStatus(backendLabel);
+            StatusText = BluRayDemuxStatusText;
+            return null;
+        }
         catch (Exception ex)
         {
             SetBluRayDemuxRunningState(false, null);

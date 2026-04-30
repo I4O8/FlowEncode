@@ -27,4 +27,34 @@ public sealed class LocalEncodingJobRunnerProgressParsingTests
         Assert.IsTrue(parsed.Snapshot.EstimatedFileSizeBytes > 0);
         Assert.AreEqual(114d / 5400d, parsed.ProgressFraction!.Value, 0.000001);
     }
+
+    [TestMethod]
+    public void ParseSourcePreparationProgressPercentForTesting_WithLwiIndexLine_ParsesPercent()
+    {
+        const string line = "Creating lwi index file 42%";
+
+        var parsed = LocalEncodingJobRunner.ParseSourcePreparationProgressPercentForTesting(line);
+
+        Assert.AreEqual(42, parsed);
+    }
+
+    [TestMethod]
+    public void ParseSourcePreparationProgressPercentForTesting_WithBestSourceIndexLine_ParsesPercent()
+    {
+        const string line = "Information: VideoSource track #0 index progress 54%";
+
+        var parsed = LocalEncodingJobRunner.ParseSourcePreparationProgressPercentForTesting(line);
+
+        Assert.AreEqual(54, parsed);
+    }
+
+    [TestMethod]
+    public void ParseSourcePreparationProgressPercentForTesting_WithUnrelatedLine_ReturnsNull()
+    {
+        const string line = "Script evaluation finished.";
+
+        var parsed = LocalEncodingJobRunner.ParseSourcePreparationProgressPercentForTesting(line);
+
+        Assert.IsNull(parsed);
+    }
 }

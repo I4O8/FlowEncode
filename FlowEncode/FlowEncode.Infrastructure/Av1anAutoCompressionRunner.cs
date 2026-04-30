@@ -155,6 +155,7 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         ManagedProcessExecution? activeExecution = null;
         Task pumpOutput = Task.CompletedTask;
         Task pumpError = Task.CompletedTask;
+        var finalExitCode = -1;
 
         try
         {
@@ -171,11 +172,12 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
             await process.WaitForExitAsync(cancellationToken);
             activeExecution.Terminate();
             await Task.WhenAll(pumpOutput, pumpError);
+            finalExitCode = process.ExitCode;
 
             _activeExecutions.TryRemove(request.JobId, out _);
 
             var log = logBuilder.ToString();
-            if (process.ExitCode == 0)
+            if (finalExitCode == 0)
             {
                 progress?.Report(new AutoCompressionProgress(
                     request.JobId,
@@ -197,18 +199,18 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
                 request.JobId,
                 EncodingJobState.Failed,
                 null,
-                T(language, $"Auto encode failed (exit code {process.ExitCode})", $"自动压制失败，退出代码 {process.ExitCode}"),
+                T(language, $"Auto encode failed (exit code {finalExitCode})", $"自动压制失败，退出代码 {finalExitCode}"),
                 LastMeaningfulLine(log)));
 
             return new AutoCompressionResult(
                 request.JobId,
                 EncodingJobState.Failed,
-                process.ExitCode,
-                T(language, $"Auto encode failed (exit code {process.ExitCode})", $"自动压制失败，退出代码 {process.ExitCode}"),
+                finalExitCode,
+                T(language, $"Auto encode failed (exit code {finalExitCode})", $"自动压制失败，退出代码 {finalExitCode}"),
                 log,
                 displayCommand);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             activeExecution?.Terminate();
 
@@ -240,6 +242,7 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
         {
             _activeExecutions.TryRemove(request.JobId, out _);
             activeExecution?.Dispose();
+            CleanupPartialOutputFile(request, finalExitCode);
             CleanupJobTempDirectory(request);
         }
     }
@@ -305,6 +308,19 @@ public sealed class Av1anAutoCompressionRunner : IAutoCompressionRunner
             WriteDiagnostic);
         BestEffortCleanup.DeleteDirectoryIfEmpty(Path.GetDirectoryName(jobTempDirectory), WriteDiagnostic);
         BestEffortCleanup.DeleteDirectoryIfEmpty(Path.GetDirectoryName(Path.GetDirectoryName(jobTempDirectory)), WriteDiagnostic);
+    }
+
+    private void CleanupPartialOutputFile(AutoCompressionRequest request, int exitCode)
+    {
+        if (exitCode == 0)
+        {
+            return;
+        }
+
+        BestEffortCleanup.DeleteFileIfZeroLength(
+            request.OutputPath,
+            $"auto compression partial output '{request.OutputPath}'",
+            WriteDiagnostic);
     }
 
     private void WriteDiagnostic(string message)

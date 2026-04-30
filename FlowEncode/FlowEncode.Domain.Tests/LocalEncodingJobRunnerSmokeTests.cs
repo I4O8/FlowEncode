@@ -274,6 +274,40 @@ public sealed class LocalEncodingJobRunnerSmokeTests
     }
 
     [TestMethod]
+    public async Task RunAsync_X264_VspipeSinglePass_WithInvalidArguments_FailsInsteadOfCancelling()
+    {
+        var sourcePath = EnsureSmokeVpy();
+        var outputPath = Path.Combine(SmokeRoot, "x264-vspipe-invalid.264");
+        var runner = CreateRunner(EncoderKind.X264, @"E:\cmct_encode\encoders\x264\x64\x264.exe");
+
+        var result = await runner.RunAsync(new EncodingJobRequest(
+            Guid.NewGuid(),
+            new EncodingProfile(
+                EncoderKind.X264,
+                "smoke-x264-vspipe-invalid",
+                "smoke",
+                "medium",
+                string.Empty,
+                string.Empty,
+                RateControlMode.Crf,
+                32,
+                null,
+                "264",
+                "--sddf",
+                string.Empty),
+            sourcePath,
+            outputPath,
+            InputPipelineKind.Auto,
+            EncoderArchitecture.X64));
+
+        Assert.AreEqual(EncodingJobState.Failed, result.State);
+        StringAssert.Contains(result.Log, "unknown option");
+        Assert.IsFalse(File.Exists(outputPath) && new FileInfo(outputPath).Length == 0);
+        AssertNoRunningProcess("x264");
+        AssertNoRunningProcess("vspipe");
+    }
+
+    [TestMethod]
     public async Task RunAsync_X265_VspipeSinglePass_Cancellation_CleansUpProcesses()
     {
         var sourcePath = EnsureLongRunningSmokeVpy();

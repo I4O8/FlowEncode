@@ -1581,6 +1581,16 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 progress,
                 _autoCompressionCancellationTokenSource.Token);
         }
+        catch (OperationCanceledException) when (_autoCompressionCancellationTokenSource?.IsCancellationRequested == true)
+        {
+            SetAutoCompressionRunningState(false, null);
+            DisposeAutoCompressionCancellation();
+            SetAutoCompressionDisplayState(EncodingJobState.Cancelled);
+            ClampAutoCompressionProgressForTerminalState(EncodingJobState.Cancelled);
+            AutoCompressionStatusText = Texts.AutoCompressionCancelledStatus;
+            StatusText = Texts.AutoCompressionCancelledStatus;
+            return null;
+        }
         catch (Exception ex)
         {
             SetAutoCompressionRunningState(false, null);
@@ -2123,7 +2133,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
             StatusText = Texts.EncodingFinishedStatus(job.SourceFileName, result.Summary);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested)
         {
             if (ShouldTreatNonSuccessfulJobAsUnattendedFailure())
             {

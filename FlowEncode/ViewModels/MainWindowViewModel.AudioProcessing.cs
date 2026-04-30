@@ -436,6 +436,18 @@ public partial class MainWindowViewModel
                 progress,
                 _audioProcessingCancellationTokenSource.Token);
         }
+        catch (OperationCanceledException) when (_audioProcessingCancellationTokenSource?.IsCancellationRequested == true)
+        {
+            SetAudioProcessingRunningState(false, null);
+            DisposeAudioProcessingCancellation();
+            ClampAudioProcessingProgressForTerminalState(EncodingJobState.Cancelled);
+            SetAudioProcessingDisplayState(EncodingJobState.Cancelled);
+            SetAudioProcessingPhaseLabel(string.Empty);
+            SetAudioProcessingTelemetry(null);
+            AudioProcessingStatusText = Texts.AudioProcessingCancelledStatus(workflowLabel);
+            StatusText = AudioProcessingStatusText;
+            return null;
+        }
         catch (Exception ex)
         {
             SetAudioProcessingRunningState(false, null);

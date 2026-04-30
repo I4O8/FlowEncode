@@ -2,6 +2,34 @@ namespace FlowEncode.Infrastructure;
 
 internal static class BestEffortCleanup
 {
+    public static void DeleteFileIfZeroLength(
+        string? path,
+        string description,
+        Action<string>? onFailure = null)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            var fileInfo = new FileInfo(path);
+            if (fileInfo.Length != 0)
+            {
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            onFailure?.Invoke(
+                $"Failed to inspect {description}. {ex.GetType().Name}: {ex.Message}");
+            return;
+        }
+
+        DeleteFile(path, description, onFailure);
+    }
+
     public static void DeleteFile(
         string? path,
         string description,
