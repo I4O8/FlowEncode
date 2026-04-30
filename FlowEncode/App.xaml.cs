@@ -23,6 +23,7 @@ public partial class App : Microsoft.UI.Xaml.Application
     private AppInstance? _mainAppInstance;
     private CancellationTokenSource? _singleInstancePipeCancellationTokenSource;
     private Task? _singleInstancePipeServerTask;
+    private bool _isShuttingDown;
     private Window? _window;
 
     public App()
@@ -51,6 +52,7 @@ public partial class App : Microsoft.UI.Xaml.Application
         var launchActivation = GetService<AppLaunchActivation>();
         launchActivation.SetRequestedVapourSynthFilePath(ResolveRequestedVapourSynthFilePath());
         _window = GetService<MainWindow>();
+        _window.Closed += MainWindow_Closed;
         _window.Activate();
     }
 
@@ -77,7 +79,8 @@ public partial class App : Microsoft.UI.Xaml.Application
 
         services.AddSingleton<LocalAppPaths>();
         services.AddSingleton<AppLaunchActivation>();
-        services.AddSingleton<IAppSettingsService, LocalAppSettingsService>();
+        services.AddSingleton<LocalAppSettingsService>();
+        services.AddSingleton<IAppSettingsService>(static provider => provider.GetRequiredService<LocalAppSettingsService>());
         services.AddSingleton<IQueueCompletionActionService, WindowsQueueCompletionActionService>();
         services.AddSingleton<ISystemIdleService, WindowsSystemIdleService>();
         services.AddSingleton<ISetupGuideCacheService, LocalSetupGuideCacheService>();
@@ -121,18 +124,25 @@ public partial class App : Microsoft.UI.Xaml.Application
         }
 
         TrySendExternalOpenRequest(ResolveRequestedVapourSynthFilePath());
+        ShutdownServices();
         Environment.Exit(0);
         return false;
     }
 
-    private static void TrySetProcessAppUserModelId()
+    private void MainWindow_Closed(object sender, WindowEventArgs args)
+    {
+        ShutdownServices();
+    }
+
+    private void TrySetProcessAppUserModelId()
     {
         try
         {
             SetCurrentProcessExplicitAppUserModelID(AppUserModelId);
         }
-        catch
+        catch (Exception ex)
         {
+            WriteLifecycleDiagnostic($"Failed to set AppUserModelID '{AppUserModelId}'. {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -153,6 +163,67 @@ public partial class App : Microsoft.UI.Xaml.Application
 
         _singleInstancePipeCancellationTokenSource = new CancellationTokenSource();
         _singleInstancePipeServerTask = RunSingleInstancePipeServerAsync(_singleInstancePipeCancellationTokenSource.Token);
+    }
+
+    private void ShutdownServices()
+    {
+        if (_isShuttingDown)
+        {
+            return;
+        }
+
+        _isShuttingDown = true;
+        UnhandledException -= App_UnhandledException;
+
+        if (_window is not null)
+        {
+            _window.Closed -= MainWindow_Closed;
+            _window = null;
+        }
+
+        StopSingleInstancePipeServer();
+
+        try
+        {
+            _services.Dispose();
+        }
+        catch (Exception ex)
+        {
+            TryWriteShutdownErrorLog(ex);
+        }
+    }
+
+    private void StopSingleInstancePipeServer()
+    {
+        var cancellationTokenSource = _singleInstancePipeCancellationTokenSource;
+        _singleInstancePipeCancellationTokenSource = null;
+
+        if (cancellationTokenSource is null)
+        {
+            return;
+        }
+
+        try
+        {
+            cancellationTokenSource.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        var pipeServerTask = _singleInstancePipeServerTask;
+        if (pipeServerTask is null || pipeServerTask.IsCompleted)
+        {
+            cancellationTokenSource.Dispose();
+            return;
+        }
+
+        _ = pipeServerTask.ContinueWith(
+            static (_, state) => ((CancellationTokenSource)state!).Dispose(),
+            cancellationTokenSource,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private async Task RunSingleInstancePipeServerAsync(CancellationToken cancellationToken)
@@ -273,6 +344,37 @@ public partial class App : Microsoft.UI.Xaml.Application
                 ?? GetFallbackCrashRoot();
             var crashPath = Path.Combine(crashRoot, "activation-error.log");
 
+            Directory.CreateDirectory(Path.GetDirectoryName(crashPath)!);
+            File.WriteAllText(crashPath, exception.ToString());
+        }
+        catch
+        {
+        }
+    }
+
+    private void WriteLifecycleDiagnostic(string message)
+    {
+        try
+        {
+            var paths = _services.GetService<LocalAppPaths>();
+            if (paths is not null)
+            {
+                AppDiagnosticsLog.Write(paths, nameof(App), message);
+                return;
+            }
+        }
+        catch
+        {
+        }
+
+        TryWriteShutdownErrorLog(new InvalidOperationException(message));
+    }
+
+    private static void TryWriteShutdownErrorLog(Exception exception)
+    {
+        try
+        {
+            var crashPath = Path.Combine(GetFallbackCrashRoot(), "shutdown-error.log");
             Directory.CreateDirectory(Path.GetDirectoryName(crashPath)!);
             File.WriteAllText(crashPath, exception.ToString());
         }

@@ -511,6 +511,19 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
         await FocusEditorAsync();
     }
 
+    public async Task ClosePreviewWindowForAppShutdownAsync()
+    {
+        if (_previewWindow is null)
+        {
+            return;
+        }
+
+        var previewWindow = _previewWindow;
+        _previewWindow = null;
+        previewWindow.PreviewWindowClosed -= PreviewWindow_PreviewWindowClosed;
+        await previewWindow.CloseForOwnerShutdownAsync();
+    }
+
     private async Task<bool> TryConfirmDocumentSwitchAsync()
     {
         await CaptureEditorStateAsync();

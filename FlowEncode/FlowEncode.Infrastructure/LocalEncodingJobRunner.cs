@@ -1,8 +1,9 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Collections.Concurrent;
 using FlowEncode.Application;
 using FlowEncode.Domain;
 
@@ -14,7 +15,6 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private const int MaxVisibleLogLength = 200_000;
     private const int RetainedVisibleLogLength = 120_000;
     private const string VisibleLogTruncationMarker = "[Log truncated; only latest output is kept]";
-    private static readonly char[] ForbiddenCmdCharacters = ['&', '|', '<', '>', '^', '%'];
     private static readonly TimeSpan TransientProgressReportInterval = TimeSpan.FromMilliseconds(125);
     private static readonly Regex X26xProgressRegex = new(@"(?<progress>\d{1,3}(?:\.\d+)?)\s*%", RegexOptions.Compiled);
     private static readonly Regex X265PipeMetricsRegex = new(@"^\[\s*(?<progress>\d{1,3}(?:\.\d+)?)\s*%\]\s+(?<current>\d+)\s*\/\s*(?<total>\d+)\s+Frames\s+@\s+(?<fps>\d+(?:\.\d+)?)\s+FPS\s+\|\s+(?<bitrate>\d+(?:\.\d+)?)\s+kb\/s\s+\|\s+(?<eta>\d+:\d{2}:\d{2})(?:\s+\[(?<remainingeta>-?\d+:\d{2}:\d{2})\])?\s+\|\s+(?<currentsize>\d+(?:\.\d+)?)\s*(?<currentunit>[KMGTP]?B)(?:\s+\[(?<size>\d+(?:\.\d+)?)\s*(?<unit>[KMGTP]?B)\])?\s*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -50,8 +50,6 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         @"^Encoding:\s*(?<current>\d+)\s*\/\s*(?<total>\d+)\s+Frames?\b.*?(?<fps>\d+(?:\.\d+)?)\s+fps\b.*?(?<bitrate>\d+(?:\.\d+)?)\s+kb(?:\/s|ps)\b",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex SvtMetricsRegex = new(@"Encoding\s+frame\s+(?<current>\d+)\s+(?<bitrate>\d+(?:\.\d+)?)\s+kbps\s+(?<fps>\d+(?:\.\d+)?)\s+fps", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private static readonly Regex CommandLineTokenRegex = new("\"([^\"]*)\"|'([^']*)'|(\\S+)", RegexOptions.Compiled);
-
     private readonly ExternalToolLocator _toolLocator;
     private readonly SourceVideoInfoProbe _sourceInfoProbe;
     private readonly IEncoderDiscoveryService _discoveryService;
@@ -103,7 +101,10 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         var rawLogWriterClosed = false;
         Task pumpOutput = Task.CompletedTask;
         Task pumpError = Task.CompletedTask;
+        Task pumpSourceError = Task.CompletedTask;
+        Task copySourceToEncoder = Task.CompletedTask;
         Process? activeProcess = null;
+        Process? activeSourceProcess = null;
         ManagedProcessExecution? activeExecution = null;
 
         if (!string.IsNullOrWhiteSpace(outputDirectory))
@@ -155,13 +156,50 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     BuildStageStartingDetail(language, step),
                     BuildStageStartingSnapshot(plan, step)));
 
-                var process = CreateProcess(step, encoderPath);
+                var process = CreateProcess(step.EncoderCommand, encoderPath, redirectStandardInput: step.SourceCommand is not null);
                 activeProcess = process;
 
+                Process? sourceProcess = null;
+
                 process.Start();
-                activeExecution = new ManagedProcessExecution(
-                    message => WriteDiagnostic($"Encoding job {request.JobId}: {message}"),
-                    process);
+                try
+                {
+                    if (step.SourceCommand is not null)
+                    {
+                        sourceProcess = CreateSourceProcess(step.SourceCommand, encoderPath);
+                        activeSourceProcess = sourceProcess;
+                        sourceProcess.Start();
+                    }
+                }
+                catch
+                {
+                    try
+                    {
+                        if (!process.HasExited)
+                        {
+                            process.Kill(entireProcessTree: true);
+                            process.WaitForExit(2000);
+                        }
+                    }
+                    catch
+                    {
+                    }
+
+                    sourceProcess?.Dispose();
+                    activeSourceProcess = null;
+                    process.Dispose();
+                    activeProcess = null;
+                    throw;
+                }
+
+                activeExecution = sourceProcess is null
+                    ? new ManagedProcessExecution(
+                        message => WriteDiagnostic($"Encoding job {request.JobId}: {message}"),
+                        process)
+                    : new ManagedProcessExecution(
+                        message => WriteDiagnostic($"Encoding job {request.JobId}: {message}"),
+                        sourceProcess,
+                        process);
                 _activeExecutions[request.JobId] = activeExecution;
 
                 void HandleLine(string line)
@@ -206,27 +244,69 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     }
                 }
 
+                void HandleSourceLine(string line)
+                {
+                    var normalizedLine = EncoderConsoleLineNormalizer.Normalize(line);
+                    if (string.IsNullOrWhiteSpace(normalizedLine))
+                    {
+                        return;
+                    }
+
+                    lock (lineGate)
+                    {
+                        rawLogWriter.WriteLine($"[source] {normalizedLine}");
+                        visibleLogBuilder.AppendLine($"[source] {normalizedLine}");
+                        TrimVisibleLogIfNeeded(visibleLogBuilder);
+                    }
+                }
+
+                if (sourceProcess is not null)
+                {
+                    copySourceToEncoder = CopyPipeAsync(
+                        sourceProcess.StandardOutput.BaseStream,
+                        process.StandardInput.BaseStream,
+                        cancellationToken);
+                    pumpSourceError = PumpAsync(sourceProcess.StandardError, HandleSourceLine, cancellationToken);
+                }
+                else
+                {
+                    copySourceToEncoder = Task.CompletedTask;
+                    pumpSourceError = Task.CompletedTask;
+                }
+
                 pumpOutput = PumpAsync(process.StandardOutput, HandleLine, cancellationToken);
                 pumpError = PumpAsync(process.StandardError, HandleLine, cancellationToken);
 
-                await process.WaitForExitAsync(cancellationToken);
+                if (sourceProcess is null)
+                {
+                    await process.WaitForExitAsync(cancellationToken);
+                }
+                else
+                {
+                    await Task.WhenAll(
+                        sourceProcess.WaitForExitAsync(cancellationToken),
+                        process.WaitForExitAsync(cancellationToken),
+                        ObservePipeCopyAsync(copySourceToEncoder));
+                }
+
                 activeExecution.Terminate();
-                await Task.WhenAll(pumpOutput, pumpError);
+                await Task.WhenAll(pumpOutput, pumpError, pumpSourceError);
                 var exitCode = process.ExitCode;
+                var sourceExitCode = sourceProcess?.ExitCode;
                 _activeExecutions.TryRemove(request.JobId, out _);
                 activeExecution.Dispose();
                 activeExecution = null;
                 activeProcess = null;
+                activeSourceProcess = null;
 
-                if (exitCode != 0)
+                if (exitCode != 0 || (sourceExitCode.HasValue && sourceExitCode.Value != 0))
                 {
                     currentState = EncodingJobState.Failed;
-                    var failedSummary = step.StageCount > 1
-                        ? T(language, $"Pass {step.StageIndex}/{step.StageCount} failed (exit code {exitCode})", $"第 {step.StageIndex}/{step.StageCount} 遍失败，退出代码 {exitCode}")
-                        : T(language, $"Encoding failed (exit code {exitCode})", $"编码失败，退出代码 {exitCode}");
+                    var effectiveExitCode = ResolveStageExitCode(exitCode, sourceExitCode);
+                    var failedSummary = BuildStageFailureSummary(language, step, exitCode, sourceExitCode);
                     var failedVisibleLog = visibleLogBuilder.ToString();
                     await CloseRawLogWriterAsync();
-                    var failedSidecarLogPath = await WriteSidecarLogAsync(request, plan.DisplayCommand, currentState, exitCode, rawLogPath);
+                    var failedSidecarLogPath = await WriteSidecarLogAsync(request, plan.DisplayCommand, currentState, effectiveExitCode, rawLogPath);
 
                     progress?.Report(new EncodingJobProgress(
                         request.JobId,
@@ -238,7 +318,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     return new EncodingJobResult(
                         request.JobId,
                         currentState,
-                        exitCode,
+                        effectiveExitCode,
                         failedSummary,
                         failedVisibleLog,
                         failedSidecarLogPath);
@@ -289,7 +369,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
             try
             {
-                await Task.WhenAll(pumpOutput, pumpError);
+                await Task.WhenAll(ObservePipeCopyAsync(copySourceToEncoder), pumpOutput, pumpError, pumpSourceError);
             }
             catch (OperationCanceledException)
             {
@@ -309,6 +389,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         {
             _activeExecutions.TryRemove(request.JobId, out _);
             activeExecution?.Dispose();
+            activeSourceProcess?.Dispose();
             CleanupPlanArtifacts(plan);
 
             if (!rawLogWriterClosed)
@@ -347,7 +428,6 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     {
         var profile = request.Profile;
         var pipelineKind = ResolvePipelineKind(request);
-        ValidateShellPipelineArguments(request, pipelineKind, GetLanguage());
         var sourceInfo = includeSourceMetadata || profile.Kind == EncoderKind.SvtAv1
             ? ResolveSourceInfo(
                 request,
@@ -357,15 +437,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         var preset = EncoderArgumentValueNormalizer.NormalizePresetForCli(profile.Kind, profile.Preset);
         var tune = EncoderArgumentValueNormalizer.NormalizeTuneForCli(profile.Kind, profile.Tune);
         var profileValue = EncoderArgumentValueNormalizer.NormalizeProfileForCli(profile.Kind, profile.Profile);
-        var sourceCommand = pipelineKind switch
-        {
-            InputPipelineKind.VapourSynth => $"{Quote(_toolLocator.ResolveVspipe())} {Quote(request.SourcePath)} - --container y4m",
-            InputPipelineKind.AviSynth => $"{Quote(_toolLocator.ResolveAvs2PipeMod())} -y4mp {Quote(request.SourcePath)}",
-            InputPipelineKind.FfmpegPipe => $"{Quote(_toolLocator.ResolveFfmpeg())} -hide_banner -loglevel error -i {Quote(request.SourcePath)} -map 0:v:0 -an -sn -dn -strict -1 -f yuv4mpegpipe -",
-            InputPipelineKind.RawYuvFile => string.Empty,
-            InputPipelineKind.Y4mFile => string.Empty,
-            _ => throw new InvalidOperationException(T(GetLanguage(), "The current input mode does not support pipe execution.", "当前输入模式不支持管道执行。"))
-        };
+        var sourceCommand = BuildSourceCommand(request, pipelineKind);
 
         var statsPath = profile.RateControl == RateControlMode.TwoPass
             ? BuildMultipassStatsPath(request, profile.Kind)
@@ -399,7 +471,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private static IReadOnlyList<EncodingExecutionStep> BuildExecutionSteps(
         EncodingJobRequest request,
         string encoderPath,
-        string sourceCommand,
+        ProcessCommand? sourceCommand,
         InputPipelineKind pipelineKind,
         SourceVideoInfo? sourceInfo,
         bool includeX265UhdParameters,
@@ -421,7 +493,7 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
     private static IReadOnlyList<EncodingExecutionStep> BuildSinglePassSteps(
         EncodingJobRequest request,
         string encoderPath,
-        string sourceCommand,
+        ProcessCommand? sourceCommand,
         InputPipelineKind pipelineKind,
         SourceVideoInfo? sourceInfo,
         bool includeX265UhdParameters,
@@ -442,13 +514,13 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             request.OutputPath,
             BuildRateControlArguments(request.Profile.Kind, request.Profile, statsPath));
 
-        return [CreateExecutionStep(sourceCommand, pipelineKind, encoderPath, encoderCommand, 1, 1)];
+        return [CreateExecutionStep(sourceCommand, pipelineKind, encoderCommand, 1, 1)];
     }
 
     private static IReadOnlyList<EncodingExecutionStep> BuildX26xTwoPassSteps(
         EncodingJobRequest request,
         string encoderPath,
-        string sourceCommand,
+        ProcessCommand? sourceCommand,
         InputPipelineKind pipelineKind,
         SourceVideoInfo? sourceInfo,
         bool includeX265UhdParameters,
@@ -483,15 +555,15 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
         return
         [
-            CreateExecutionStep(sourceCommand, pipelineKind, encoderPath, pass1Command, 1, 2),
-            CreateExecutionStep(sourceCommand, pipelineKind, encoderPath, pass2Command, 2, 2)
+            CreateExecutionStep(sourceCommand, pipelineKind, pass1Command, 1, 2),
+            CreateExecutionStep(sourceCommand, pipelineKind, pass2Command, 2, 2)
         ];
     }
 
     private static IReadOnlyList<EncodingExecutionStep> BuildSvtTwoPassSteps(
         EncodingJobRequest request,
         string encoderPath,
-        string sourceCommand,
+        ProcessCommand? sourceCommand,
         InputPipelineKind pipelineKind,
         SourceVideoInfo? sourceInfo,
         string preset,
@@ -528,39 +600,30 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
         return
         [
-            CreateExecutionStep(sourceCommand, pipelineKind, encoderPath, pass1Command, 1, 2),
-            CreateExecutionStep(sourceCommand, pipelineKind, encoderPath, pass2Command, 2, 2)
+            CreateExecutionStep(sourceCommand, pipelineKind, pass1Command, 1, 2),
+            CreateExecutionStep(sourceCommand, pipelineKind, pass2Command, 2, 2)
         ];
     }
 
     private static EncodingExecutionStep CreateExecutionStep(
-        string sourceCommand,
+        ProcessCommand? sourceCommand,
         InputPipelineKind pipelineKind,
-        string encoderPath,
-        string encoderCommand,
+        ProcessCommand encoderCommand,
         int stageIndex,
         int stageCount)
     {
-        if (pipelineKind is InputPipelineKind.Y4mFile or InputPipelineKind.RawYuvFile)
-        {
-            return new EncodingExecutionStep(
-                encoderPath,
-                encoderCommand[(Quote(encoderPath).Length)..].TrimStart(),
-                encoderCommand,
-                stageIndex,
-                stageCount);
-        }
-
-        var pipelineCommand = $"{sourceCommand} | {encoderCommand}";
+        var pipelineCommand = sourceCommand is null
+            ? encoderCommand.DisplayCommand
+            : $"{sourceCommand.DisplayCommand} | {encoderCommand.DisplayCommand}";
         return new EncodingExecutionStep(
-            "cmd.exe",
-            $"/d /s /c \"{pipelineCommand}\"",
+            encoderCommand,
+            pipelineKind is InputPipelineKind.Y4mFile or InputPipelineKind.RawYuvFile ? null : sourceCommand,
             pipelineCommand,
             stageIndex,
             stageCount);
     }
 
-    private static string BuildEncoderCommand(
+    private static ProcessCommand BuildEncoderCommand(
         EncodingJobRequest request,
         string encoderPath,
         InputPipelineKind pipelineKind,
@@ -594,31 +657,28 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             profile.AdditionalArguments,
             includeX265UhdParameters ? profile.UhdParameters : string.Empty);
 
-        return profile.Kind switch
+        var arguments = profile.Kind switch
         {
-            EncoderKind.X264 => JoinArguments(
-                Quote(encoderPath),
+            EncoderKind.X264 => BuildArgumentParts(
                 $"--preset {preset}",
                 rateControl,
                 Optional("--tune", tune),
                 Optional("--profile", profileValue),
                 directInputArgs,
-                sourceMetadataArgs,
-                OptionalSegment(profile.AdditionalArguments),
+                TokenizeCommandLine(sourceMetadataArgs),
+                TokenizeCommandLine(profile.AdditionalArguments),
                 outputArg),
-            EncoderKind.X265 => JoinArguments(
-                Quote(encoderPath),
+            EncoderKind.X265 => BuildArgumentParts(
                 $"--preset {preset}",
                 rateControl,
                 Optional("--tune", tune),
                 Optional("--profile", profileValue),
                 directInputArgs,
-                sourceMetadataArgs,
-                OptionalSegment(profile.AdditionalArguments),
-                OptionalSegment(includeX265UhdParameters ? profile.UhdParameters : string.Empty),
+                TokenizeCommandLine(sourceMetadataArgs),
+                TokenizeCommandLine(profile.AdditionalArguments),
+                TokenizeCommandLine(includeX265UhdParameters ? profile.UhdParameters : string.Empty),
                 outputArg),
-            EncoderKind.SvtAv1 => JoinArguments(
-                Quote(encoderPath),
+            EncoderKind.SvtAv1 => BuildArgumentParts(
                 $"--preset {preset}",
                 rateControl,
                 Optional("--tune", tune),
@@ -626,11 +686,16 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                 "--progress 2",
                 sourceInfo is null ? string.Empty : BuildSvtSourceArguments(sourceInfo),
                 directInputArgs,
-                sourceMetadataArgs,
-                OptionalSegment(profile.AdditionalArguments),
+                TokenizeCommandLine(sourceMetadataArgs),
+                TokenizeCommandLine(profile.AdditionalArguments),
                 outputArg),
             _ => throw new ArgumentOutOfRangeException()
         };
+
+        return new ProcessCommand(
+            encoderPath,
+            arguments,
+            $"{Quote(encoderPath)} {string.Join(' ', arguments.Select(DisplayToken))}");
     }
 
     private static string JoinStepDisplayCommands(IReadOnlyList<EncodingExecutionStep> steps)
@@ -1043,6 +1108,83 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return false;
     }
 
+    private ProcessCommand? BuildSourceCommand(EncodingJobRequest request, InputPipelineKind pipelineKind)
+    {
+        return pipelineKind switch
+        {
+            InputPipelineKind.VapourSynth => CreateProcessCommand(
+                _toolLocator.ResolveVspipe(),
+                request.SourcePath,
+                "-",
+                "--container",
+                "y4m"),
+            InputPipelineKind.AviSynth => CreateProcessCommand(
+                _toolLocator.ResolveAvs2PipeMod(),
+                "-y4mp",
+                request.SourcePath),
+            InputPipelineKind.FfmpegPipe => CreateProcessCommand(
+                _toolLocator.ResolveFfmpeg(),
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                request.SourcePath,
+                "-map",
+                "0:v:0",
+                "-an",
+                "-sn",
+                "-dn",
+                "-strict",
+                "-1",
+                "-f",
+                "yuv4mpegpipe",
+                "-"),
+            InputPipelineKind.RawYuvFile or InputPipelineKind.Y4mFile => null,
+            _ => null
+        };
+    }
+
+    private static ProcessCommand CreateProcessCommand(string executablePath, params string[] arguments)
+    {
+        return new ProcessCommand(
+            executablePath,
+            arguments,
+            $"{Quote(executablePath)} {string.Join(' ', arguments.Select(DisplayToken))}");
+    }
+
+    private static IReadOnlyList<string> BuildArgumentParts(params object?[] parts)
+    {
+        var result = new List<string>();
+        foreach (var part in parts)
+        {
+            switch (part)
+            {
+                case null:
+                    break;
+                case string text when !string.IsNullOrWhiteSpace(text):
+                    result.AddRange(TokenizeCommandLine(text));
+                    break;
+                case IEnumerable<string> values:
+                    result.AddRange(values.Where(static value => !string.IsNullOrWhiteSpace(value)));
+                    break;
+            }
+        }
+
+        return result;
+    }
+
+    private static string DisplayToken(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return "\"\"";
+        }
+
+        return value.IndexOfAny([' ', '\t', '"']) >= 0
+            ? Quote(value.Replace("\"", "\\\""))
+            : value;
+    }
+
     private static bool ArgumentsContainAnyOption(string? arguments, params string[] optionNames)
     {
         if (string.IsNullOrWhiteSpace(arguments))
@@ -1068,17 +1210,115 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return false;
     }
 
-    private static IReadOnlyList<string> TokenizeCommandLine(string value)
+    internal static IReadOnlyList<string> TokenizeCommandLine(string value)
     {
-        return CommandLineTokenRegex
-            .Matches(value)
-            .Select(match => match.Groups[1].Success
-                ? match.Groups[1].Value
-                : match.Groups[2].Success
-                    ? match.Groups[2].Value
-                    : match.Groups[3].Value)
-            .Where(static token => !string.IsNullOrWhiteSpace(token))
-            .ToList();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return [];
+        }
+
+        var argv = CommandLineToArgvW(NormalizeLegacySingleQuotedArguments(value), out var argc);
+        if (argv == IntPtr.Zero)
+        {
+            throw new InvalidOperationException($"Failed to tokenize command line arguments. Win32Error={Marshal.GetLastWin32Error()}");
+        }
+
+        try
+        {
+            var result = new List<string>(argc);
+            for (var index = 0; index < argc; index++)
+            {
+                var item = Marshal.ReadIntPtr(argv, index * IntPtr.Size);
+                var token = Marshal.PtrToStringUni(item);
+                if (!string.IsNullOrWhiteSpace(token))
+                {
+                    result.Add(token);
+                }
+            }
+
+            return result;
+        }
+        finally
+        {
+            LocalFree(argv);
+        }
+    }
+
+    private static string NormalizeLegacySingleQuotedArguments(string value)
+    {
+        if (value.IndexOf('\'') < 0)
+        {
+            return value;
+        }
+
+        var builder = new StringBuilder(value.Length);
+        var inDoubleQuotes = false;
+
+        for (var index = 0; index < value.Length; index++)
+        {
+            var character = value[index];
+            if (character == '"')
+            {
+                inDoubleQuotes = !inDoubleQuotes;
+                builder.Append(character);
+                continue;
+            }
+
+            if (character == '\''
+                && !inDoubleQuotes
+                && (index == 0 || char.IsWhiteSpace(value[index - 1])))
+            {
+                var closingIndex = value.IndexOf('\'', index + 1);
+                if (closingIndex > index)
+                {
+                    AppendDoubleQuotedArgument(builder, value.AsSpan(index + 1, closingIndex - index - 1));
+                    index = closingIndex;
+                    continue;
+                }
+            }
+
+            builder.Append(character);
+        }
+
+        return builder.ToString();
+    }
+
+    private static void AppendDoubleQuotedArgument(StringBuilder builder, ReadOnlySpan<char> value)
+    {
+        builder.Append('"');
+
+        var backslashCount = 0;
+        foreach (var character in value)
+        {
+            if (character == '\\')
+            {
+                backslashCount++;
+                continue;
+            }
+
+            if (character == '"')
+            {
+                builder.Append('\\', backslashCount * 2 + 1);
+                builder.Append('"');
+                backslashCount = 0;
+                continue;
+            }
+
+            if (backslashCount > 0)
+            {
+                builder.Append('\\', backslashCount);
+                backslashCount = 0;
+            }
+
+            builder.Append(character);
+        }
+
+        if (backslashCount > 0)
+        {
+            builder.Append('\\', backslashCount * 2);
+        }
+
+        builder.Append('"');
     }
 
     private static readonly HashSet<string> X26xColorPrimaries = new(StringComparer.OrdinalIgnoreCase)
@@ -1417,6 +1657,13 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             : (snapshot.ProgressFraction, snapshot.Snapshot);
     }
 
+    internal static string TrimVisibleLogForTesting(string text)
+    {
+        var builder = new StringBuilder(text);
+        TrimVisibleLogIfNeeded(builder);
+        return builder.ToString();
+    }
+
     private static ParsedProgressSnapshot? TryParseLooseX26xMetrics(
         string line,
         long? totalFrames,
@@ -1678,22 +1925,66 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             ?? string.Empty;
     }
 
-    private static Process CreateProcess(EncodingExecutionStep step, string encoderPath)
+    internal static Process CreateProcess(ProcessCommand command, string encoderPath, bool redirectStandardInput = false)
     {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = command.FileName,
+            UseShellExecute = false,
+            RedirectStandardInput = redirectStandardInput,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            WorkingDirectory = Path.GetDirectoryName(encoderPath) ?? AppContext.BaseDirectory
+        };
+
+        foreach (var argument in command.Arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
         return new Process
         {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = step.FileName,
-                Arguments = step.Arguments,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                WorkingDirectory = Path.GetDirectoryName(encoderPath) ?? AppContext.BaseDirectory
-            },
+            StartInfo = startInfo,
             EnableRaisingEvents = true
         };
+    }
+
+    private static Process CreateSourceProcess(ProcessCommand command, string encoderPath)
+    {
+        return CreateProcess(command, encoderPath);
+    }
+
+    private static async Task CopyPipeAsync(Stream source, Stream destination, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await source.CopyToAsync(destination, cancellationToken);
+        }
+        finally
+        {
+            try
+            {
+                await destination.DisposeAsync();
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static async Task ObservePipeCopyAsync(Task copyTask)
+    {
+        try
+        {
+            await copyTask;
+        }
+        catch (IOException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     private static ParsedProgressSnapshot? ApplyStageProgress(ParsedProgressSnapshot? progressSnapshot, EncodingExecutionStep step)
@@ -1722,6 +2013,31 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return step.StageCount <= 1
             ? 0.0
             : Math.Clamp((step.StageIndex - 1) / (double)step.StageCount, 0.0, 1.0);
+    }
+
+    private static int ResolveStageExitCode(int encoderExitCode, int? sourceExitCode)
+    {
+        return encoderExitCode != 0
+            ? encoderExitCode
+            : sourceExitCode ?? 0;
+    }
+
+    private static string BuildStageFailureSummary(AppLanguage language, EncodingExecutionStep step, int encoderExitCode, int? sourceExitCode)
+    {
+        if (sourceExitCode.HasValue && sourceExitCode.Value != 0)
+        {
+            return step.StageCount > 1
+                ? T(language,
+                    $"Pass {step.StageIndex}/{step.StageCount} failed (source exit code {sourceExitCode.Value}, encoder exit code {encoderExitCode})",
+                    $"第 {step.StageIndex}/{step.StageCount} 遍失败，源进程退出代码 {sourceExitCode.Value}，编码器退出代码 {encoderExitCode}")
+                : T(language,
+                    $"Encoding failed (source exit code {sourceExitCode.Value}, encoder exit code {encoderExitCode})",
+                    $"编码失败，源进程退出代码 {sourceExitCode.Value}，编码器退出代码 {encoderExitCode}");
+        }
+
+        return step.StageCount > 1
+            ? T(language, $"Pass {step.StageIndex}/{step.StageCount} failed (exit code {encoderExitCode})", $"第 {step.StageIndex}/{step.StageCount} 遍失败，退出代码 {encoderExitCode}")
+            : T(language, $"Encoding failed (exit code {encoderExitCode})", $"编码失败，退出代码 {encoderExitCode}");
     }
 
     private static string BuildStageStartingSummary(AppLanguage language, EncodingExecutionStep step)
@@ -1803,17 +2119,48 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             builder.Remove(0, removeCount);
         }
 
-        var retainedText = builder.ToString();
-        var firstLineBreak = retainedText.IndexOfAny(['\r', '\n']);
+        var firstLineBreak = IndexOfLineBreak(builder);
         if (firstLineBreak >= 0 && firstLineBreak + 1 < builder.Length)
         {
             builder.Remove(0, firstLineBreak + 1);
         }
 
-        if (!builder.ToString().StartsWith(VisibleLogTruncationMarker, StringComparison.Ordinal))
+        if (!StartsWith(builder, VisibleLogTruncationMarker))
         {
             builder.Insert(0, $"{VisibleLogTruncationMarker}{Environment.NewLine}");
         }
+    }
+
+    private static int IndexOfLineBreak(StringBuilder builder)
+    {
+        for (var index = 0; index < builder.Length; index++)
+        {
+            var character = builder[index];
+            if (character is '\r' or '\n')
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool StartsWith(StringBuilder builder, string value)
+    {
+        if (builder.Length < value.Length)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (builder[index] != value[index])
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private string CreateTemporaryRawLogPath(EncodingJobRequest request)
@@ -1923,45 +2270,6 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
         return InputSourceSupport.ResolvePipelineKind(request.SourcePath);
     }
 
-    private static void ValidateShellPipelineArguments(EncodingJobRequest request, InputPipelineKind pipelineKind, AppLanguage language)
-    {
-        if (pipelineKind is InputPipelineKind.Y4mFile or InputPipelineKind.RawYuvFile)
-        {
-            return;
-        }
-
-        ThrowIfContainsForbiddenShellCharacters(
-            request.Profile.AdditionalArguments,
-            T(language, "Custom encode arguments", "自定义压制参数"),
-            language);
-
-        if (request.Profile.Kind == EncoderKind.X265)
-        {
-            ThrowIfContainsForbiddenShellCharacters(
-                request.Profile.UhdParameters,
-                T(language, "x265 UHD / HDR extra arguments", "x265 UHD / HDR 附加参数"),
-                language);
-        }
-    }
-
-    private static void ThrowIfContainsForbiddenShellCharacters(string? value, string parameterName, AppLanguage language)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return;
-        }
-
-        if (value.IndexOfAny(ForbiddenCmdCharacters) >= 0
-            || value.Contains('\r')
-            || value.Contains('\n'))
-        {
-            throw new InvalidOperationException(T(
-                language,
-                $"{parameterName} contains unsupported shell control characters. To reduce command-injection risk, only plain argument text is allowed. Remove &, |, <, >, ^, %, and line breaks, then try again.",
-                $"{parameterName} 中包含不受支持的命令行控制字符。为避免命令注入风险，自动编码仅允许普通参数文本。请移除 & | < > ^ % 和换行后重试。"));
-        }
-    }
-
     private static string X264InputSwitch(InputPipelineKind pipelineKind)
     {
         return pipelineKind switch
@@ -2026,6 +2334,12 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
     private static string T(AppLanguage language, string en, string zh) =>
         language == AppLanguage.English ? en : zh;
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CommandLineToArgvW(string commandLine, out int argc);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr LocalFree(IntPtr hMem);
 
     private sealed record ParsedProgressSnapshot(
         double? ProgressFraction,

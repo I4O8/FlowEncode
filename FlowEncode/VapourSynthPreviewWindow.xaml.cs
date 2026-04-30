@@ -38,6 +38,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
     private bool _isPreviewPanActive;
     private bool _isPlaying;
     private bool _hasEverActivated;
+    private Task? _closePreviewSessionTask;
     private int? _pendingFrameNumber;
     private uint _previewPanPointerId;
     private string? _pendingStatusText;
@@ -115,6 +116,17 @@ public sealed partial class VapourSynthPreviewWindow : Window
         EnsurePreferredWindowPresentation();
         RefreshDisplayScale();
         return true;
+    }
+
+    public async Task CloseForOwnerShutdownAsync()
+    {
+        if (_isClosed)
+        {
+            return;
+        }
+
+        await ClosePreviewSessionIfNeededAsync();
+        Close();
     }
 
     public void ApplyPresentation(
@@ -949,8 +961,14 @@ public sealed partial class VapourSynthPreviewWindow : Window
         RootLayout.Unloaded -= RootLayout_Unloaded;
         RootLayout.ActualThemeChanged -= RootLayout_ActualThemeChanged;
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
-        await _previewService.CloseSessionAsync();
+        await ClosePreviewSessionIfNeededAsync();
         PreviewWindowClosed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private Task ClosePreviewSessionIfNeededAsync()
+    {
+        _closePreviewSessionTask ??= _previewService.CloseSessionAsync();
+        return _closePreviewSessionTask;
     }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)

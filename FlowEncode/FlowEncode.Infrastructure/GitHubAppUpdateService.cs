@@ -165,8 +165,9 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
                 {
                     File.Delete(downloadPath);
                 }
-                catch
+                catch (Exception cleanupException)
                 {
+                    WriteDiagnostic($"Failed to delete stale cached installer '{downloadPath}'. {cleanupException.GetType().Name}: {cleanupException.Message}");
                 }
             }
         }
@@ -188,8 +189,9 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
                     File.Delete(downloadPath);
                 }
             }
-            catch
+            catch (Exception cleanupException)
             {
+                WriteDiagnostic($"Failed to delete invalid installer '{downloadPath}' after verification failure. {cleanupException.GetType().Name}: {cleanupException.Message}");
             }
 
             throw;
@@ -199,6 +201,11 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
+    }
+
+    private void WriteDiagnostic(string message)
+    {
+        AppDiagnosticsLog.Write(_paths, nameof(GitHubAppUpdateService), message);
     }
 
     private static string GetCurrentVersionLabel()

@@ -2,9 +2,14 @@ using FlowEncode.Domain;
 
 namespace FlowEncode.Infrastructure;
 
-internal sealed record EncodingExecutionStep(
+internal sealed record ProcessCommand(
     string FileName,
-    string Arguments,
+    IReadOnlyList<string> Arguments,
+    string DisplayCommand);
+
+internal sealed record EncodingExecutionStep(
+    ProcessCommand EncoderCommand,
+    ProcessCommand? SourceCommand,
     string DisplayCommand,
     int StageIndex,
     int StageCount);

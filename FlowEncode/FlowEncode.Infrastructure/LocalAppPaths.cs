@@ -9,12 +9,18 @@ public sealed class LocalAppPaths
     private const string WorkspaceRootPathPropertyName = "workspaceRootPath";
 
     public LocalAppPaths()
+        : this(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), null)
     {
-        var localApplicationDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+    }
+
+    internal LocalAppPaths(string localApplicationDataPath, string? installRootPathOverride = null)
+    {
         LocalStateRootPath = Path.Combine(
             localApplicationDataPath,
             AppFolderName);
-        InstallRootPath = ResolveExecutableDirectory(LocalStateRootPath);
+        InstallRootPath = string.IsNullOrWhiteSpace(installRootPathOverride)
+            ? ResolveExecutableDirectory(LocalStateRootPath)
+            : Path.GetFullPath(installRootPathOverride);
         DataRootPath = Path.Combine(LocalStateRootPath, "data");
         SettingsRootPath = Path.Combine(DataRootPath, "settings");
         LocalizationRootPath = Path.Combine(DataRootPath, "localization");
