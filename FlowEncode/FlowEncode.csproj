@@ -2,10 +2,10 @@
   <PropertyGroup>
     <WindowsPackageType>None</WindowsPackageType>
     <OutputType>WinExe</OutputType>
-    <Version>1.6.9</Version>
-    <AssemblyVersion>1.6.9.0</AssemblyVersion>
-    <FileVersion>1.6.9.0</FileVersion>
-    <InformationalVersion>1.6.9</InformationalVersion>
+    <Version>1.6.10</Version>
+    <AssemblyVersion>1.6.10.0</AssemblyVersion>
+    <FileVersion>1.6.10.0</FileVersion>
+    <InformationalVersion>1.6.10</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <TargetFramework>net8.0-windows10.0.26100.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>

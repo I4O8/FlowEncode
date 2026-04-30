@@ -670,8 +670,8 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
             if (firstCompletion == PipelineFirstCompletion.ProducerExited)
             {
-                var ffmpegExitCode = await GetExitCodeAsync(ffmpegProcess, ffmpegExitTask);
-                if (ffmpegExitCode != 0)
+                var firstFfmpegExitCode = await GetExitCodeAsync(ffmpegProcess, ffmpegExitTask);
+                if (firstFfmpegExitCode != 0)
                 {
                     activeExecution.Terminate();
                 }
