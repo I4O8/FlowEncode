@@ -417,7 +417,8 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         {
             var executionResult = await executeAsync(HandleLine, cancellationToken);
             var log = logBuilder.ToString();
-            if (executionResult.ExitCode == 0)
+            var semanticFailureDetail = TryBuildSemanticFailureDetail(request.Mode, log);
+            if (executionResult.ExitCode == 0 && string.IsNullOrWhiteSpace(semanticFailureDetail))
             {
                 FinalizeOutputFileForSuccess(runPlan);
                 DeletePartialOutputFile(runPlan);
@@ -442,9 +443,15 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
             DeletePartialOutputFile(runPlan);
 
-            var failureSummary = string.IsNullOrWhiteSpace(executionResult.ExitCodeDetail)
+            var effectiveExitCode = executionResult.ExitCode == 0 && !string.IsNullOrWhiteSpace(semanticFailureDetail)
+                ? -2
+                : executionResult.ExitCode;
+            var failureDetail = string.IsNullOrWhiteSpace(semanticFailureDetail)
+                ? executionResult.ExitCodeDetail
+                : semanticFailureDetail;
+            var failureSummary = string.IsNullOrWhiteSpace(failureDetail)
                 ? T(language, $"{BuildFailureSummary(language, request.Mode)} (exit code {executionResult.ExitCode})", $"{BuildFailureSummary(language, request.Mode)}，退出代码 {executionResult.ExitCode}")
-                : T(language, $"{BuildFailureSummary(language, request.Mode)}: {executionResult.ExitCodeDetail}", $"{BuildFailureSummary(language, request.Mode)}，{executionResult.ExitCodeDetail}");
+                : T(language, $"{BuildFailureSummary(language, request.Mode)}: {failureDetail}", $"{BuildFailureSummary(language, request.Mode)}，{failureDetail}");
             progress?.Report(new AudioProcessingProgress(
                 request.JobId,
                 EncodingJobState.Failed,
@@ -457,7 +464,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             return new AudioProcessingResult(
                 request.JobId,
                 EncodingJobState.Failed,
-                executionResult.ExitCode,
+                effectiveExitCode,
                 failureSummary,
                 log,
                 displayCommand);
@@ -1022,6 +1029,12 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             TryDeleteOrphanedBackupFile(runPlan);
         }
 
+        if (runPlan.DisplayRequest.Mode == AudioProcessingMode.Ddp)
+        {
+            TryDeleteZeroLengthDdpOutputFiles(runPlan.DisplayRequest);
+            return;
+        }
+
         TryDeleteZeroLengthFile(runPlan.DisplayRequest.OutputPath);
     }
 
@@ -1063,6 +1076,45 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
             if (fileInfo.Length == 0)
             {
                 File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDeleteZeroLengthDdpOutputFiles(AudioProcessingRequest request)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request.OutputPath) || !Directory.Exists(request.OutputPath))
+            {
+                return;
+            }
+
+            var sourceStem = Path.GetFileNameWithoutExtension(request.SourcePath);
+            foreach (var file in Directory.EnumerateFiles(request.OutputPath))
+            {
+                var extension = Path.GetExtension(file);
+                if (!string.Equals(extension, ".ec3", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(extension, ".ac3", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(extension, ".ddp", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var fileName = Path.GetFileNameWithoutExtension(file);
+                if (!string.IsNullOrWhiteSpace(sourceStem)
+                    && !fileName.Contains(sourceStem, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var fileInfo = new FileInfo(file);
+                if (fileInfo.Length == 0)
+                {
+                    File.Delete(file);
+                }
             }
         }
         catch
@@ -1160,6 +1212,9 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
     internal static double? ParseDeewProgressForTesting(string line)
         => ParseDeewProgress(ConsoleOutputLineNormalizer.Normalize(line));
+
+    internal static string? TryBuildDdpSemanticFailureDetailForTesting(string log)
+        => TryBuildDdpSemanticFailureDetail(log);
 
     private static double? ParseEac3ToProgress(string line)
     {
@@ -1374,7 +1429,82 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         return line.Contains("error", StringComparison.OrdinalIgnoreCase)
             || line.Contains("failed", StringComparison.OrdinalIgnoreCase)
             || line.Contains("traceback", StringComparison.OrdinalIgnoreCase)
-            || line.Contains("exception", StringComparison.OrdinalIgnoreCase);
+            || line.Contains("exception", StringComparison.OrdinalIgnoreCase)
+            || LooksLikeDdpPcmConfigurationFailure(line);
+    }
+
+    private static string? TryBuildSemanticFailureDetail(AudioProcessingMode mode, string log)
+    {
+        if (mode != AudioProcessingMode.Ddp)
+        {
+            return null;
+        }
+
+        return TryBuildDdpSemanticFailureDetail(log);
+    }
+
+    private static string? TryBuildDdpSemanticFailureDetail(string log)
+    {
+        var normalized = CollapseWhitespace(log);
+        if (!LooksLikeDdpPcmConfigurationFailure(normalized))
+        {
+            return null;
+        }
+
+        var startIndex = normalized.IndexOf("pcm_to_ddp:", StringComparison.OrdinalIgnoreCase);
+        var detail = startIndex >= 0 ? normalized[startIndex..] : normalized;
+        var duplicateIndex = detail.IndexOf(" pcm_to_ddp:", "pcm_to_ddp:".Length, StringComparison.OrdinalIgnoreCase);
+        if (duplicateIndex > 0)
+        {
+            detail = detail[..duplicateIndex];
+        }
+
+        const int maxDetailLength = 260;
+        return detail.Length > maxDetailLength
+            ? string.Concat(detail.AsSpan(0, maxDetailLength).TrimEnd(), "...")
+            : detail;
+    }
+
+    private static bool LooksLikeDdpPcmConfigurationFailure(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line)
+            || !line.Contains("pcm_to_ddp:", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return line.Contains("check input and downmix config", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("resulting output channels", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("valid value(s)", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string CollapseWhitespace(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(text.Length);
+        var pendingSpace = false;
+        foreach (var character in text)
+        {
+            if (char.IsWhiteSpace(character))
+            {
+                pendingSpace = true;
+                continue;
+            }
+
+            if (pendingSpace && builder.Length > 0)
+            {
+                builder.Append(' ');
+            }
+
+            builder.Append(character);
+            pendingSpace = false;
+        }
+
+        return builder.ToString().Trim();
     }
 
     private static double? ParseFfmpegProcessedSeconds(string line)

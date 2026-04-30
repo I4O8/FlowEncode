@@ -27,6 +27,7 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     private string _summary;
     private string _detailLine;
     private bool _isSourcePreparation;
+    private string _sourcePreparationText;
     private string _log;
     private string _logFilePath;
     private string _displayCommand;
@@ -45,6 +46,7 @@ public sealed class EncodingJobItemViewModel : ObservableObject
         _state = EncodingJobState.Queued;
         _summary = T("等待编码器空闲", "Waiting for the encoder");
         _detailLine = T("作业已加入队列。", "Job queued.");
+        _sourcePreparationText = string.Empty;
         _log = string.Empty;
         _logFilePath = string.Empty;
         _lastMeaningfulLogLine = GetNoMeaningfulLogMessage();
@@ -137,13 +139,6 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     {
         get
         {
-            if (IsSourcePreparation)
-            {
-                return string.IsNullOrWhiteSpace(Summary)
-                    ? T("源处理中...", "Preparing source...")
-                    : Summary;
-            }
-
             var segments = new List<string> { ProgressPercentLabel };
 
             if (CurrentFrame.HasValue || TotalFrames.HasValue)
@@ -169,11 +164,6 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     {
         get
         {
-            if (IsSourcePreparation)
-            {
-                return DetailLine;
-            }
-
             var etaLabel = $"{T("预计剩余", "eta")} {FormatEta(Eta)}";
             var estimatedSizeLabel = $"{T("预计大小", "est. size")} {FormatByteSize(EstimatedFileSizeBytes)}";
 
@@ -254,9 +244,26 @@ public sealed class EncodingJobItemViewModel : ObservableObject
                 OnPropertyChanged(nameof(ProgressTelemetryPrimaryLine));
                 OnPropertyChanged(nameof(ProgressTelemetrySecondaryLine));
                 OnPropertyChanged(nameof(IsProgressIndeterminate));
+                OnPropertyChanged(nameof(HasSourcePreparationText));
             }
         }
     }
+
+    public string SourcePreparationText
+    {
+        get => _sourcePreparationText;
+        private set
+        {
+            if (SetProperty(ref _sourcePreparationText, value))
+            {
+                OnPropertyChanged(nameof(HasSourcePreparationText));
+            }
+        }
+    }
+
+    public bool HasSourcePreparationText => State == EncodingJobState.Running
+        && IsSourcePreparation
+        && !string.IsNullOrWhiteSpace(SourcePreparationText);
 
     public string Log
     {
@@ -280,8 +287,7 @@ public sealed class EncodingJobItemViewModel : ObservableObject
 
     public bool IsProgressIndeterminate => State == EncodingJobState.Running
         && !ProgressFraction.HasValue
-        && !CurrentFrame.HasValue
-        && !IsSourcePreparation;
+        && !CurrentFrame.HasValue;
 
     public string StateLabel => State switch
     {
@@ -342,8 +348,22 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     public void ApplyProgress(EncodingJobProgress progress)
     {
         State = progress.State;
-        ProgressFraction = progress.ProgressFraction;
         IsSourcePreparation = progress.IsSourcePreparation;
+        if (progress.IsSourcePreparation)
+        {
+            SourcePreparationText = string.IsNullOrWhiteSpace(progress.Summary)
+                ? T("源处理中...", "Preparing source...")
+                : progress.Summary;
+            if (ShouldAppendSourcePreparationLogLine(progress.DetailLine))
+            {
+                AppendLogLine(progress.DetailLine);
+            }
+
+            return;
+        }
+
+        SourcePreparationText = string.Empty;
+        ProgressFraction = progress.ProgressFraction;
         ApplySnapshot(progress.Snapshot);
         Summary = progress.Summary;
         DetailLine = progress.DetailLine;
@@ -358,6 +378,7 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     {
         State = result.State;
         IsSourcePreparation = false;
+        SourcePreparationText = string.Empty;
         ProgressFraction = result.State == EncodingJobState.Completed ? 1.0 : ProgressFraction;
         Eta = result.State == EncodingJobState.Completed ? TimeSpan.Zero : null;
 
@@ -376,6 +397,7 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     {
         State = EncodingJobState.Cancelled;
         IsSourcePreparation = false;
+        SourcePreparationText = string.Empty;
         Eta = null;
         Summary = summary;
         DetailLine = detail;
@@ -386,6 +408,7 @@ public sealed class EncodingJobItemViewModel : ObservableObject
     {
         State = EncodingJobState.Failed;
         IsSourcePreparation = false;
+        SourcePreparationText = string.Empty;
         Eta = null;
         Summary = summary;
         DetailLine = detail;
@@ -434,6 +457,41 @@ public sealed class EncodingJobItemViewModel : ObservableObject
         TrimVisibleLogIfNeeded();
         _lastMeaningfulLogLine = normalized;
         Log = _logBuilder.ToString();
+    }
+
+    private static bool ShouldAppendSourcePreparationLogLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        var normalized = line.Trim();
+        if (normalized.StartsWith("[source]", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized["[source]".Length..].TrimStart();
+        }
+
+        if (LooksLikeSourcePreparationProgressTick(normalized))
+        {
+            return false;
+        }
+
+        return normalized.Contains("error", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("exception", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("traceback", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeSourcePreparationProgressTick(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line) || !line.Contains('%'))
+        {
+            return false;
+        }
+
+        return line.Contains("Creating lwi index file", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("index progress", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ReplaceLog(string log)

@@ -129,8 +129,11 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             lock (lineGate)
             {
                 rawLogWriter.WriteLine(sourceDisplayLine);
-                visibleLogBuilder.AppendLine(sourceDisplayLine);
-                TrimVisibleLogIfNeeded(visibleLogBuilder);
+                if (ShouldAppendSourcePreparationVisibleLogLine(normalizedLine))
+                {
+                    visibleLogBuilder.AppendLine(sourceDisplayLine);
+                    TrimVisibleLogIfNeeded(visibleLogBuilder);
+                }
             }
 
             progress?.Report(new EncodingJobProgress(
@@ -320,8 +323,11 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
                     lock (lineGate)
                     {
                         rawLogWriter.WriteLine(sourceDisplayLine);
-                        visibleLogBuilder.AppendLine(sourceDisplayLine);
-                        TrimVisibleLogIfNeeded(visibleLogBuilder);
+                        if (ShouldAppendSourcePreparationVisibleLogLine(normalizedLine))
+                        {
+                            visibleLogBuilder.AppendLine(sourceDisplayLine);
+                            TrimVisibleLogIfNeeded(visibleLogBuilder);
+                        }
 
                         pendingProgress = new EncodingJobProgress(
                             request.JobId,
@@ -1568,6 +1574,11 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
             || line.Contains("traceback", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool ShouldAppendSourcePreparationVisibleLogLine(string line)
+    {
+        return ShouldSurfaceLineDuringSourcePreparation(line);
+    }
+
     private static ParsedProgressSnapshot? ParseProgressSnapshot(
         EncoderKind kind,
         long? totalFrames,
@@ -1799,6 +1810,9 @@ public sealed class LocalEncodingJobRunner : IEncodingJobRunner
 
     internal static bool ShouldSurfaceLineDuringSourcePreparationForTesting(string line)
         => ShouldSurfaceLineDuringSourcePreparation(EncoderConsoleLineNormalizer.Normalize(line));
+
+    internal static bool ShouldAppendSourcePreparationVisibleLogLineForTesting(string line)
+        => ShouldAppendSourcePreparationVisibleLogLine(EncoderConsoleLineNormalizer.Normalize(line));
 
     internal static string TrimVisibleLogForTesting(string text)
     {

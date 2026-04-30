@@ -293,6 +293,34 @@ public sealed class CliAudioProcessingRunnerTests
         Assert.AreEqual(0.0625, parsed.Value, 0.000001);
     }
 
+    [TestMethod]
+    public void TryBuildDdpSemanticFailureDetailForTesting_WithPcmChannelFailure_ReturnsDetail()
+    {
+        const string log = """
+pcm_to_ddp: Check input and downmix config. Resulting output channels: 8 is not
+allowed. Valid value(s): 1,2,6.
+pcm_to_ddp: Check input and downmix config. Resulting output channels: 8 is not
+allowed. Valid value(s): 1,2,6.
+""";
+
+        var detail = CliAudioProcessingRunner.TryBuildDdpSemanticFailureDetailForTesting(log);
+
+        Assert.IsFalse(string.IsNullOrWhiteSpace(detail));
+        StringAssert.Contains(detail!, "pcm_to_ddp:");
+        StringAssert.Contains(detail, "Resulting output channels: 8 is not allowed");
+        Assert.AreEqual(1, CountOccurrences(detail, "pcm_to_ddp:"));
+    }
+
+    [TestMethod]
+    public void TryBuildDdpSemanticFailureDetailForTesting_WithNeutralWarning_ReturnsNull()
+    {
+        const string log = "Dolby Encoding Engine Wrapper started.";
+
+        var detail = CliAudioProcessingRunner.TryBuildDdpSemanticFailureDetailForTesting(log);
+
+        Assert.IsNull(detail);
+    }
+
     private static readonly string AudioSmokeRoot = Path.Combine(
         Path.GetTempPath(),
         "FlowEncodeAudioSmoke");
@@ -460,6 +488,20 @@ public sealed class CliAudioProcessingRunnerTests
         }
 
         return path;
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var startIndex = 0;
+
+        while ((startIndex = text.IndexOf(value, startIndex, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            count++;
+            startIndex += value.Length;
+        }
+
+        return count;
     }
 
     private sealed class StubToolProbeService : IToolProbeService

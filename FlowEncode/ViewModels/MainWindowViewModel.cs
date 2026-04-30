@@ -975,13 +975,11 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     public string SelectedJobProgressPercentText => SelectedJob?.ProgressPercentLabel ?? "0%";
 
-    public Visibility SelectedJobDetailedMetricsVisibility => SelectedJob?.IsSourcePreparation == true
-        ? Visibility.Collapsed
-        : Visibility.Visible;
-
-    public Visibility SelectedJobSourcePreparationVisibility => SelectedJob?.IsSourcePreparation == true
+    public Visibility SelectedJobSourcePreparationVisibility => SelectedJob?.HasSourcePreparationText == true
         ? Visibility.Visible
         : Visibility.Collapsed;
+
+    public string SelectedJobSourcePreparationText => SelectedJob?.SourcePreparationText ?? string.Empty;
 
     public string SelectedJobFramesText => BuildSelectedJobFramesText();
 
@@ -3509,8 +3507,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         OnPropertyChanged(nameof(SelectedJobProgressPrimaryText));
         OnPropertyChanged(nameof(SelectedJobProgressSecondaryText));
         OnPropertyChanged(nameof(SelectedJobProgressPercentText));
-        OnPropertyChanged(nameof(SelectedJobDetailedMetricsVisibility));
         OnPropertyChanged(nameof(SelectedJobSourcePreparationVisibility));
+        OnPropertyChanged(nameof(SelectedJobSourcePreparationText));
         OnPropertyChanged(nameof(SelectedJobFramesText));
         OnPropertyChanged(nameof(SelectedJobFpsText));
         OnPropertyChanged(nameof(SelectedJobBitrateText));
@@ -3545,6 +3543,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             case nameof(EncodingJobItemViewModel.ProgressValue):
             case nameof(EncodingJobItemViewModel.ProgressPercentLabel):
             case nameof(EncodingJobItemViewModel.IsSourcePreparation):
+            case nameof(EncodingJobItemViewModel.SourcePreparationText):
+            case nameof(EncodingJobItemViewModel.HasSourcePreparationText):
             case nameof(EncodingJobItemViewModel.CurrentFrame):
             case nameof(EncodingJobItemViewModel.TotalFrames):
             case nameof(EncodingJobItemViewModel.FramesPerSecond):

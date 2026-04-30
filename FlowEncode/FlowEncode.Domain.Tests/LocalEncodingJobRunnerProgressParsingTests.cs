@@ -78,4 +78,34 @@ public sealed class LocalEncodingJobRunnerProgressParsingTests
         Assert.IsTrue(result);
     }
 
+    [TestMethod]
+    public void ShouldAppendSourcePreparationVisibleLogLineForTesting_WithLwiProgressTick_ReturnsFalse()
+    {
+        const string line = "Creating lwi index file 42%";
+
+        var result = LocalEncodingJobRunner.ShouldAppendSourcePreparationVisibleLogLineForTesting(line);
+
+        Assert.IsFalse(result);
+    }
+
+    [TestMethod]
+    public void ShouldAppendSourcePreparationVisibleLogLineForTesting_WithBestSourceProgressTick_ReturnsFalse()
+    {
+        const string line = "Information: VideoSource track #0 index progress 54%";
+
+        var result = LocalEncodingJobRunner.ShouldAppendSourcePreparationVisibleLogLineForTesting(line);
+
+        Assert.IsFalse(result);
+    }
+
+    [TestMethod]
+    public void ShouldAppendSourcePreparationVisibleLogLineForTesting_WithFailureLine_ReturnsTrue()
+    {
+        const string line = "Script evaluation failed: source plugin error";
+
+        var result = LocalEncodingJobRunner.ShouldAppendSourcePreparationVisibleLogLineForTesting(line);
+
+        Assert.IsTrue(result);
+    }
+
 }
