@@ -9,7 +9,7 @@ using SharpCompress.Archives.SevenZip;
 
 namespace FlowEncode.Infrastructure;
 
-public sealed class GitHubReleaseEncoderUpdateService : IEncoderUpdateService
+public sealed class GitHubReleaseEncoderUpdateService : IEncoderUpdateService, IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -157,6 +157,11 @@ public sealed class GitHubReleaseEncoderUpdateService : IEncoderUpdateService
             {
             }
         }
+    }
+
+    public void Dispose()
+    {
+        _httpClient.Dispose();
     }
 
     private static void ExtractArchive(string archivePath, string extractRoot)

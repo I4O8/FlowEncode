@@ -11,7 +11,7 @@ using SharpCompress.Archives.SevenZip;
 
 namespace FlowEncode.Infrastructure;
 
-public sealed class LocalExternalToolService : IExternalToolService
+public sealed class LocalExternalToolService : IExternalToolService, IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -254,6 +254,11 @@ public sealed class LocalExternalToolService : IExternalToolService
     }
 
     public string GetToolsRootPath() => _paths.ToolsRootPath;
+
+    public void Dispose()
+    {
+        _httpClient.Dispose();
+    }
 
     private static void DeleteIfExists(string path)
     {

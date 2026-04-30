@@ -65,16 +65,25 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
         if (!ViewModel.HasUnsavedChanges)
         {
             await ViewModel.FlushSessionAsync();
+            await ClosePreviewWindowForAppShutdownAsync();
             return true;
         }
 
         var choice = await ShowUnsavedChangesDialogAsync(xamlRoot);
-        return choice switch
+        var canClose = choice switch
         {
             UnsavedChangesChoice.Save => await SaveCurrentDocumentAsync(),
             UnsavedChangesChoice.Discard => await FlushDiscardedStateAsync(),
             _ => false
         };
+
+        if (!canClose)
+        {
+            return false;
+        }
+
+        await ClosePreviewWindowForAppShutdownAsync();
+        return true;
     }
 
     public async Task<bool> OpenExternalDocumentAsync(string filePath)
@@ -509,6 +518,19 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
         mainWindow.BringToFront();
         await Task.Yield();
         await FocusEditorAsync();
+    }
+
+    private async Task ClosePreviewWindowForAppShutdownAsync()
+    {
+        if (_previewWindow is null)
+        {
+            return;
+        }
+
+        var previewWindow = _previewWindow;
+        _previewWindow = null;
+        previewWindow.PreviewWindowClosed -= PreviewWindow_PreviewWindowClosed;
+        await previewWindow.CloseForOwnerShutdownAsync();
     }
 
     private async Task<bool> TryConfirmDocumentSwitchAsync()

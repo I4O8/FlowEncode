@@ -23,6 +23,7 @@ public partial class App : Microsoft.UI.Xaml.Application
     private AppInstance? _mainAppInstance;
     private CancellationTokenSource? _singleInstancePipeCancellationTokenSource;
     private Task? _singleInstancePipeServerTask;
+    private bool _isShuttingDown;
     private Window? _window;
 
     public App()
@@ -51,6 +52,7 @@ public partial class App : Microsoft.UI.Xaml.Application
         var launchActivation = GetService<AppLaunchActivation>();
         launchActivation.SetRequestedVapourSynthFilePath(ResolveRequestedVapourSynthFilePath());
         _window = GetService<MainWindow>();
+        _window.Closed += MainWindow_Closed;
         _window.Activate();
     }
 
@@ -122,8 +124,14 @@ public partial class App : Microsoft.UI.Xaml.Application
         }
 
         TrySendExternalOpenRequest(ResolveRequestedVapourSynthFilePath());
+        ShutdownServices();
         Environment.Exit(0);
         return false;
+    }
+
+    private void MainWindow_Closed(object sender, WindowEventArgs args)
+    {
+        ShutdownServices();
     }
 
     private static void TrySetProcessAppUserModelId()
@@ -154,6 +162,67 @@ public partial class App : Microsoft.UI.Xaml.Application
 
         _singleInstancePipeCancellationTokenSource = new CancellationTokenSource();
         _singleInstancePipeServerTask = RunSingleInstancePipeServerAsync(_singleInstancePipeCancellationTokenSource.Token);
+    }
+
+    private void ShutdownServices()
+    {
+        if (_isShuttingDown)
+        {
+            return;
+        }
+
+        _isShuttingDown = true;
+        UnhandledException -= App_UnhandledException;
+
+        if (_window is not null)
+        {
+            _window.Closed -= MainWindow_Closed;
+            _window = null;
+        }
+
+        StopSingleInstancePipeServer();
+
+        try
+        {
+            _services.Dispose();
+        }
+        catch (Exception ex)
+        {
+            TryWriteShutdownErrorLog(ex);
+        }
+    }
+
+    private void StopSingleInstancePipeServer()
+    {
+        var cancellationTokenSource = _singleInstancePipeCancellationTokenSource;
+        _singleInstancePipeCancellationTokenSource = null;
+
+        if (cancellationTokenSource is null)
+        {
+            return;
+        }
+
+        try
+        {
+            cancellationTokenSource.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        var pipeServerTask = _singleInstancePipeServerTask;
+        if (pipeServerTask is null || pipeServerTask.IsCompleted)
+        {
+            cancellationTokenSource.Dispose();
+            return;
+        }
+
+        _ = pipeServerTask.ContinueWith(
+            static (_, state) => ((CancellationTokenSource)state!).Dispose(),
+            cancellationTokenSource,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private async Task RunSingleInstancePipeServerAsync(CancellationToken cancellationToken)
@@ -274,6 +343,19 @@ public partial class App : Microsoft.UI.Xaml.Application
                 ?? GetFallbackCrashRoot();
             var crashPath = Path.Combine(crashRoot, "activation-error.log");
 
+            Directory.CreateDirectory(Path.GetDirectoryName(crashPath)!);
+            File.WriteAllText(crashPath, exception.ToString());
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryWriteShutdownErrorLog(Exception exception)
+    {
+        try
+        {
+            var crashPath = Path.Combine(GetFallbackCrashRoot(), "shutdown-error.log");
             Directory.CreateDirectory(Path.GetDirectoryName(crashPath)!);
             File.WriteAllText(crashPath, exception.ToString());
         }
