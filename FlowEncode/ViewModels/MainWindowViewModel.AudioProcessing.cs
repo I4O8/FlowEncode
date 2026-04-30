@@ -51,7 +51,11 @@ public partial class MainWindowViewModel
     private bool _isAudioSourceInfoLoading;
     private string? _audioSourceInfoError;
     private CancellationTokenSource? _audioSourceProbeCancellationTokenSource;
+    private CancellationTokenSource? _audioProcessingInputRefreshCancellationTokenSource;
     private int _audioSourceProbeVersion;
+    private int _audioProcessingInputRefreshVersion;
+    private bool _isApplyingDeferredAudioProcessingInputRefresh;
+    private bool _isAudioProcessingInputRefreshPending;
     private readonly List<string> _audioProcessingLogStageLines = [];
     private string _audioProcessingLiveLogLine = string.Empty;
     private string _audioProcessingLogPhaseMarker = string.Empty;
@@ -71,10 +75,8 @@ public partial class MainWindowViewModel
         {
             if (SetProperty(ref _audioProcessingSourcePath, value))
             {
-                TryPopulateAudioProcessingOutputPathIfEmpty();
-                RaiseAudioProcessingInputPropertyChanges();
-                StartAudioSourceProbe(value);
-                RefreshAudioProcessingCommandPreview();
+                CancelAudioSourceProbeForPendingInputRefresh();
+                ScheduleAudioProcessingInputRefresh(probeSource: true);
             }
         }
     }
@@ -91,8 +93,12 @@ public partial class MainWindowViewModel
                     _lastAudioProcessingOutputPath = null;
                 }
 
-                RaiseAudioProcessingInputPropertyChanges();
-                RefreshAudioProcessingCommandPreview();
+                if (_isApplyingDeferredAudioProcessingInputRefresh)
+                {
+                    return;
+                }
+
+                ScheduleAudioProcessingInputRefresh(probeSource: false);
             }
         }
     }
@@ -316,7 +322,9 @@ public partial class MainWindowViewModel
         }
     }
 
-    public string AudioProcessingOutputPreviewText => BuildOutputPreviewText(TryResolveAudioProcessingOutputPreviewPath());
+    public string AudioProcessingOutputPreviewText => _isAudioProcessingInputRefreshPending
+        ? Texts.OutputPreviewUpdating
+        : BuildOutputPreviewText(TryResolveAudioProcessingOutputPreviewPath());
 
     public string AudioProcessingOutputHeader => Texts.OutputDirectoryHeader;
 
@@ -579,6 +587,7 @@ public partial class MainWindowViewModel
     partial void DisposeAudioProcessingState()
     {
         CancelAudioProcessing();
+        CancelPendingAudioProcessingInputRefresh();
         DisposeAudioProcessingCancellation();
         DisposeAudioSourceProbeCancellation();
     }
@@ -717,7 +726,7 @@ public partial class MainWindowViewModel
             throw new FileNotFoundException(Texts.AudioSourceMissingError, normalizedSource);
         }
 
-        if (File.Exists(normalizedOutputDirectory))
+        if (requireSourceExists && File.Exists(normalizedOutputDirectory))
         {
             throw new InvalidOperationException(Texts.AudioOutputDirectoryInvalidError);
         }
@@ -1184,6 +1193,98 @@ public partial class MainWindowViewModel
         }
     }
 
+    private void ScheduleAudioProcessingInputRefresh(bool probeSource)
+    {
+        CancelPendingAudioProcessingInputRefresh();
+        var requestVersion = Interlocked.Increment(ref _audioProcessingInputRefreshVersion);
+        var cancellationTokenSource = new CancellationTokenSource();
+        _audioProcessingInputRefreshCancellationTokenSource = cancellationTokenSource;
+
+        _ = RefreshAudioProcessingInputDeferredAsync(requestVersion, probeSource, cancellationTokenSource.Token);
+    }
+
+    private async Task RefreshAudioProcessingInputDeferredAsync(
+        int requestVersion,
+        bool probeSource,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(InputPathRefreshDelay, cancellationToken);
+            if (!IsAudioProcessingInputRefreshCurrent(requestVersion, cancellationToken))
+            {
+                return;
+            }
+
+            var hasPathState = !string.IsNullOrWhiteSpace(AudioProcessingSourcePath) || !string.IsNullOrWhiteSpace(AudioProcessingOutputPath);
+            SetAudioProcessingInputRefreshPending(hasPathState);
+
+            if (hasPathState && !_isAudioProcessingRunning)
+            {
+                AudioProcessingStatusText = Texts.AudioProcessingInputPreparingStatus;
+                await Task.Yield();
+                if (!IsAudioProcessingInputRefreshCurrent(requestVersion, cancellationToken))
+                {
+                    return;
+                }
+            }
+
+            _isApplyingDeferredAudioProcessingInputRefresh = true;
+            try
+            {
+                TryPopulateAudioProcessingOutputPathIfEmpty();
+                RaiseAudioProcessingInputPropertyChanges();
+                if (probeSource)
+                {
+                    StartAudioSourceProbe(AudioProcessingSourcePath);
+                }
+
+                RefreshAudioProcessingCommandPreview();
+            }
+            finally
+            {
+                _isApplyingDeferredAudioProcessingInputRefresh = false;
+            }
+
+            if (!IsAudioProcessingInputRefreshCurrent(requestVersion, cancellationToken))
+            {
+                return;
+            }
+
+            SetAudioProcessingInputRefreshPending(false);
+            if (!_isAudioProcessingRunning && string.Equals(AudioProcessingStatusText, Texts.AudioProcessingInputPreparingStatus, StringComparison.Ordinal))
+            {
+                AudioProcessingStatusText = Texts.AudioProcessingIdleStatus;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private bool IsAudioProcessingInputRefreshCurrent(int requestVersion, CancellationToken cancellationToken)
+    {
+        return !cancellationToken.IsCancellationRequested
+            && requestVersion == Volatile.Read(ref _audioProcessingInputRefreshVersion);
+    }
+
+    private void SetAudioProcessingInputRefreshPending(bool isPending)
+    {
+        if (_isAudioProcessingInputRefreshPending == isPending)
+        {
+            return;
+        }
+
+        _isAudioProcessingInputRefreshPending = isPending;
+        OnPropertyChanged(nameof(AudioProcessingOutputPreviewText));
+    }
+
+    private void CancelAudioSourceProbeForPendingInputRefresh()
+    {
+        DisposeAudioSourceProbeCancellation();
+        Interlocked.Increment(ref _audioSourceProbeVersion);
+    }
+
     private void StartAudioSourceProbe(string sourcePath)
     {
         DisposeAudioSourceProbeCancellation();
@@ -1191,7 +1292,7 @@ public partial class MainWindowViewModel
         _audioSourceInfoError = null;
         _isAudioSourceInfoLoading = false;
 
-        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+        if (string.IsNullOrWhiteSpace(sourcePath))
         {
             OnPropertyChanged(nameof(AudioSourceInfoText));
             OnPropertyChanged(nameof(AudioWorkflowRecommendation));
@@ -1212,6 +1313,18 @@ public partial class MainWindowViewModel
         try
         {
             await Task.Delay(AudioSourceProbeDebounceInterval, cancellationToken);
+            var sourceExists = await Task.Run(() => File.Exists(sourcePath), cancellationToken);
+            if (!sourceExists)
+            {
+                if (version == _audioSourceProbeVersion)
+                {
+                    _audioSourceInfo = null;
+                    _audioSourceInfoError = null;
+                }
+
+                return;
+            }
+
             var info = await _audioSourceInfoService.ProbeAsync(sourcePath, cancellationToken);
             if (version != _audioSourceProbeVersion)
             {
@@ -1627,6 +1740,13 @@ public partial class MainWindowViewModel
         _audioSourceProbeCancellationTokenSource?.Cancel();
         _audioSourceProbeCancellationTokenSource?.Dispose();
         _audioSourceProbeCancellationTokenSource = null;
+    }
+
+    private void CancelPendingAudioProcessingInputRefresh()
+    {
+        _audioProcessingInputRefreshCancellationTokenSource?.Cancel();
+        _audioProcessingInputRefreshCancellationTokenSource?.Dispose();
+        _audioProcessingInputRefreshCancellationTokenSource = null;
     }
 
     private void RaiseAudioProcessingInputPropertyChanges()

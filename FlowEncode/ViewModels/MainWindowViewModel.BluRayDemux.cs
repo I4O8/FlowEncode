@@ -41,7 +41,11 @@ public partial class MainWindowViewModel
     private EncodingJobState? _bluRayDemuxDisplayState;
     private CancellationTokenSource? _bluRayProbeCancellationTokenSource;
     private CancellationTokenSource? _bluRayDemuxCancellationTokenSource;
+    private CancellationTokenSource? _bluRayDemuxInputRefreshCancellationTokenSource;
     private int _bluRayPlaylistLoadVersion;
+    private int _bluRayDemuxInputRefreshVersion;
+    private bool _isApplyingDeferredBluRayDemuxInputRefresh;
+    private bool _isBluRayDemuxInputRefreshPending;
     private readonly StringBuilder _bluRayDemuxLogBuilder = new();
     private readonly List<string> _bluRayDemuxLogStageLines = [];
     private readonly Dictionary<string, BluRayPlaylistCacheEntry> _bluRayPlaylistTrackCache = new(StringComparer.OrdinalIgnoreCase);
@@ -60,10 +64,7 @@ public partial class MainWindowViewModel
         {
             if (SetProperty(ref _bluRayDemuxSourcePath, value))
             {
-                TryPopulateBluRayOutputPathIfEmpty();
-                ResetBluRayScanState(clearStatus: false);
-                RaiseBluRayDemuxInputPropertyChanges();
-                RefreshBluRayDemuxCommandPreview();
+                ScheduleBluRayDemuxInputRefresh(resetScanState: true);
             }
         }
     }
@@ -80,9 +81,12 @@ public partial class MainWindowViewModel
                     _lastBluRayOutputPath = null;
                 }
 
-                RefreshBluRayTrackOutputPreviews();
-                RaiseBluRayDemuxInputPropertyChanges();
-                RefreshBluRayDemuxCommandPreview();
+                if (_isApplyingDeferredBluRayDemuxInputRefresh)
+                {
+                    return;
+                }
+
+                ScheduleBluRayDemuxInputRefresh(resetScanState: false);
             }
         }
     }
@@ -94,10 +98,8 @@ public partial class MainWindowViewModel
         {
             if (SetProperty(ref _selectedBluRayDemuxBackend, value))
             {
-                ResetBluRayScanState(clearStatus: false);
                 RaiseBluRayDemuxEnvironmentPropertyChanges();
-                RefreshBluRayTrackOutputPreviews();
-                RefreshBluRayDemuxCommandPreview();
+                ScheduleBluRayDemuxInputRefresh(resetScanState: true);
             }
         }
     }
@@ -209,7 +211,9 @@ public partial class MainWindowViewModel
     public Brush BluRayDemuxProgressTrackBrush => ResolveBluRayDemuxProgressTrackBrush(_bluRayDemuxDisplayState);
     public Brush BluRayDemuxProgressBorderBrush => ResolveBluRayDemuxProgressBorderBrush(_bluRayDemuxDisplayState);
     public Brush BluRayDemuxProgressFillBrush => ResolveBluRayDemuxProgressFillBrush(_bluRayDemuxDisplayState);
-    public string BluRayDemuxOutputPreviewText => BuildOutputPreviewText(TryResolveBluRayOutputPreviewPath());
+    public string BluRayDemuxOutputPreviewText => _isBluRayDemuxInputRefreshPending
+        ? Texts.OutputPreviewUpdating
+        : BuildOutputPreviewText(TryResolveBluRayOutputPreviewPath());
     public string BluRayDemuxBackendNote => Texts.BluRayBackendNote(SelectedBluRayDemuxBackend?.Value ?? BluRayDemuxBackend.DgDemux);
 
     public string BluRayToolSummary
@@ -523,6 +527,7 @@ public partial class MainWindowViewModel
 
     partial void DisposeBluRayDemuxState()
     {
+        CancelPendingBluRayDemuxInputRefresh();
         DisposeBluRayProbeCancellation();
         CancelBluRayDemux();
         DisposeBluRayDemuxCancellation();
@@ -566,6 +571,95 @@ public partial class MainWindowViewModel
             new BluRayDemuxBackendOption(BluRayDemuxBackend.DgDemux, Texts.BluRayBackendLabel(BluRayDemuxBackend.DgDemux)),
             new BluRayDemuxBackendOption(BluRayDemuxBackend.Eac3To, Texts.BluRayBackendLabel(BluRayDemuxBackend.Eac3To))
         ];
+    }
+
+    private void ScheduleBluRayDemuxInputRefresh(bool resetScanState)
+    {
+        CancelPendingBluRayDemuxInputRefresh();
+        var requestVersion = Interlocked.Increment(ref _bluRayDemuxInputRefreshVersion);
+        var cancellationTokenSource = new CancellationTokenSource();
+        _bluRayDemuxInputRefreshCancellationTokenSource = cancellationTokenSource;
+
+        _ = RefreshBluRayDemuxInputDeferredAsync(requestVersion, resetScanState, cancellationTokenSource.Token);
+    }
+
+    private async Task RefreshBluRayDemuxInputDeferredAsync(
+        int requestVersion,
+        bool resetScanState,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(InputPathRefreshDelay, cancellationToken);
+            if (!IsBluRayDemuxInputRefreshCurrent(requestVersion, cancellationToken))
+            {
+                return;
+            }
+
+            var hasPathState = !string.IsNullOrWhiteSpace(BluRayDemuxSourcePath) || !string.IsNullOrWhiteSpace(BluRayDemuxOutputPath);
+            SetBluRayDemuxInputRefreshPending(hasPathState);
+
+            if (hasPathState && !_isBluRayDemuxRunning)
+            {
+                BluRayDemuxStatusText = Texts.BluRayDemuxInputPreparingStatus;
+                await Task.Yield();
+                if (!IsBluRayDemuxInputRefreshCurrent(requestVersion, cancellationToken))
+                {
+                    return;
+                }
+            }
+
+            _isApplyingDeferredBluRayDemuxInputRefresh = true;
+            try
+            {
+                if (resetScanState)
+                {
+                    ResetBluRayScanState(clearStatus: false);
+                }
+
+                TryPopulateBluRayOutputPathIfEmpty();
+                RefreshBluRayTrackOutputPreviews();
+                RaiseBluRayDemuxInputPropertyChanges();
+                RefreshBluRayDemuxCommandPreview();
+            }
+            finally
+            {
+                _isApplyingDeferredBluRayDemuxInputRefresh = false;
+            }
+
+            if (!IsBluRayDemuxInputRefreshCurrent(requestVersion, cancellationToken))
+            {
+                return;
+            }
+
+            SetBluRayDemuxInputRefreshPending(false);
+            if (!_isBluRayDemuxRunning && string.Equals(BluRayDemuxStatusText, Texts.BluRayDemuxInputPreparingStatus, StringComparison.Ordinal))
+            {
+                BluRayDemuxStatusText = string.IsNullOrWhiteSpace(BluRayDemuxSourcePath)
+                    ? Texts.BluRayDemuxIdleStatus
+                    : Texts.BluRayDemuxSourceReadyStatus;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private bool IsBluRayDemuxInputRefreshCurrent(int requestVersion, CancellationToken cancellationToken)
+    {
+        return !cancellationToken.IsCancellationRequested
+            && requestVersion == Volatile.Read(ref _bluRayDemuxInputRefreshVersion);
+    }
+
+    private void SetBluRayDemuxInputRefreshPending(bool isPending)
+    {
+        if (_isBluRayDemuxInputRefreshPending == isPending)
+        {
+            return;
+        }
+
+        _isBluRayDemuxInputRefreshPending = isPending;
+        OnPropertyChanged(nameof(BluRayDemuxOutputPreviewText));
     }
 
     private void ResetBluRayScanState(bool clearStatus)
@@ -777,7 +871,7 @@ public partial class MainWindowViewModel
 
         var normalizedDiscRoot = NormalizeBluRayDiscRoot(BluRayDemuxSourcePath, requireSourceExists);
         var normalizedOutputDirectory = Path.GetFullPath(BluRayDemuxOutputPath.Trim());
-        if (File.Exists(normalizedOutputDirectory))
+        if (requireSourceExists && File.Exists(normalizedOutputDirectory))
         {
             throw new InvalidOperationException(Texts.BluRayOutputDirectoryInvalidError);
         }
@@ -803,6 +897,11 @@ public partial class MainWindowViewModel
     private string NormalizeBluRayDiscRoot(string rawPath, bool requireExists)
     {
         var normalized = Path.GetFullPath(rawPath.Trim());
+        if (!requireExists)
+        {
+            return NormalizeBluRayDiscRootByPathShape(normalized);
+        }
+
         if (requireExists && !Directory.Exists(normalized))
         {
             throw new DirectoryNotFoundException(Texts.BluRayDiscSourceMissingError);
@@ -828,6 +927,25 @@ public partial class MainWindowViewModel
         }
 
         throw new InvalidOperationException(Texts.BluRayDiscStructureInvalidError);
+    }
+
+    private static string NormalizeBluRayDiscRootByPathShape(string normalizedPath)
+    {
+        if (Path.GetFileName(normalizedPath).Equals("PLAYLIST", StringComparison.OrdinalIgnoreCase))
+        {
+            var bdmvDirectory = Directory.GetParent(normalizedPath);
+            if (bdmvDirectory is not null && bdmvDirectory.Name.Equals("BDMV", StringComparison.OrdinalIgnoreCase) && bdmvDirectory.Parent is not null)
+            {
+                return bdmvDirectory.Parent.FullName;
+            }
+        }
+
+        if (Path.GetFileName(normalizedPath).Equals("BDMV", StringComparison.OrdinalIgnoreCase))
+        {
+            return Directory.GetParent(normalizedPath)?.FullName ?? normalizedPath;
+        }
+
+        return normalizedPath;
     }
 
     private void TryPopulateBluRayOutputPathIfEmpty()
@@ -1249,6 +1367,13 @@ public partial class MainWindowViewModel
     {
         _bluRayDemuxCancellationTokenSource?.Dispose();
         _bluRayDemuxCancellationTokenSource = null;
+    }
+
+    private void CancelPendingBluRayDemuxInputRefresh()
+    {
+        _bluRayDemuxInputRefreshCancellationTokenSource?.Cancel();
+        _bluRayDemuxInputRefreshCancellationTokenSource?.Dispose();
+        _bluRayDemuxInputRefreshCancellationTokenSource = null;
     }
 
     private void RaiseBluRayDemuxInputPropertyChanges()

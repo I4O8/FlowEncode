@@ -48,7 +48,7 @@ public sealed partial class MainWindow
         await PickAudioSourceFileAsync();
     }
 
-    private Task PickAudioSourceFileAsync()
+    private async Task PickAudioSourceFileAsync()
     {
         var selectedWorkflow = ViewModel.SelectedAudioWorkflow?.Value;
         var preferredPattern = AudioSourceSupport.GetPreferredPickerPattern(selectedWorkflow);
@@ -60,10 +60,8 @@ public sealed partial class MainWindow
 
         if (!string.IsNullOrWhiteSpace(filePath))
         {
-            ViewModel.AudioProcessingSourcePath = filePath;
+            await ApplyPickedPathAsync(AudioSourcePathTextBox, filePath, path => ViewModel.AudioProcessingSourcePath = path);
         }
-
-        return Task.CompletedTask;
     }
 
     private async void BrowseAudioOutputButton_Click(object sender, RoutedEventArgs e)
@@ -82,7 +80,7 @@ public sealed partial class MainWindow
         var folderPath = await PickFolderPathAsync();
         if (folderPath is not null)
         {
-            ViewModel.AudioProcessingOutputPath = folderPath;
+            await ApplyPickedPathAsync(AudioOutputPathTextBox, folderPath, path => ViewModel.AudioProcessingOutputPath = path);
         }
     }
 

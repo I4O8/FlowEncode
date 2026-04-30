@@ -25,6 +25,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     private const string AppReleasePageUrl = "https://github.com/frankie1024/FlowEncode/releases";
     private const int MinConcurrentEncodingJobs = 1;
     private const int MaxConcurrentEncodingJobsLimit = 5;
+    private static readonly TimeSpan InputPathRefreshDelay = TimeSpan.FromMilliseconds(80);
     private static readonly TimeSpan QueueCompletionActionIdleRequirement = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan QueueCompletionActionIdlePollInterval = TimeSpan.FromSeconds(5);
     private readonly IEncoderToolchainService _toolchainService;
@@ -130,7 +131,15 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     private string _autoCompressionLiveLogLine = string.Empty;
     private bool _isDisposed;
     private CancellationTokenSource? _previewRefreshCancellationTokenSource;
+    private CancellationTokenSource? _draftInputRefreshCancellationTokenSource;
+    private CancellationTokenSource? _autoCompressionInputRefreshCancellationTokenSource;
     private int _previewRefreshVersion;
+    private int _draftInputRefreshVersion;
+    private int _autoCompressionInputRefreshVersion;
+    private bool _isApplyingDeferredDraftInputRefresh;
+    private bool _isApplyingDeferredAutoCompressionInputRefresh;
+    private bool _isDraftInputRefreshPending;
+    private bool _isAutoCompressionInputRefreshPending;
     private const int AutoCompressionLogLimit = 120_000;
     private const int AutoCompressionStageLogLimit = 240;
 
@@ -407,9 +416,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         {
             if (SetProperty(ref _sourcePath, value))
             {
-                TryPopulateOutputPathIfEmpty();
-                RaiseDraftPathPropertyChanges();
-                SchedulePreviewRefresh();
+                ScheduleDraftInputRefresh();
             }
         }
     }
@@ -426,8 +433,12 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                     _lastAutoOutputPath = null;
                 }
 
-                RaiseDraftPathPropertyChanges();
-                SchedulePreviewRefresh();
+                if (_isApplyingDeferredDraftInputRefresh)
+                {
+                    return;
+                }
+
+                ScheduleDraftInputRefresh();
             }
         }
     }
@@ -439,8 +450,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         {
             if (SetProperty(ref _autoCompressionSourcePath, value))
             {
-                TryPopulateAutoCompressionOutputPathIfEmpty();
-                RaiseAutoCompressionInputPropertyChanges();
+                ScheduleAutoCompressionInputRefresh();
             }
         }
     }
@@ -457,7 +467,12 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                     _lastAutoCompressionOutputPath = null;
                 }
 
-                RaiseAutoCompressionInputPropertyChanges();
+                if (_isApplyingDeferredAutoCompressionInputRefresh)
+                {
+                    return;
+                }
+
+                ScheduleAutoCompressionInputRefresh();
             }
         }
     }
@@ -469,8 +484,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         {
             if (SetProperty(ref _selectedAutoEncoder, value))
             {
-                TryPopulateAutoCompressionOutputPathIfEmpty();
-                RaiseAutoCompressionInputPropertyChanges();
+                ScheduleAutoCompressionInputRefresh();
             }
         }
     }
@@ -483,6 +497,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             if (SetProperty(ref _autoCompressionVideoParameters, value))
             {
                 OnPropertyChanged(nameof(CanStartAutoCompression));
+                RefreshAutoCompressionCommandPreview();
             }
         }
     }
@@ -498,6 +513,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 OnPropertyChanged(nameof(CanStartAutoCompression));
                 OnPropertyChanged(nameof(AutoCompressionSuggestedOutputFileName));
                 OnPropertyChanged(nameof(AutoCompressionOutputPreviewText));
+                RefreshAutoCompressionCommandPreview();
             }
         }
     }
@@ -511,6 +527,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             if (SetProperty(ref _autoCompressionProbes, normalized))
             {
                 OnPropertyChanged(nameof(CanStartAutoCompression));
+                RefreshAutoCompressionCommandPreview();
             }
         }
     }
@@ -524,6 +541,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             if (SetProperty(ref _autoCompressionWorkers, normalized))
             {
                 OnPropertyChanged(nameof(CanStartAutoCompression));
+                RefreshAutoCompressionCommandPreview();
             }
         }
     }
@@ -898,7 +916,9 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string DraftOutputPreviewText => BuildOutputPreviewText(TryResolveDraftOutputPreviewPath());
+    public string DraftOutputPreviewText => _isDraftInputRefreshPending
+        ? Texts.OutputPreviewUpdating
+        : BuildOutputPreviewText(TryResolveDraftOutputPreviewPath());
 
     public bool CanQueueJob =>
         _activeProfile is not null
@@ -942,7 +962,9 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string AutoCompressionOutputPreviewText => BuildOutputPreviewText(TryResolveAutoCompressionOutputPreviewPath());
+    public string AutoCompressionOutputPreviewText => _isAutoCompressionInputRefreshPending
+        ? Texts.OutputPreviewUpdating
+        : BuildOutputPreviewText(TryResolveAutoCompressionOutputPreviewPath());
 
     public string QueueSummary
     {
@@ -1058,6 +1080,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         _isDisposed = true;
         CancelPendingQueueCompletionActionWait();
         CancelPendingPreviewRefresh();
+        CancelPendingDraftInputRefresh();
+        CancelPendingAutoCompressionInputRefresh();
         CancelAutoCompression();
         DisposeAutoCompressionCancellation();
         DisposeAudioProcessingState();
@@ -2298,7 +2322,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             throw new FileNotFoundException(Texts.AutoCompressionSourceFileMissingError, normalizedSource);
         }
 
-        if (File.Exists(normalizedOutputDirectory))
+        if (requireSourceExists && File.Exists(normalizedOutputDirectory))
         {
             throw new InvalidOperationException(Texts.AutoCompressionOutputDirectoryInvalidError);
         }
@@ -2329,7 +2353,38 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             workers);
     }
 
-    private EncodingJobRequest CreateDraftRequest()
+    private bool TryCreateAutoCompressionRequest(
+        bool requireSourceExists,
+        out AutoCompressionRequest? request,
+        out string? error)
+    {
+        try
+        {
+            request = CreateAutoCompressionRequest(requireSourceExists);
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            request = null;
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private void RefreshAutoCompressionCommandPreview()
+    {
+        if (_isAutoCompressionRunning)
+        {
+            return;
+        }
+
+        AutoCompressionCommandLine = TryCreateAutoCompressionRequest(requireSourceExists: false, out var request, out _)
+            ? _autoCompressionRunner.BuildDisplayCommand(request!)
+            : string.Empty;
+    }
+
+    private EncodingJobRequest CreateDraftRequest(bool requireSourceExists = true)
     {
         if (_activeProfile is null)
         {
@@ -2349,12 +2404,12 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         var normalizedSource = Path.GetFullPath(SourcePath.Trim());
         var normalizedOutputDirectory = Path.GetFullPath(OutputPath.Trim());
 
-        if (!File.Exists(normalizedSource))
+        if (requireSourceExists && !File.Exists(normalizedSource))
         {
             throw new FileNotFoundException(Texts.SourceFileMissingError, normalizedSource);
         }
 
-        if (File.Exists(normalizedOutputDirectory))
+        if (requireSourceExists && File.Exists(normalizedOutputDirectory))
         {
             throw new InvalidOperationException(Texts.OutputDirectoryInvalidError);
         }
@@ -2570,7 +2625,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
         try
         {
-            var request = CreateDraftRequest();
+            var request = CreateDraftRequest(requireSourceExists: false);
             if (!IsPreviewRequestCurrent(requestVersion, cancellationToken))
             {
                 return;
@@ -3197,6 +3252,159 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         _ = RefreshPreviewDeferredAsync(_activeProfile, requestVersion, cancellationTokenSource.Token);
     }
 
+    private void ScheduleDraftInputRefresh()
+    {
+        CancelPendingDraftInputRefresh();
+        var requestVersion = Interlocked.Increment(ref _draftInputRefreshVersion);
+        var cancellationTokenSource = new CancellationTokenSource();
+        _draftInputRefreshCancellationTokenSource = cancellationTokenSource;
+
+        _ = RefreshDraftInputDeferredAsync(requestVersion, cancellationTokenSource.Token);
+    }
+
+    private async Task RefreshDraftInputDeferredAsync(int requestVersion, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(InputPathRefreshDelay, cancellationToken);
+            if (!IsDraftInputRefreshCurrent(requestVersion, cancellationToken))
+            {
+                return;
+            }
+
+            var hasPathState = !string.IsNullOrWhiteSpace(SourcePath) || !string.IsNullOrWhiteSpace(OutputPath);
+            SetDraftInputRefreshPending(hasPathState);
+
+            if (hasPathState && _activeProfile is not null)
+            {
+                PreviewTitle = Texts.DraftInputPreparingPreviewTitle;
+                PreviewNotes = Texts.DraftInputPreparingPreviewNotes;
+                await Task.Yield();
+                if (!IsDraftInputRefreshCurrent(requestVersion, cancellationToken))
+                {
+                    return;
+                }
+            }
+
+            _isApplyingDeferredDraftInputRefresh = true;
+            try
+            {
+                TryPopulateOutputPathIfEmpty();
+                RaiseDraftPathPropertyChanges();
+            }
+            finally
+            {
+                _isApplyingDeferredDraftInputRefresh = false;
+            }
+
+            if (!IsDraftInputRefreshCurrent(requestVersion, cancellationToken))
+            {
+                return;
+            }
+
+            SetDraftInputRefreshPending(false);
+            SchedulePreviewRefresh();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private bool IsDraftInputRefreshCurrent(int requestVersion, CancellationToken cancellationToken)
+    {
+        return !cancellationToken.IsCancellationRequested
+            && requestVersion == Volatile.Read(ref _draftInputRefreshVersion);
+    }
+
+    private void SetDraftInputRefreshPending(bool isPending)
+    {
+        if (_isDraftInputRefreshPending == isPending)
+        {
+            return;
+        }
+
+        _isDraftInputRefreshPending = isPending;
+        OnPropertyChanged(nameof(DraftOutputPreviewText));
+    }
+
+    private void ScheduleAutoCompressionInputRefresh()
+    {
+        CancelPendingAutoCompressionInputRefresh();
+        var requestVersion = Interlocked.Increment(ref _autoCompressionInputRefreshVersion);
+        var cancellationTokenSource = new CancellationTokenSource();
+        _autoCompressionInputRefreshCancellationTokenSource = cancellationTokenSource;
+
+        _ = RefreshAutoCompressionInputDeferredAsync(requestVersion, cancellationTokenSource.Token);
+    }
+
+    private async Task RefreshAutoCompressionInputDeferredAsync(int requestVersion, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(InputPathRefreshDelay, cancellationToken);
+            if (!IsAutoCompressionInputRefreshCurrent(requestVersion, cancellationToken))
+            {
+                return;
+            }
+
+            var hasPathState = !string.IsNullOrWhiteSpace(AutoCompressionSourcePath) || !string.IsNullOrWhiteSpace(AutoCompressionOutputPath);
+            SetAutoCompressionInputRefreshPending(hasPathState);
+
+            if (hasPathState && !_isAutoCompressionRunning)
+            {
+                AutoCompressionStatusText = Texts.AutoCompressionInputPreparingStatus;
+                await Task.Yield();
+                if (!IsAutoCompressionInputRefreshCurrent(requestVersion, cancellationToken))
+                {
+                    return;
+                }
+            }
+
+            _isApplyingDeferredAutoCompressionInputRefresh = true;
+            try
+            {
+                TryPopulateAutoCompressionOutputPathIfEmpty();
+                RaiseAutoCompressionInputPropertyChanges();
+                RefreshAutoCompressionCommandPreview();
+            }
+            finally
+            {
+                _isApplyingDeferredAutoCompressionInputRefresh = false;
+            }
+
+            if (!IsAutoCompressionInputRefreshCurrent(requestVersion, cancellationToken))
+            {
+                return;
+            }
+
+            SetAutoCompressionInputRefreshPending(false);
+            if (!_isAutoCompressionRunning && string.Equals(AutoCompressionStatusText, Texts.AutoCompressionInputPreparingStatus, StringComparison.Ordinal))
+            {
+                AutoCompressionStatusText = Texts.AutoCompressionIdleStatus;
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private bool IsAutoCompressionInputRefreshCurrent(int requestVersion, CancellationToken cancellationToken)
+    {
+        return !cancellationToken.IsCancellationRequested
+            && requestVersion == Volatile.Read(ref _autoCompressionInputRefreshVersion);
+    }
+
+    private void SetAutoCompressionInputRefreshPending(bool isPending)
+    {
+        if (_isAutoCompressionInputRefreshPending == isPending)
+        {
+            return;
+        }
+
+        _isAutoCompressionInputRefreshPending = isPending;
+        OnPropertyChanged(nameof(AutoCompressionOutputPreviewText));
+    }
+
     private async Task RefreshPreviewDeferredAsync(
         EncodingProfile profile,
         int requestVersion,
@@ -3224,6 +3432,20 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         _previewRefreshCancellationTokenSource?.Cancel();
         _previewRefreshCancellationTokenSource?.Dispose();
         _previewRefreshCancellationTokenSource = null;
+    }
+
+    private void CancelPendingDraftInputRefresh()
+    {
+        _draftInputRefreshCancellationTokenSource?.Cancel();
+        _draftInputRefreshCancellationTokenSource?.Dispose();
+        _draftInputRefreshCancellationTokenSource = null;
+    }
+
+    private void CancelPendingAutoCompressionInputRefresh()
+    {
+        _autoCompressionInputRefreshCancellationTokenSource?.Cancel();
+        _autoCompressionInputRefreshCancellationTokenSource?.Dispose();
+        _autoCompressionInputRefreshCancellationTokenSource = null;
     }
 
     private bool IsPreviewRequestCurrent(int requestVersion, CancellationToken cancellationToken)

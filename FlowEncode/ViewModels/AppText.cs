@@ -492,6 +492,13 @@ public sealed class AppText
     public string AutoCompressionIdleStatus => Pick("等待自动压制任务。", "Waiting for an auto-encode task.");
     public string AudioProcessingIdleStatus => Pick("等待音频处理任务。", "Waiting for an audio task.");
     public string BluRayDemuxIdleStatus => Pick("等待蓝光解复用任务。", "Waiting for a Blu-ray demux task.");
+    public string OutputPreviewUpdating => Pick("正在更新输出建议...", "Updating output suggestion...");
+    public string DraftInputPreparingPreviewTitle => Pick("正在准备命令预览", "Preparing command preview");
+    public string DraftInputPreparingPreviewNotes => Pick("路径已更新，正在刷新输出建议和命令预览。", "Path updated. Refreshing the output suggestion and command preview.");
+    public string AutoCompressionInputPreparingStatus => Pick("路径已更新，正在准备自动压制预览。", "Path updated. Preparing the auto-encode preview.");
+    public string AudioProcessingInputPreparingStatus => Pick("路径已更新，正在准备音频处理预览。", "Path updated. Preparing the audio preview.");
+    public string BluRayDemuxInputPreparingStatus => Pick("路径已更新，正在准备蓝光目录状态。", "Path updated. Preparing the Blu-ray folder state.");
+    public string BluRayDemuxSourceReadyStatus => Pick("目录已选择。需要读取播放列表时点击扫描。", "Folder selected. Scan when you are ready to read playlists.");
     public string BluRayDiscSummaryPlaceholder => Pick("选择蓝光目录后手动点击扫描。", "Choose a Blu-ray folder, then scan manually.");
     public string BluRayPlaylistSummaryPlaceholder => Pick("扫描完成后，手动选择一条播放列表以加载轨道。", "After scanning, choose a playlist manually to load tracks.");
     public string AudioSourceInfoPlaceholder => Pick("选择音频源后，程序会尝试用 FFprobe 自动读取声道、位深和采样率。", "After you choose a source, FFprobe will try to read channel, bit-depth, and sample-rate info automatically.");

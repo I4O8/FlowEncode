@@ -115,7 +115,7 @@ public sealed partial class MainWindow
         var folderPath = await PickFolderPathAsync();
         if (folderPath is not null)
         {
-            ViewModel.BluRayDemuxSourcePath = folderPath;
+            await ApplyPickedPathAsync(BluRaySourcePathTextBox, folderPath, path => ViewModel.BluRayDemuxSourcePath = path);
         }
     }
 
@@ -135,7 +135,7 @@ public sealed partial class MainWindow
         var folderPath = await PickFolderPathAsync();
         if (folderPath is not null)
         {
-            ViewModel.BluRayDemuxOutputPath = folderPath;
+            await ApplyPickedPathAsync(BluRayOutputPathTextBox, folderPath, path => ViewModel.BluRayDemuxOutputPath = path);
         }
     }
 

@@ -1064,7 +1064,7 @@ public sealed partial class MainWindow : Window
         await PickSourceFileAsync();
     }
 
-    private Task PickSourceFileAsync()
+    private async Task PickSourceFileAsync()
     {
         var filePath = PickFilteredFilePath(
             ViewModel.Texts.SourceHeader,
@@ -1074,10 +1074,8 @@ public sealed partial class MainWindow : Window
 
         if (!string.IsNullOrWhiteSpace(filePath))
         {
-            ViewModel.SourcePath = filePath;
+            await ApplyPickedPathAsync(SourcePathTextBox, filePath, path => ViewModel.SourcePath = path);
         }
-
-        return Task.CompletedTask;
     }
 
     private async void BrowseOutputButton_Click(object sender, RoutedEventArgs e)
@@ -1096,7 +1094,7 @@ public sealed partial class MainWindow : Window
         var folderPath = await PickFolderPathAsync();
         if (folderPath is not null)
         {
-            ViewModel.OutputPath = folderPath;
+            await ApplyPickedPathAsync(OutputPathTextBox, folderPath, path => ViewModel.OutputPath = path);
         }
     }
 
@@ -1111,7 +1109,7 @@ public sealed partial class MainWindow : Window
         await PickAutoSourceFileAsync();
     }
 
-    private Task PickAutoSourceFileAsync()
+    private async Task PickAutoSourceFileAsync()
     {
         var filePath = PickFilteredFilePath(
             ViewModel.Texts.SourceHeader,
@@ -1121,10 +1119,8 @@ public sealed partial class MainWindow : Window
 
         if (!string.IsNullOrWhiteSpace(filePath))
         {
-            ViewModel.AutoCompressionSourcePath = filePath;
+            await ApplyPickedPathAsync(AutoSourcePathTextBox, filePath, path => ViewModel.AutoCompressionSourcePath = path);
         }
-
-        return Task.CompletedTask;
     }
 
     private async void BrowseAutoOutputButton_Click(object sender, RoutedEventArgs e)
@@ -1143,8 +1139,15 @@ public sealed partial class MainWindow : Window
         var folderPath = await PickFolderPathAsync();
         if (folderPath is not null)
         {
-            ViewModel.AutoCompressionOutputPath = folderPath;
+            await ApplyPickedPathAsync(AutoOutputPathTextBox, folderPath, path => ViewModel.AutoCompressionOutputPath = path);
         }
+    }
+
+    private static async Task ApplyPickedPathAsync(TextBox textBox, string path, Action<string> applyPath)
+    {
+        textBox.Text = path;
+        await Task.Yield();
+        applyPath(path);
     }
 
     private async Task<string?> PickFolderPathAsync()
