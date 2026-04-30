@@ -150,6 +150,7 @@ public sealed partial class MainWindow : Window
                 await ViewModel.CancelRunningJobsForShutdownAsync();
             }
 
+            await VapourSynthWorkspacePanel.ClosePreviewWindowForAppShutdownAsync();
             _isShutdownConfirmed = true;
             PrepareForClose();
             Close();
