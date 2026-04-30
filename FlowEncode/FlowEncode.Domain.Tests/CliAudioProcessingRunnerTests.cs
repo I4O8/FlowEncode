@@ -321,6 +321,67 @@ allowed. Valid value(s): 1,2,6.
         Assert.IsNull(detail);
     }
 
+    [TestMethod]
+    public void ParseOpusProgressForTesting_WithOutTimeAndDuration_ParsesPercent()
+    {
+        var parsed = CliAudioProcessingRunner.ParseOpusProgressForTesting("out_time=00:01:00.000000", 120d);
+
+        Assert.IsNotNull(parsed);
+        Assert.AreEqual(0.5, parsed.Value, 0.000001);
+    }
+
+    [TestMethod]
+    public void ParseOpusProgressForTesting_WithOutTimeUsAndDuration_ParsesPercent()
+    {
+        var parsed = CliAudioProcessingRunner.ParseOpusProgressForTesting("out_time_us=30000000", 120d);
+
+        Assert.IsNotNull(parsed);
+        Assert.AreEqual(0.25, parsed.Value, 0.000001);
+    }
+
+    [TestMethod]
+    public void ParseOpusProgressForTesting_WithoutDuration_ReturnsNull()
+    {
+        var parsed = CliAudioProcessingRunner.ParseOpusProgressForTesting("out_time=00:01:00.000000", null);
+
+        Assert.IsNull(parsed);
+    }
+
+    [TestMethod]
+    public async Task RunAsync_OpusWithoutRequestDuration_ReportsProgressFromRuntimeProbe()
+    {
+        var sourcePath = EnsureStereoSmokeWav();
+        var outputPath = Path.Combine(AudioSmokeRoot, "opus-runtime-duration.opus");
+        if (File.Exists(outputPath))
+        {
+            File.Delete(outputPath);
+        }
+
+        var runner = CreateRunner(new StubToolProbeService(new Dictionary<RegisteredToolKind, string>
+        {
+            [RegisteredToolKind.Ffmpeg] = GetDetectedPath("ffmpeg.exe"),
+            [RegisteredToolKind.Ffprobe] = GetDetectedPath("ffprobe.exe"),
+            [RegisteredToolKind.OpusExt] = GetDetectedPath("opusenc.exe")
+        }));
+        var request = CreateRequest(
+            useOpusMappingFamily1: false,
+            sourcePath: sourcePath,
+            outputPath: outputPath,
+            channelCount: 2,
+            channelLayout: "stereo",
+            sourceDurationSeconds: null);
+        var progressUpdates = new List<AudioProcessingProgress>();
+        var progress = new Progress<AudioProcessingProgress>(update => progressUpdates.Add(update));
+
+        var result = await runner.RunAsync(request, progress);
+
+        Assert.AreEqual(EncodingJobState.Completed, result.State);
+        Assert.IsTrue(File.Exists(outputPath) && new FileInfo(outputPath).Length > 0);
+        Assert.IsTrue(
+            progressUpdates.Any(update => update.ProgressFraction is > 0 and < 1),
+            "Expected Opus progress updates after runtime duration probing.");
+    }
+
     private static readonly string AudioSmokeRoot = Path.Combine(
         Path.GetTempPath(),
         "FlowEncodeAudioSmoke");
@@ -333,7 +394,8 @@ allowed. Valid value(s): 1,2,6.
         string sourcePath = @"D:\audio\input.thd",
         string outputPath = @"D:\audio\output.opus",
         int? channelCount = 6,
-        string? channelLayout = "5.1")
+        string? channelLayout = "5.1",
+        double? sourceDurationSeconds = 120d)
     {
         return new AudioProcessingRequest(
             Guid.NewGuid(),
@@ -342,7 +404,7 @@ allowed. Valid value(s): 1,2,6.
             AudioProcessingMode.Opus,
             null,
             [],
-            120d,
+            sourceDurationSeconds,
             channelCount,
             channelLayout,
             384,

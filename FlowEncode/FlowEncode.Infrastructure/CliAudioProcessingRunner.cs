@@ -136,6 +136,7 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         CancellationToken cancellationToken)
     {
         var ffmpegPath = await ResolveToolPathAsync(RegisteredToolKind.Ffmpeg, cancellationToken);
+        request = await ResolveOpusDurationFallbackAsync(request, cancellationToken);
         var runPlan = CreateRunPlan(request);
         var progressFilePath = Path.Combine(
             Path.GetTempPath(),
@@ -184,6 +185,33 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
         finally
         {
             BestEffortCleanup.DeleteFile(progressFilePath, $"Opus progress file '{progressFilePath}'");
+        }
+    }
+
+    private async Task<AudioProcessingRequest> ResolveOpusDurationFallbackAsync(
+        AudioProcessingRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.SourceDurationSeconds is > 0)
+        {
+            return request;
+        }
+
+        try
+        {
+            var sourceInfoService = new FfprobeAudioSourceInfoService(_toolProbeService);
+            var sourceInfo = await sourceInfoService.ProbeAsync(request.SourcePath, cancellationToken);
+            return sourceInfo?.DurationSeconds is > 0
+                ? request with { SourceDurationSeconds = sourceInfo.DurationSeconds }
+                : request;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return request;
         }
     }
 
@@ -1244,6 +1272,9 @@ public sealed class CliAudioProcessingRunner : IAudioProcessingRunner
 
         return Math.Clamp(processedSeconds.Value / durationSeconds.Value, 0.0, 1.0);
     }
+
+    internal static double? ParseOpusProgressForTesting(string line, double? durationSeconds)
+        => ParseOpusProgress(ConsoleOutputLineNormalizer.Normalize(line), durationSeconds);
 
     private static bool ShouldReportDdpLine(
         string line,
