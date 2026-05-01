@@ -1920,10 +1920,21 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             return Texts.BatchStartNoQueuedJobsError;
         }
 
+        MoveQueuedJobsToFront(startableJobs);
+
+        var limit = GetMaxConcurrentEncodingJobCount();
+        var availableSlots = Math.Max(0, limit - GetRunningEncodingJobCount());
+        if (availableSlots == 0)
+        {
+            StatusText = Texts.BatchJobsPrioritizedStatus(startableJobs.Count, limit);
+            RaiseJobStatePropertyChanges();
+            return null;
+        }
+
         var startedCount = 0;
         foreach (var job in startableJobs)
         {
-            if (GetRunningEncodingJobCount() >= GetMaxConcurrentEncodingJobCount())
+            if (startedCount >= availableSlots)
             {
                 break;
             }
@@ -1933,14 +1944,9 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             startedCount++;
         }
 
-        if (startedCount == 0)
-        {
-            return Texts.ConcurrentEncodingLimitReached(GetMaxConcurrentEncodingJobCount());
-        }
-
         StatusText = startedCount == startableJobs.Count
             ? Texts.BatchJobsStartedStatus(startedCount)
-            : Texts.BatchJobsStartedPartialStatus(startedCount, startableJobs.Count, GetMaxConcurrentEncodingJobCount());
+            : Texts.BatchJobsStartedPartialStatus(startedCount, startableJobs.Count, limit);
         RaiseJobStatePropertyChanges();
         return null;
     }
@@ -2553,6 +2559,31 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return null;
     }
 
+    private void MoveQueuedJobsToFront(IReadOnlyList<EncodingJobItemViewModel> jobs)
+    {
+        var insertionIndex = GetQueuedMoveFloorIndex();
+        foreach (var job in jobs)
+        {
+            if (job.State != EncodingJobState.Queued)
+            {
+                continue;
+            }
+
+            var currentIndex = Jobs.IndexOf(job);
+            if (currentIndex < 0)
+            {
+                continue;
+            }
+
+            if (currentIndex != insertionIndex)
+            {
+                Jobs.Move(currentIndex, insertionIndex);
+            }
+
+            insertionIndex++;
+        }
+    }
+
     private int GetQueuedMoveFloorIndex()
     {
         var runningIndex = Jobs
@@ -2801,7 +2832,31 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             && AreSamePath(left.OutputPath, right.OutputPath)
             && left.PipelineKind == right.PipelineKind
             && left.PreferredArchitecture == right.PreferredArchitecture
-            && EqualityComparer<EncodingProfile>.Default.Equals(left.Profile, right.Profile);
+            && AreSameEncodingParameters(left.Profile, right.Profile);
+    }
+
+    private static bool AreSameEncodingParameters(EncodingProfile left, EncodingProfile right)
+    {
+        return left.Kind == right.Kind
+            && left.RateControl == right.RateControl
+            && AreSameNumber(left.Quality, right.Quality)
+            && left.Bitrate == right.Bitrate
+            && AreSameText(left.Preset, right.Preset, StringComparison.OrdinalIgnoreCase)
+            && AreSameText(left.Tune, right.Tune, StringComparison.OrdinalIgnoreCase)
+            && AreSameText(left.Profile, right.Profile, StringComparison.OrdinalIgnoreCase)
+            && AreSameText(left.OutputContainer, right.OutputContainer, StringComparison.OrdinalIgnoreCase)
+            && AreSameText(left.AdditionalArguments, right.AdditionalArguments, StringComparison.Ordinal)
+            && AreSameText(left.UhdParameters, right.UhdParameters, StringComparison.Ordinal);
+    }
+
+    private static bool AreSameNumber(double left, double right)
+    {
+        return Math.Abs(left - right) < 0.0001;
+    }
+
+    private static bool AreSameText(string? left, string? right, StringComparison comparison)
+    {
+        return string.Equals(left?.Trim() ?? string.Empty, right?.Trim() ?? string.Empty, comparison);
     }
 
     private static bool AreSamePath(string leftPath, string rightPath)

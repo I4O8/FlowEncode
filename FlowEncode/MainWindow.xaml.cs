@@ -1644,6 +1644,7 @@ public sealed partial class MainWindow : Window
             ViewModel.Texts.ConfirmCancelSelectedJobsTitle,
             ViewModel.Texts.ConfirmCancelSelectedJobsMessage(
                 ViewModel.SelectedQueueJobCount,
+                ViewModel.SelectedCancelableQueueJobCount,
                 ViewModel.SelectedRunningJobCount,
                 ViewModel.SelectedQueuedJobCount),
             ViewModel.Texts.ConfirmCancelSelectedJobsButton,

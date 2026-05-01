@@ -677,10 +677,28 @@ public sealed class AppText
         };
     public string ConfirmCancelSelectedJobsTitle => Pick("确认批量取消", "Confirm Batch Cancel");
     public string ConfirmCancelSelectedJobsButton => Pick("批量取消", "Cancel Selected");
-    public string ConfirmCancelSelectedJobsMessage(int selectedCount, int runningCount, int queuedCount) =>
-        IsChinese
-            ? $"已选择 {selectedCount} 个任务，其中 {runningCount} 个正在运行、{queuedCount} 个排队中。{Environment.NewLine}{Environment.NewLine}取消运行中任务会终止对应编码进程。是否继续？"
-            : $"{selectedCount} job(s) are selected, including {runningCount} running and {queuedCount} queued.{Environment.NewLine}{Environment.NewLine}Cancelling running jobs will terminate their encoder processes. Continue?";
+    public string ConfirmCancelSelectedJobsMessage(int selectedCount, int cancelableCount, int runningCount, int queuedCount)
+    {
+        var skippedCount = Math.Max(0, selectedCount - cancelableCount);
+        if (runningCount > 0)
+        {
+            return skippedCount > 0
+                ? IsChinese
+                    ? $"已选择 {selectedCount} 个任务，将取消 {cancelableCount} 个可取消任务（运行中 {runningCount}，排队中 {queuedCount}），并跳过 {skippedCount} 个不可取消任务。{Environment.NewLine}{Environment.NewLine}取消运行中任务会终止对应编码进程。是否继续？"
+                    : $"{selectedCount} job(s) are selected. {cancelableCount} cancellable job(s) will be cancelled ({runningCount} running, {queuedCount} queued), and {skippedCount} non-cancellable job(s) will be skipped.{Environment.NewLine}{Environment.NewLine}Cancelling running jobs will terminate their encoder processes. Continue?"
+                : IsChinese
+                    ? $"将取消 {cancelableCount} 个任务（运行中 {runningCount}，排队中 {queuedCount}）。{Environment.NewLine}{Environment.NewLine}取消运行中任务会终止对应编码进程。是否继续？"
+                    : $"{cancelableCount} job(s) will be cancelled ({runningCount} running, {queuedCount} queued).{Environment.NewLine}{Environment.NewLine}Cancelling running jobs will terminate their encoder processes. Continue?";
+        }
+
+        return skippedCount > 0
+            ? IsChinese
+                ? $"已选择 {selectedCount} 个任务，将取消 {queuedCount} 个排队任务，并跳过 {skippedCount} 个不可取消任务。是否继续？"
+                : $"{selectedCount} job(s) are selected. {queuedCount} queued job(s) will be cancelled, and {skippedCount} non-cancellable job(s) will be skipped. Continue?"
+            : IsChinese
+                ? $"将取消 {queuedCount} 个排队任务。是否继续？"
+                : $"{queuedCount} queued job(s) will be cancelled. Continue?";
+    }
     public string ConfirmDeleteSelectedJobsTitle => Pick("确认批量删除", "Confirm Batch Delete");
     public string ConfirmDeleteSelectedJobsButton => Pick("批量删除", "Delete Selected");
     public string ConfirmDeleteSelectedJobsMessage(int selectedCount, int removableCount, int runningCount) =>
@@ -1263,8 +1281,13 @@ public sealed class AppText
 
     public string BatchJobsStartedPartialStatus(int startedCount, int requestedCount, int limit) =>
         IsChinese
-            ? $"已开始 {startedCount}/{requestedCount} 个排队任务；并发上限为 {limit}。"
-            : $"Started {startedCount}/{requestedCount} queued job(s); concurrent limit is {limit}.";
+            ? $"已开始 {startedCount}/{requestedCount} 个选中排队任务；其余选中任务已移到队列前部等待空闲，并发上限为 {limit}。"
+            : $"Started {startedCount}/{requestedCount} selected queued job(s); the remaining selected jobs were moved to the front and will wait for capacity. Concurrent limit is {limit}.";
+
+    public string BatchJobsPrioritizedStatus(int requestedCount, int limit) =>
+        IsChinese
+            ? $"当前并发上限 {limit} 已满；已将 {requestedCount} 个选中排队任务移到队列前部等待空闲。"
+            : $"The concurrent limit ({limit}) is already full; moved {requestedCount} selected queued job(s) to the front to wait for capacity.";
 
     public string BatchJobsCancelRequestedStatus(int totalCount, int runningCount, int queuedCount) =>
         IsChinese
