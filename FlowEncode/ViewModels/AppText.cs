@@ -64,6 +64,10 @@ public sealed class AppText
     public string OutputPreviewPlaceholder => Pick("最终输出：等待输入源和输出目录。", "Final Output: waiting for source and output directory.");
     public string OutputPreviewText(string outputPath) =>
         IsChinese ? $"最终输出：{outputPath}" : $"Final Output: {outputPath}";
+    public string OutputPreviewRunningConflict(string runningJobName, string outputPath) =>
+        IsChinese
+            ? $"最终输出冲突：运行中的任务「{runningJobName}」正在使用 {outputPath}。请等待该任务完成，或调整参数生成新的输出名。"
+            : $"Final Output Conflict: running job \"{runningJobName}\" is using {outputPath}. Wait for it to finish, or adjust parameters to generate a different output name.";
     public string QueueButton => Pick("加入队列", "Queue");
     public string QueueAndStartButton => Pick("加入队列并开始", "Queue and Start");
     public string EncoderHeader => Pick("编码器", "Encoder");

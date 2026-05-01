@@ -913,7 +913,10 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     {
         get
         {
-            var outputPath = TryResolveDraftOutputPreviewPath();
+            var preview = TryResolveDraftOutputPreview();
+            var outputPath = preview.RunningOutputConflict is not null
+                ? preview.BaseOutputPath
+                : preview.FinalOutputPath;
             return string.IsNullOrWhiteSpace(outputPath)
                 ? Texts.SuggestedOutputName
                 : Path.GetFileNameWithoutExtension(outputPath);
@@ -922,7 +925,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     public string DraftOutputPreviewText => _isDraftInputRefreshPending
         ? Texts.OutputPreviewUpdating
-        : BuildOutputPreviewText(TryResolveDraftOutputPreviewPath());
+        : BuildDraftOutputPreviewText();
 
     public bool CanQueueJob =>
         _activeProfile is not null
@@ -1842,11 +1845,11 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public QueueJobPreflightResult AnalyzeCurrentJobForQueue()
+    public QueueJobPreflightResult AnalyzeCurrentJobForQueue(bool requireSourceExists = true)
     {
         try
         {
-            var baseRequest = CreateDraftRequest(uniquifyOutputPath: false);
+            var baseRequest = CreateDraftRequest(requireSourceExists: requireSourceExists, uniquifyOutputPath: false);
             var finalOutputPath = ResolveUniqueOutputPath(baseRequest.OutputPath);
             var duplicateJob = Jobs.FirstOrDefault(job => IsDuplicateJobRequest(job.Request, baseRequest));
             var runningOutputConflict = Jobs.FirstOrDefault(job =>
@@ -2889,6 +2892,37 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return Path.Combine(
             outputDirectory,
             $"{fileName}.{GetAutoCompressionEncoderToken(encoderKind)}.vmaf{FormatAutoCompressionVmafToken(targetVmaf)}.mkv");
+    }
+
+    private string BuildDraftOutputPreviewText()
+    {
+        var preview = TryResolveDraftOutputPreview();
+        if (preview.RunningOutputConflict is not null)
+        {
+            return Texts.OutputPreviewRunningConflict(
+                preview.RunningOutputConflict.SourceFileName,
+                preview.BaseOutputPath);
+        }
+
+        return BuildOutputPreviewText(preview.FinalOutputPath);
+    }
+
+    private QueueJobPreflightResult TryResolveDraftOutputPreview()
+    {
+        var preflight = AnalyzeCurrentJobForQueue(requireSourceExists: false);
+        if (string.IsNullOrWhiteSpace(preflight.ValidationError))
+        {
+            return preflight;
+        }
+
+        return new QueueJobPreflightResult(
+            string.Empty,
+            TryResolveDraftOutputPreviewPath() ?? string.Empty,
+            DuplicateJob: null,
+            RunningOutputConflict: null,
+            QueuedOutputConflictCount: 0,
+            DiskOutputPathExists: false,
+            ValidationError: null);
     }
 
     private string? TryResolveDraftOutputPreviewPath()
