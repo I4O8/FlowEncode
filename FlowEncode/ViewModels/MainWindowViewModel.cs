@@ -95,6 +95,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     private AppUpdateCheckResult? _lastAppUpdateResult;
     private string? _lastAppUpdateErrorMessage;
     private EncodingJobItemViewModel? _selectedJob;
+    private readonly List<EncodingJobItemViewModel> _selectedQueueJobs = [];
     private string _draftAdditionalArguments = string.Empty;
     private string _draftUhdParameters = string.Empty;
     private double _draftQuality = 18.0;
@@ -992,41 +993,95 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     public Visibility EmptyQueueVisibility => HasJobs ? Visibility.Collapsed : Visibility.Visible;
 
-    public double SelectedJobProgressValue => SelectedJob?.ProgressValue ?? 0.0;
+    public int SelectedQueueJobCount => _selectedQueueJobs.Count;
 
-    public string SelectedJobProgressPrimaryText => SelectedJob?.ProgressTelemetryPrimaryLine ?? Texts.DefaultProgressPrimary;
+    public int SelectedQueuedJobCount => _selectedQueueJobs.Count(static job => job.State == EncodingJobState.Queued);
 
-    public string SelectedJobProgressSecondaryText => SelectedJob?.ProgressTelemetrySecondaryLine ?? Texts.DefaultProgressSecondary;
+    public int SelectedRunningJobCount => _selectedQueueJobs.Count(static job => job.State == EncodingJobState.Running);
 
-    public string SelectedJobProgressPercentText => SelectedJob?.ProgressPercentLabel ?? "0%";
+    public int SelectedCancelableQueueJobCount => _selectedQueueJobs.Count(static job => job.CanCancel);
 
-    public Visibility SelectedJobSourcePreparationVisibility => SelectedJob?.HasSourcePreparationText == true
+    public int SelectedRemovableQueueJobCount => _selectedQueueJobs.Count(static job => job.CanRemove);
+
+    public string QueueSelectionStatusText => Texts.QueueSelectionStatus(SelectedQueueJobCount, Jobs.Count);
+
+    public bool CanSelectAllQueueJobs => Jobs.Count > 0 && SelectedQueueJobCount < Jobs.Count;
+
+    public bool CanInvertQueueSelection => Jobs.Count > 0;
+
+    public bool CanClearQueueSelection => SelectedQueueJobCount > 0;
+
+    public bool CanStartSelectedJobs => _selectedQueueJobs.Any(static job => job.CanStart);
+
+    public bool CanCancelSelectedJobs => _selectedQueueJobs.Any(static job => job.CanCancel);
+
+    public bool CanDeleteSelectedJobs => _selectedQueueJobs.Any(static job => job.CanRemove);
+
+    private bool IsQueueBatchSelectionActive => SelectedQueueJobCount > 1;
+
+    public double SelectedJobProgressValue => IsQueueBatchSelectionActive ? 0.0 : SelectedJob?.ProgressValue ?? 0.0;
+
+    public string SelectedJobProgressPrimaryText => IsQueueBatchSelectionActive
+        ? Texts.QueueBatchSelectionSummary(
+            SelectedQueueJobCount,
+            SelectedRunningJobCount,
+            SelectedQueuedJobCount,
+            GetSelectedQueueJobStateCount(EncodingJobState.Completed),
+            GetSelectedQueueJobStateCount(EncodingJobState.Failed),
+            GetSelectedQueueJobStateCount(EncodingJobState.Cancelled))
+        : SelectedJob?.ProgressTelemetryPrimaryLine ?? Texts.DefaultProgressPrimary;
+
+    public string SelectedJobProgressSecondaryText => IsQueueBatchSelectionActive
+        ? Texts.QueueSelectionStatus(SelectedQueueJobCount, Jobs.Count)
+        : SelectedJob?.ProgressTelemetrySecondaryLine ?? Texts.DefaultProgressSecondary;
+
+    public string SelectedJobProgressPercentText => IsQueueBatchSelectionActive
+        ? Texts.QueueBatchSelectionProgressLabel(SelectedQueueJobCount)
+        : SelectedJob?.ProgressPercentLabel ?? "0%";
+
+    public Visibility SelectedJobSourcePreparationVisibility => !IsQueueBatchSelectionActive && SelectedJob?.HasSourcePreparationText == true
         ? Visibility.Visible
         : Visibility.Collapsed;
 
-    public string SelectedJobSourcePreparationText => SelectedJob?.SourcePreparationText ?? string.Empty;
+    public string SelectedJobSourcePreparationText => IsQueueBatchSelectionActive
+        ? string.Empty
+        : SelectedJob?.SourcePreparationText ?? string.Empty;
 
-    public string SelectedJobFramesText => BuildSelectedJobFramesText();
+    public string SelectedJobFramesText => IsQueueBatchSelectionActive
+        ? Texts.QueueBatchSelectionQueuedMetric(SelectedQueuedJobCount)
+        : BuildSelectedJobFramesText();
 
-    public string SelectedJobFpsText => SelectedJob?.FramesPerSecond is > 0
-        ? $"{SelectedJob.FramesPerSecond.Value:0.00} fps"
-        : "--.-- fps";
+    public string SelectedJobFpsText => IsQueueBatchSelectionActive
+        ? Texts.QueueBatchSelectionRunningMetric(SelectedRunningJobCount)
+        : SelectedJob?.FramesPerSecond is > 0
+            ? $"{SelectedJob.FramesPerSecond.Value:0.00} fps"
+            : "--.-- fps";
 
-    public string SelectedJobBitrateText => SelectedJob?.BitrateKbps is > 0
-        ? $"{SelectedJob.BitrateKbps.Value:0.00} kb/s"
-        : "--.-- kb/s";
+    public string SelectedJobBitrateText => IsQueueBatchSelectionActive
+        ? Texts.QueueBatchSelectionCancelableMetric(SelectedCancelableQueueJobCount)
+        : SelectedJob?.BitrateKbps is > 0
+            ? $"{SelectedJob.BitrateKbps.Value:0.00} kb/s"
+            : "--.-- kb/s";
 
-    public string SelectedJobEtaText => $"{Texts.EtaPrefix} {FormatSelectedJobEta(SelectedJob?.Eta)}";
+    public string SelectedJobEtaText => IsQueueBatchSelectionActive
+        ? Texts.QueueBatchSelectionRemovableMetric(SelectedRemovableQueueJobCount)
+        : $"{Texts.EtaPrefix} {FormatSelectedJobEta(SelectedJob?.Eta)}";
 
-    public string SelectedJobEstimatedSizeText => $"{Texts.EstimatedSizePrefix} {FormatSelectedJobSize(SelectedJob?.EstimatedFileSizeBytes)}";
+    public string SelectedJobEstimatedSizeText => IsQueueBatchSelectionActive
+        ? Texts.QueueSelectionStatus(SelectedQueueJobCount, Jobs.Count)
+        : $"{Texts.EstimatedSizePrefix} {FormatSelectedJobSize(SelectedJob?.EstimatedFileSizeBytes)}";
 
-    public string SelectedJobCommandText => SelectedJob?.DisplayCommand ?? Texts.SelectJobForCommandText;
+    public string SelectedJobCommandText => IsQueueBatchSelectionActive
+        ? Texts.QueueBatchSelectionCommandText
+        : SelectedJob?.DisplayCommand ?? Texts.SelectJobForCommandText;
 
-    public string SelectedJobLogText => SelectedJob is null
-        ? Texts.SelectJobForLogText
-        : string.IsNullOrWhiteSpace(SelectedJob.Log)
-            ? Texts.NoSelectedJobLogText
-            : SelectedJob.Log;
+    public string SelectedJobLogText => IsQueueBatchSelectionActive
+        ? Texts.QueueBatchSelectionLogText
+        : SelectedJob is null
+            ? Texts.SelectJobForLogText
+            : string.IsNullOrWhiteSpace(SelectedJob.Log)
+                ? Texts.NoSelectedJobLogText
+                : SelectedJob.Log;
 
     public Visibility TemplateLibraryEmptyVisibility => TemplateLibraryItems.Count == 0
         ? Visibility.Visible
@@ -1042,9 +1097,17 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     public bool HasUnsavedTemplateChanges => !MatchesTemplateEditingBaseline();
 
-    public string SelectedJobSummary => SelectedJob is null
-        ? Texts.SelectedJobSummaryPlaceholder
-        : Texts.QueueSelectionSummary(SelectedJob.StateLabel, SelectedJob.Summary);
+    public string SelectedJobSummary => IsQueueBatchSelectionActive
+        ? Texts.QueueBatchSelectionSummary(
+            SelectedQueueJobCount,
+            SelectedRunningJobCount,
+            SelectedQueuedJobCount,
+            GetSelectedQueueJobStateCount(EncodingJobState.Completed),
+            GetSelectedQueueJobStateCount(EncodingJobState.Failed),
+            GetSelectedQueueJobStateCount(EncodingJobState.Cancelled))
+        : SelectedJob is null
+            ? Texts.SelectedJobSummaryPlaceholder
+            : Texts.QueueSelectionSummary(SelectedJob.StateLabel, SelectedJob.Summary);
 
     public AppThemePreference CurrentThemePreference => SelectedTheme?.Value ?? AppThemePreference.Default;
 
@@ -1329,6 +1392,20 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     public void SelectJob(EncodingJobItemViewModel? job)
     {
         SelectedJob = job;
+    }
+
+    public void UpdateSelectedQueueJobs(IEnumerable<EncodingJobItemViewModel> selectedJobs)
+    {
+        var normalizedSelection = NormalizeSelectedQueueJobs(selectedJobs).ToList();
+        if (_selectedQueueJobs.Count == normalizedSelection.Count
+            && _selectedQueueJobs.SequenceEqual(normalizedSelection))
+        {
+            return;
+        }
+
+        _selectedQueueJobs.Clear();
+        _selectedQueueJobs.AddRange(normalizedSelection);
+        RaiseQueueSelectionPropertyChanges();
     }
 
     public async Task SelectUserTemplateAsync(SavedTemplate? template)
@@ -1689,12 +1766,23 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public Task<string?> QueueCurrentJobAsync(bool startImmediately = false)
+    public Task<string?> QueueCurrentJobAsync(bool startImmediately = false, QueueJobPreflightResult? preflight = null)
     {
         try
         {
             var hasRunningJob = GetRunningEncodingJobCount() >= GetMaxConcurrentEncodingJobCount();
-            var request = CreateDraftRequest();
+            preflight ??= AnalyzeCurrentJobForQueue();
+            if (!string.IsNullOrWhiteSpace(preflight.ValidationError))
+            {
+                return Task.FromResult<string?>(preflight.ValidationError);
+            }
+
+            if (preflight.RunningOutputConflict is not null)
+            {
+                return Task.FromResult<string?>(Texts.QueueOutputPathRunningConflictMessage(preflight.RunningOutputConflict.SourceFileName, preflight.BaseOutputPath));
+            }
+
+            var request = CreateDraftRequest(finalOutputPathOverride: preflight.FinalOutputPath);
             var job = new EncodingJobItemViewModel(
                 request,
                 Texts.Pick("正在生成实际执行命令...", "Resolving the actual command..."),
@@ -1704,7 +1792,15 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             SelectedJob = job;
             RaiseJobSummaryPropertyChanges();
 
-            StatusText = Texts.JobQueuedStatus(Path.GetFileName(request.SourcePath), startImmediately, hasRunningJob);
+            StatusText = preflight.IsOutputPathAutoRenamed
+                ? Texts.JobQueuedWithAutoOutputNameStatus(
+                    Path.GetFileName(request.SourcePath),
+                    Path.GetFileName(request.OutputPath),
+                    startImmediately,
+                    hasRunningJob,
+                    preflight.QueuedOutputConflictCount,
+                    preflight.DiskOutputPathExists)
+                : Texts.JobQueuedStatus(Path.GetFileName(request.SourcePath), startImmediately, hasRunningJob);
             _ = ResolveJobDisplayCommandAsync(job, request);
 
             if (startImmediately)
@@ -1726,13 +1822,60 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
         try
         {
-            var request = CreateDraftRequest();
-            existingOutputPath = File.Exists(request.OutputPath) ? request.OutputPath : null;
+            var preflight = AnalyzeCurrentJobForQueue();
+            if (!string.IsNullOrWhiteSpace(preflight.ValidationError))
+            {
+                return preflight.ValidationError;
+            }
+
+            if (preflight.RunningOutputConflict is not null)
+            {
+                return Texts.QueueOutputPathRunningConflictMessage(preflight.RunningOutputConflict.SourceFileName, preflight.BaseOutputPath);
+            }
+
+            existingOutputPath = preflight.DiskOutputPathExists ? preflight.BaseOutputPath : null;
             return null;
         }
         catch (Exception ex)
         {
             return ex.Message;
+        }
+    }
+
+    public QueueJobPreflightResult AnalyzeCurrentJobForQueue()
+    {
+        try
+        {
+            var baseRequest = CreateDraftRequest(uniquifyOutputPath: false);
+            var finalOutputPath = ResolveUniqueOutputPath(baseRequest.OutputPath);
+            var duplicateJob = Jobs.FirstOrDefault(job => IsDuplicateJobRequest(job.Request, baseRequest));
+            var runningOutputConflict = Jobs.FirstOrDefault(job =>
+                job.State == EncodingJobState.Running
+                && AreSamePath(job.Request.OutputPath, baseRequest.OutputPath));
+            var queuedOutputConflictCount = Jobs.Count(job =>
+                job.State != EncodingJobState.Running
+                && AreSamePath(job.Request.OutputPath, baseRequest.OutputPath));
+            var diskOutputPathExists = File.Exists(baseRequest.OutputPath) || Directory.Exists(baseRequest.OutputPath);
+
+            return new QueueJobPreflightResult(
+                baseRequest.OutputPath,
+                finalOutputPath,
+                duplicateJob,
+                runningOutputConflict,
+                queuedOutputConflictCount,
+                diskOutputPathExists,
+                ValidationError: null);
+        }
+        catch (Exception ex)
+        {
+            return new QueueJobPreflightResult(
+                string.Empty,
+                string.Empty,
+                DuplicateJob: null,
+                RunningOutputConflict: null,
+                QueuedOutputConflictCount: 0,
+                DiskOutputPathExists: false,
+                ex.Message);
         }
     }
 
@@ -1759,6 +1902,122 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
 
         return Task.CompletedTask;
+    }
+
+    public string? StartSelectedJobsNow()
+    {
+        var selectedJobs = NormalizeSelectedQueueJobs(_selectedQueueJobs).ToList();
+        if (selectedJobs.Count == 0)
+        {
+            return Texts.NoSelectedJobsError;
+        }
+
+        var startableJobs = selectedJobs
+            .Where(static job => job.CanStart)
+            .ToList();
+        if (startableJobs.Count == 0)
+        {
+            return Texts.BatchStartNoQueuedJobsError;
+        }
+
+        var startedCount = 0;
+        foreach (var job in startableJobs)
+        {
+            if (GetRunningEncodingJobCount() >= GetMaxConcurrentEncodingJobCount())
+            {
+                break;
+            }
+
+            SelectedJob = job;
+            _ = RunJobAsync(job);
+            startedCount++;
+        }
+
+        if (startedCount == 0)
+        {
+            return Texts.ConcurrentEncodingLimitReached(GetMaxConcurrentEncodingJobCount());
+        }
+
+        StatusText = startedCount == startableJobs.Count
+            ? Texts.BatchJobsStartedStatus(startedCount)
+            : Texts.BatchJobsStartedPartialStatus(startedCount, startableJobs.Count, GetMaxConcurrentEncodingJobCount());
+        RaiseJobStatePropertyChanges();
+        return null;
+    }
+
+    public string? CancelSelectedJobs()
+    {
+        var selectedJobs = NormalizeSelectedQueueJobs(_selectedQueueJobs).ToList();
+        if (selectedJobs.Count == 0)
+        {
+            return Texts.NoSelectedJobsError;
+        }
+
+        var cancelableJobs = selectedJobs
+            .Where(static job => job.CanCancel)
+            .ToList();
+        if (cancelableJobs.Count == 0)
+        {
+            return Texts.BatchCancelNoCancelableJobsError;
+        }
+
+        var queuedCount = 0;
+        var runningCount = 0;
+        foreach (var job in cancelableJobs)
+        {
+            if (job.State == EncodingJobState.Queued)
+            {
+                queuedCount++;
+            }
+            else if (job.State == EncodingJobState.Running)
+            {
+                runningCount++;
+            }
+
+            _ = CancelJobAsync(job);
+        }
+
+        StatusText = Texts.BatchJobsCancelRequestedStatus(cancelableJobs.Count, runningCount, queuedCount);
+        RaiseJobStatePropertyChanges();
+        return null;
+    }
+
+    public string? RemoveSelectedJobs()
+    {
+        var selectedJobs = NormalizeSelectedQueueJobs(_selectedQueueJobs).ToList();
+        if (selectedJobs.Count == 0)
+        {
+            return Texts.NoSelectedJobsError;
+        }
+
+        var removableJobs = selectedJobs
+            .Where(static job => job.CanRemove)
+            .ToList();
+        if (removableJobs.Count == 0)
+        {
+            return Texts.BatchDeleteNoRemovableJobsError;
+        }
+
+        var removedCount = 0;
+        foreach (var job in removableJobs)
+        {
+            if (Jobs.Remove(job))
+            {
+                removedCount++;
+            }
+        }
+
+        PruneSelectedQueueJobs();
+        if (SelectedJob is not null && !Jobs.Contains(SelectedJob))
+        {
+            SelectedJob = _selectedQueueJobs.FirstOrDefault()
+                ?? Jobs.FirstOrDefault();
+        }
+
+        var skippedRunningCount = selectedJobs.Count - removableJobs.Count;
+        RaiseJobSummaryPropertyChanges();
+        StatusText = Texts.BatchJobsDeletedStatus(removedCount, skippedRunningCount);
+        return null;
     }
 
     public Task<string?> RestartJobAsync(EncodingJobItemViewModel? job)
@@ -1819,6 +2078,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             SelectedJob = Jobs.FirstOrDefault();
         }
 
+        PruneSelectedQueueJobs();
         RaiseJobSummaryPropertyChanges();
         StatusText = Texts.JobDeletedStatus(job.SourceFileName);
         return null;
@@ -2389,7 +2649,10 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             : string.Empty;
     }
 
-    private EncodingJobRequest CreateDraftRequest(bool requireSourceExists = true)
+    private EncodingJobRequest CreateDraftRequest(
+        bool requireSourceExists = true,
+        bool uniquifyOutputPath = true,
+        string? finalOutputPathOverride = null)
     {
         if (_activeProfile is null)
         {
@@ -2419,10 +2682,16 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             throw new InvalidOperationException(Texts.OutputDirectoryInvalidError);
         }
 
-        var normalizedOutput = ResolveDraftOutputPath(
-            normalizedSource,
-            normalizedOutputDirectory,
-            _activeProfile.OutputContainer);
+        var normalizedOutput = string.IsNullOrWhiteSpace(finalOutputPathOverride)
+            ? ResolveDraftOutputPath(
+                normalizedSource,
+                normalizedOutputDirectory,
+                _activeProfile)
+            : Path.GetFullPath(finalOutputPathOverride.Trim());
+        if (uniquifyOutputPath && string.IsNullOrWhiteSpace(finalOutputPathOverride))
+        {
+            normalizedOutput = ResolveUniqueOutputPath(normalizedOutput);
+        }
 
         if (string.Equals(normalizedSource, normalizedOutput, StringComparison.OrdinalIgnoreCase))
         {
@@ -2441,7 +2710,22 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return request;
     }
 
-    private static string ResolveDraftOutputPath(string sourcePath, string outputDirectory, string? outputContainer)
+    private static string ResolveDraftOutputPath(string sourcePath, string outputDirectory, EncodingProfile? profile)
+    {
+        var fileName = BuildDraftOutputBaseFileName(sourcePath, profile);
+
+        var extension = string.IsNullOrWhiteSpace(profile?.OutputContainer)
+            ? "264"
+            : profile.OutputContainer.Trim().TrimStart('.');
+        if (string.IsNullOrWhiteSpace(extension))
+        {
+            extension = "264";
+        }
+
+        return Path.Combine(outputDirectory, $"{fileName}.{extension}");
+    }
+
+    private static string BuildDraftOutputBaseFileName(string sourcePath, EncodingProfile? profile)
     {
         var fileName = Path.GetFileNameWithoutExtension(sourcePath);
         if (string.IsNullOrWhiteSpace(fileName))
@@ -2449,15 +2733,90 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             fileName = "encode";
         }
 
-        var extension = string.IsNullOrWhiteSpace(outputContainer)
-            ? "264"
-            : outputContainer.Trim().TrimStart('.');
-        if (string.IsNullOrWhiteSpace(extension))
+        if (profile?.RateControl != RateControlMode.Crf)
         {
-            extension = "264";
+            return fileName;
         }
 
-        return Path.Combine(outputDirectory, $"{fileName}.{extension}");
+        return $"{fileName}-{GetDraftOutputEncoderToken(profile.Kind)}-crf{FormatOutputTokenNumber(profile.Quality)}";
+    }
+
+    private static string GetDraftOutputEncoderToken(EncoderKind kind)
+    {
+        return kind switch
+        {
+            EncoderKind.X264 => "x264",
+            EncoderKind.X265 => "x265",
+            EncoderKind.SvtAv1 => "svtav1",
+            _ => kind.ToString().ToLowerInvariant()
+        };
+    }
+
+    private static string FormatOutputTokenNumber(double value)
+    {
+        return value
+            .ToString("0.0##", CultureInfo.InvariantCulture)
+            .TrimEnd('0')
+            .TrimEnd('.');
+    }
+
+    private string ResolveUniqueOutputPath(string outputPath)
+    {
+        var normalizedOutputPath = Path.GetFullPath(outputPath.Trim());
+        if (!IsOutputPathOccupied(normalizedOutputPath))
+        {
+            return normalizedOutputPath;
+        }
+
+        var directory = Path.GetDirectoryName(normalizedOutputPath) ?? Environment.CurrentDirectory;
+        var extension = Path.GetExtension(normalizedOutputPath);
+        var baseName = Path.GetFileNameWithoutExtension(normalizedOutputPath);
+        if (string.IsNullOrWhiteSpace(baseName))
+        {
+            baseName = "encode";
+        }
+
+        for (var index = 1; index < 10000; index++)
+        {
+            var candidate = Path.Combine(directory, $"{baseName} ({index.ToString(CultureInfo.InvariantCulture)}){extension}");
+            if (!IsOutputPathOccupied(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return Path.Combine(directory, $"{baseName} ({Guid.NewGuid():N}){extension}");
+    }
+
+    private bool IsOutputPathOccupied(string outputPath)
+    {
+        return File.Exists(outputPath)
+            || Directory.Exists(outputPath)
+            || Jobs.Any(job => AreSamePath(job.Request.OutputPath, outputPath));
+    }
+
+    private static bool IsDuplicateJobRequest(EncodingJobRequest left, EncodingJobRequest right)
+    {
+        return AreSamePath(left.SourcePath, right.SourcePath)
+            && AreSamePath(left.OutputPath, right.OutputPath)
+            && left.PipelineKind == right.PipelineKind
+            && left.PreferredArchitecture == right.PreferredArchitecture
+            && EqualityComparer<EncodingProfile>.Default.Equals(left.Profile, right.Profile);
+    }
+
+    private static bool AreSamePath(string leftPath, string rightPath)
+    {
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(leftPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                Path.GetFullPath(rightPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return string.Equals(leftPath, rightPath, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     private static string ResolveAutoCompressionOutputPath(
@@ -2490,7 +2849,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             var outputDirectory = !string.IsNullOrWhiteSpace(OutputPath)
                 ? Path.GetFullPath(OutputPath.Trim())
                 : Path.GetDirectoryName(normalizedSource) ?? Environment.CurrentDirectory;
-            return ResolveDraftOutputPath(normalizedSource, outputDirectory, _activeProfile?.OutputContainer);
+            return ResolveUniqueOutputPath(ResolveDraftOutputPath(normalizedSource, outputDirectory, _activeProfile));
         }
         catch
         {
@@ -3693,6 +4052,11 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return $"{currentFrame.ToString(CultureInfo.InvariantCulture)}/{totalFrames} frames";
     }
 
+    private int GetSelectedQueueJobStateCount(EncodingJobState state)
+    {
+        return _selectedQueueJobs.Count(job => job.State == state);
+    }
+
     private static string FormatSelectedJobEta(TimeSpan? eta)
     {
         if (!eta.HasValue)
@@ -3838,6 +4202,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         OnPropertyChanged(nameof(HasJobs));
         OnPropertyChanged(nameof(EmptyQueueVisibility));
         OnPropertyChanged(nameof(QueueSummary));
+        RaiseQueueSelectionPropertyChanges();
     }
 
     private void RaiseSelectedJobPropertyChanges()
@@ -3846,6 +4211,56 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         RaiseSelectedJobProgressMetricPropertyChanges();
         OnPropertyChanged(nameof(SelectedJobCommandText));
         OnPropertyChanged(nameof(SelectedJobLogText));
+    }
+
+    private void RaiseQueueSelectionPropertyChanges()
+    {
+        OnPropertyChanged(nameof(SelectedQueueJobCount));
+        OnPropertyChanged(nameof(SelectedQueuedJobCount));
+        OnPropertyChanged(nameof(SelectedRunningJobCount));
+        OnPropertyChanged(nameof(SelectedCancelableQueueJobCount));
+        OnPropertyChanged(nameof(SelectedRemovableQueueJobCount));
+        OnPropertyChanged(nameof(QueueSelectionStatusText));
+        OnPropertyChanged(nameof(CanSelectAllQueueJobs));
+        OnPropertyChanged(nameof(CanInvertQueueSelection));
+        OnPropertyChanged(nameof(CanClearQueueSelection));
+        OnPropertyChanged(nameof(CanStartSelectedJobs));
+        OnPropertyChanged(nameof(CanCancelSelectedJobs));
+        OnPropertyChanged(nameof(CanDeleteSelectedJobs));
+        RaiseSelectedJobPropertyChanges();
+    }
+
+    private IEnumerable<EncodingJobItemViewModel> NormalizeSelectedQueueJobs(IEnumerable<EncodingJobItemViewModel> selectedJobs)
+    {
+        var selectedJobIds = selectedJobs
+            .Where(static job => job is not null)
+            .Select(static job => job.JobId)
+            .ToHashSet();
+
+        foreach (var job in Jobs)
+        {
+            if (!selectedJobIds.Contains(job.JobId))
+            {
+                continue;
+            }
+
+            yield return job;
+        }
+    }
+
+    private void PruneSelectedQueueJobs()
+    {
+        var normalizedSelection = NormalizeSelectedQueueJobs(_selectedQueueJobs).ToList();
+        if (_selectedQueueJobs.Count == normalizedSelection.Count
+            && _selectedQueueJobs.SequenceEqual(normalizedSelection))
+        {
+            RaiseQueueSelectionPropertyChanges();
+            return;
+        }
+
+        _selectedQueueJobs.Clear();
+        _selectedQueueJobs.AddRange(normalizedSelection);
+        RaiseQueueSelectionPropertyChanges();
     }
 
     private static void ReplaceItems<T>(ObservableCollection<T> target, IEnumerable<T> source)
@@ -4182,4 +4597,19 @@ public enum MoveQueuedJobMode
     Up,
     Down,
     Bottom
+}
+
+public sealed record QueueJobPreflightResult(
+    string BaseOutputPath,
+    string FinalOutputPath,
+    EncodingJobItemViewModel? DuplicateJob,
+    EncodingJobItemViewModel? RunningOutputConflict,
+    int QueuedOutputConflictCount,
+    bool DiskOutputPathExists,
+    string? ValidationError)
+{
+    public bool IsOutputPathAutoRenamed =>
+        !string.IsNullOrWhiteSpace(BaseOutputPath)
+        && !string.IsNullOrWhiteSpace(FinalOutputPath)
+        && !string.Equals(BaseOutputPath, FinalOutputPath, StringComparison.OrdinalIgnoreCase);
 }

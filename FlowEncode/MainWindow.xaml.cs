@@ -1446,8 +1446,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        JobsList.SelectedItem = job;
-        ViewModel.SelectJob(job);
+        SelectQueueJobForSingleAction(job);
         var error = ViewModel.PrioritizeJob(job);
         if (!string.IsNullOrWhiteSpace(error))
         {
@@ -1462,8 +1461,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        JobsList.SelectedItem = job;
-        ViewModel.SelectJob(job);
+        SelectQueueJobForSingleAction(job);
         var error = ViewModel.StartJobNow(job);
         if (!string.IsNullOrWhiteSpace(error))
         {
@@ -1478,8 +1476,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        JobsList.SelectedItem = job;
-        ViewModel.SelectJob(job);
+        SelectQueueJobForSingleAction(job);
         var error = ViewModel.MoveJobToTop(job);
         if (!string.IsNullOrWhiteSpace(error))
         {
@@ -1494,8 +1491,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        JobsList.SelectedItem = job;
-        ViewModel.SelectJob(job);
+        SelectQueueJobForSingleAction(job);
         var error = ViewModel.MoveJobUp(job);
         if (!string.IsNullOrWhiteSpace(error))
         {
@@ -1510,8 +1506,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        JobsList.SelectedItem = job;
-        ViewModel.SelectJob(job);
+        SelectQueueJobForSingleAction(job);
         var error = ViewModel.MoveJobDown(job);
         if (!string.IsNullOrWhiteSpace(error))
         {
@@ -1526,8 +1521,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        JobsList.SelectedItem = job;
-        ViewModel.SelectJob(job);
+        SelectQueueJobForSingleAction(job);
         var error = ViewModel.MoveJobToBottom(job);
         if (!string.IsNullOrWhiteSpace(error))
         {
@@ -1547,8 +1541,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        JobsList.SelectedItem = job;
-        ViewModel.SelectJob(job);
+        SelectQueueJobForSingleAction(job);
 
         var confirmed = await ShowConfirmationAsync(
             ViewModel.Texts.ConfirmCancelJobTitle,
@@ -1572,8 +1565,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        JobsList.SelectedItem = job;
-        ViewModel.SelectJob(job);
+        SelectQueueJobForSingleAction(job);
         var error = await ViewModel.RestartJobAsync(job);
         if (!string.IsNullOrWhiteSpace(error))
         {
@@ -1588,13 +1580,120 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        JobsList.SelectedItem = job;
-        ViewModel.SelectJob(job);
+        SelectQueueJobForSingleAction(job);
         var error = ViewModel.RemoveJob(job);
         if (!string.IsNullOrWhiteSpace(error))
         {
             await ShowMessageAsync(ViewModel.Texts.ErrorCannotDeleteTitle, error);
+            return;
         }
+
+        SyncListSelectionFromViewModel();
+    }
+
+    private void SelectAllQueueJobsButton_Click(object sender, RoutedEventArgs e)
+    {
+        JobsList.SelectAll();
+        SyncSelectedQueueJobs();
+    }
+
+    private void InvertQueueSelectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selectedJobs = JobsList.SelectedItems
+            .OfType<EncodingJobItemViewModel>()
+            .ToHashSet();
+
+        JobsList.SelectedItems.Clear();
+        foreach (var job in ViewModel.Jobs)
+        {
+            if (!selectedJobs.Contains(job))
+            {
+                JobsList.SelectedItems.Add(job);
+            }
+        }
+
+        SyncSelectedQueueJobs();
+    }
+
+    private void ClearQueueSelectionButton_Click(object sender, RoutedEventArgs e)
+    {
+        JobsList.SelectedItems.Clear();
+        SyncSelectedQueueJobs();
+    }
+
+    private async void StartSelectedJobsButton_Click(object sender, RoutedEventArgs e)
+    {
+        SyncSelectedQueueJobs();
+        var error = ViewModel.StartSelectedJobsNow();
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            await ShowMessageAsync(ViewModel.Texts.ErrorCannotStartTitle, error);
+        }
+    }
+
+    private async void CancelSelectedJobsButton_Click(object sender, RoutedEventArgs e)
+    {
+        SyncSelectedQueueJobs();
+        if (ViewModel.SelectedQueueJobCount == 0)
+        {
+            await ShowMessageAsync(ViewModel.Texts.ErrorCannotCancelTitle, ViewModel.Texts.NoSelectedJobsError);
+            return;
+        }
+
+        var confirmed = await ShowConfirmationAsync(
+            ViewModel.Texts.ConfirmCancelSelectedJobsTitle,
+            ViewModel.Texts.ConfirmCancelSelectedJobsMessage(
+                ViewModel.SelectedQueueJobCount,
+                ViewModel.SelectedRunningJobCount,
+                ViewModel.SelectedQueuedJobCount),
+            ViewModel.Texts.ConfirmCancelSelectedJobsButton,
+            ViewModel.Texts.CancelButton,
+            ContentDialogButton.Close);
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        var error = ViewModel.CancelSelectedJobs();
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            await ShowMessageAsync(ViewModel.Texts.ErrorCannotCancelTitle, error);
+        }
+    }
+
+    private async void DeleteSelectedJobsButton_Click(object sender, RoutedEventArgs e)
+    {
+        SyncSelectedQueueJobs();
+        if (ViewModel.SelectedQueueJobCount == 0)
+        {
+            await ShowMessageAsync(ViewModel.Texts.ErrorCannotDeleteTitle, ViewModel.Texts.NoSelectedJobsError);
+            return;
+        }
+
+        var confirmed = await ShowConfirmationAsync(
+            ViewModel.Texts.ConfirmDeleteSelectedJobsTitle,
+            ViewModel.Texts.ConfirmDeleteSelectedJobsMessage(
+                ViewModel.SelectedQueueJobCount,
+                ViewModel.SelectedRemovableQueueJobCount,
+                ViewModel.SelectedRunningJobCount),
+            ViewModel.Texts.ConfirmDeleteSelectedJobsButton,
+            ViewModel.Texts.CancelButton,
+            ContentDialogButton.Close);
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        var error = ViewModel.RemoveSelectedJobs();
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            await ShowMessageAsync(ViewModel.Texts.ErrorCannotDeleteTitle, error);
+            return;
+        }
+
+        SyncListSelectionFromViewModel();
     }
 
     private void OpenUrlButton_Click(object sender, RoutedEventArgs e)
@@ -1707,7 +1806,17 @@ public sealed partial class MainWindow : Window
 
     private void JobsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        ViewModel.SelectJob(JobsList.SelectedItem as EncodingJobItemViewModel);
+        SyncSelectedQueueJobs();
+
+        var activeJob = e.AddedItems
+            .OfType<EncodingJobItemViewModel>()
+            .LastOrDefault()
+            ?? JobsList.SelectedItem as EncodingJobItemViewModel
+            ?? JobsList.SelectedItems
+                .OfType<EncodingJobItemViewModel>()
+                .LastOrDefault();
+
+        ViewModel.SelectJob(activeJob);
     }
 
     private async void TemplateLibraryList_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -1957,6 +2066,43 @@ public sealed partial class MainWindow : Window
         await PersistSettingsAsync(refreshTemplateLibrary: false);
     }
 
+    private void SyncSelectedQueueJobs()
+    {
+        ViewModel.UpdateSelectedQueueJobs(JobsList.SelectedItems.OfType<EncodingJobItemViewModel>());
+    }
+
+    private void SelectQueueJobForSingleAction(EncodingJobItemViewModel job)
+    {
+        if (!JobsList.SelectedItems.Contains(job))
+        {
+            JobsList.SelectedItems.Add(job);
+        }
+
+        SyncSelectedQueueJobs();
+        ViewModel.SelectJob(job);
+    }
+
+    private void SyncListSelectionFromViewModel()
+    {
+        var selectedJobs = JobsList.SelectedItems
+            .OfType<EncodingJobItemViewModel>()
+            .Where(job => ViewModel.Jobs.Contains(job))
+            .ToList();
+
+        if (selectedJobs.Count == JobsList.SelectedItems.Count)
+        {
+            return;
+        }
+
+        JobsList.SelectedItems.Clear();
+        foreach (var job in selectedJobs)
+        {
+            JobsList.SelectedItems.Add(job);
+        }
+
+        SyncSelectedQueueJobs();
+    }
+
     private async Task<bool> ShowConfirmationAsync(
         string title,
         string message,
@@ -1980,36 +2126,55 @@ public sealed partial class MainWindow : Window
 
     private async Task QueueCurrentJobWithConfirmationAsync(bool startImmediately)
     {
-        var validationError = ViewModel.ValidateCurrentJobForQueue(out var existingOutputPath);
-        if (!string.IsNullOrWhiteSpace(validationError))
+        var preflight = ViewModel.AnalyzeCurrentJobForQueue();
+        if (!string.IsNullOrWhiteSpace(preflight.ValidationError))
         {
-            await ShowMessageAsync(ViewModel.Texts.ErrorCannotQueueTitle, validationError);
+            await ShowMessageAsync(ViewModel.Texts.ErrorCannotQueueTitle, preflight.ValidationError);
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(existingOutputPath))
+        if (preflight.RunningOutputConflict is not null)
         {
-            var overwriteConfirmed = await ShowConfirmationAsync(
-                ViewModel.Texts.OverwriteOutputTitle,
-                ViewModel.Texts.OverwriteOutputMessage(existingOutputPath),
-                ViewModel.Texts.OverwriteButton,
+            await ShowMessageAsync(
+                ViewModel.Texts.ErrorCannotQueueTitle,
+                ViewModel.Texts.QueueOutputPathRunningConflictMessage(
+                    preflight.RunningOutputConflict.SourceFileName,
+                    preflight.BaseOutputPath));
+            return;
+        }
+
+        if (preflight.DuplicateJob is not null)
+        {
+            var duplicateConfirmed = await ShowConfirmationAsync(
+                ViewModel.Texts.ConfirmDuplicateQueueJobTitle,
+                ViewModel.Texts.ConfirmDuplicateQueueJobMessage(
+                    preflight.DuplicateJob.SourceFileName,
+                    preflight.BaseOutputPath,
+                    preflight.FinalOutputPath),
+                ViewModel.Texts.ConfirmDuplicateQueueJobButton,
                 ViewModel.Texts.CancelButton,
                 ContentDialogButton.Close);
 
-            if (!overwriteConfirmed)
+            if (!duplicateConfirmed)
             {
                 return;
             }
         }
 
-        var error = await ViewModel.QueueCurrentJobAsync(startImmediately);
+        var error = await ViewModel.QueueCurrentJobAsync(startImmediately, preflight);
         if (!string.IsNullOrWhiteSpace(error))
         {
             await ShowMessageAsync(ViewModel.Texts.ErrorCannotQueueTitle, error);
             return;
         }
 
-        JobsList.SelectedItem = ViewModel.SelectedJob;
+        if (ViewModel.SelectedJob is not null)
+        {
+            JobsList.SelectedItems.Clear();
+            JobsList.SelectedItems.Add(ViewModel.SelectedJob);
+        }
+
+        SyncSelectedQueueJobs();
     }
 
     private async Task ShowMessageAsync(string title, string message)

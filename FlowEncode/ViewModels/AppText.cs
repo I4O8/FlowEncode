@@ -466,6 +466,12 @@ public sealed class AppText
     public string JobMenuCancel => Pick("取消任务", "Cancel Job");
     public string JobMenuRestart => Pick("重启任务", "Restart Job");
     public string JobMenuDelete => Pick("删除任务", "Delete Job");
+    public string QueueSelectAllButton => Pick("全选", "Select All");
+    public string QueueInvertSelectionButton => Pick("反选", "Invert");
+    public string QueueClearSelectionButton => Pick("清空选择", "Clear Selection");
+    public string QueueBatchStartButton => Pick("批量开始", "Start Selected");
+    public string QueueBatchCancelButton => Pick("批量取消", "Cancel Selected");
+    public string QueueBatchDeleteButton => Pick("批量删除", "Delete Selected");
     public string OkButton => Pick("确定", "OK");
     public string OverwriteButton => Pick("覆盖", "Overwrite");
     public string CancelButton => Pick("取消", "Cancel");
@@ -636,6 +642,24 @@ public sealed class AppText
         IsChinese
             ? $"输出文件已存在：{Path.GetFileName(path)}{Environment.NewLine}{path}{Environment.NewLine}{Environment.NewLine}是否继续？"
             : $"The output file already exists: {Path.GetFileName(path)}{Environment.NewLine}{path}{Environment.NewLine}{Environment.NewLine}Continue?";
+    public string ConfirmDuplicateQueueJobTitle => Pick("确认重复入队", "Confirm Duplicate Job");
+    public string ConfirmDuplicateQueueJobButton => Pick("继续加入队列", "Queue Anyway");
+    public string ConfirmDuplicateQueueJobMessage(string sourceFileName, string baseOutputPath, string finalOutputPath)
+    {
+        var outputLine = string.Equals(baseOutputPath, finalOutputPath, StringComparison.OrdinalIgnoreCase)
+            ? baseOutputPath
+            : IsChinese
+                ? $"{baseOutputPath}{Environment.NewLine}将自动改名为：{finalOutputPath}"
+                : $"{baseOutputPath}{Environment.NewLine}Will be renamed to: {finalOutputPath}";
+
+        return IsChinese
+            ? $"队列中已存在完全相同的压制作业：{sourceFileName}{Environment.NewLine}{Environment.NewLine}输出：{outputLine}{Environment.NewLine}{Environment.NewLine}是否仍然继续加入队列？"
+            : $"An identical encode job is already in the queue: {sourceFileName}{Environment.NewLine}{Environment.NewLine}Output: {outputLine}{Environment.NewLine}{Environment.NewLine}Queue it anyway?";
+    }
+    public string QueueOutputPathRunningConflictMessage(string runningJobName, string outputPath) =>
+        IsChinese
+            ? $"输出路径已被运行中的任务占用：{runningJobName}{Environment.NewLine}{outputPath}{Environment.NewLine}{Environment.NewLine}请等待该任务完成，或更换输出目录 / 参数后再加入队列。"
+            : $"The output path is already used by a running job: {runningJobName}{Environment.NewLine}{outputPath}{Environment.NewLine}{Environment.NewLine}Wait for that job to finish, or change the output folder or parameters before queuing.";
     public string ConfirmCancelJobTitle => Pick("确认取消任务", "Confirm Cancel Job");
     public string ConfirmCancelJobButton => Pick("取消任务", "Cancel Job");
     public string ConfirmCancelJobMessage(string sourceFileName, EncodingJobState state) =>
@@ -651,6 +675,18 @@ public sealed class AppText
                 ? $"是否取消任务：{sourceFileName}？"
                 : $"Cancel job: {sourceFileName}?"
         };
+    public string ConfirmCancelSelectedJobsTitle => Pick("确认批量取消", "Confirm Batch Cancel");
+    public string ConfirmCancelSelectedJobsButton => Pick("批量取消", "Cancel Selected");
+    public string ConfirmCancelSelectedJobsMessage(int selectedCount, int runningCount, int queuedCount) =>
+        IsChinese
+            ? $"已选择 {selectedCount} 个任务，其中 {runningCount} 个正在运行、{queuedCount} 个排队中。{Environment.NewLine}{Environment.NewLine}取消运行中任务会终止对应编码进程。是否继续？"
+            : $"{selectedCount} job(s) are selected, including {runningCount} running and {queuedCount} queued.{Environment.NewLine}{Environment.NewLine}Cancelling running jobs will terminate their encoder processes. Continue?";
+    public string ConfirmDeleteSelectedJobsTitle => Pick("确认批量删除", "Confirm Batch Delete");
+    public string ConfirmDeleteSelectedJobsButton => Pick("批量删除", "Delete Selected");
+    public string ConfirmDeleteSelectedJobsMessage(int selectedCount, int removableCount, int runningCount) =>
+        IsChinese
+            ? $"已选择 {selectedCount} 个任务，其中 {removableCount} 个可删除、{runningCount} 个正在运行将被跳过。{Environment.NewLine}{Environment.NewLine}是否删除可删除任务？"
+            : $"{selectedCount} job(s) are selected. {removableCount} can be deleted; {runningCount} running job(s) will be skipped.{Environment.NewLine}{Environment.NewLine}Delete the removable jobs?";
     public string ShuttingDownStatus(int count, bool autoCompressionRunning, bool audioProcessingRunning, bool bluRayDemuxRunning)
     {
         var extraCount = (autoCompressionRunning ? 1 : 0) + (audioProcessingRunning ? 1 : 0) + (bluRayDemuxRunning ? 1 : 0);
@@ -1172,6 +1208,28 @@ public sealed class AppText
             : $"Queued and started: {sourceFileName}";
     }
 
+    public string JobQueuedWithAutoOutputNameStatus(
+        string sourceFileName,
+        string outputFileName,
+        bool startImmediately,
+        bool hasRunningJob,
+        int queueOutputConflictCount,
+        bool diskOutputPathExists)
+    {
+        var baseStatus = JobQueuedStatus(sourceFileName, startImmediately, hasRunningJob);
+        var reason = (queueOutputConflictCount > 0, diskOutputPathExists) switch
+        {
+            (true, true) => Pick("原输出名与队列任务 / 磁盘文件冲突", "the original output name conflicts with queued jobs and an existing disk file"),
+            (true, false) => Pick("原输出名已被队列任务占用", "the original output name is already used by a job in the queue"),
+            (false, true) => Pick("磁盘上已有同名输出文件", "an output file with the same name already exists on disk"),
+            _ => Pick("原输出名已被占用", "the original output name is already occupied")
+        };
+
+        return IsChinese
+            ? $"{baseStatus}；{reason}，输出名已自动改为 {outputFileName}"
+            : $"{baseStatus}; {reason}, output name changed to {outputFileName}";
+    }
+
     public string QueuedJobCancelledStatus(string sourceFileName) =>
         IsChinese ? $"已取消排队作业：{sourceFileName}" : $"Queued job cancelled: {sourceFileName}";
 
@@ -1187,6 +1245,64 @@ public sealed class AppText
 
     public string JobDeletedStatus(string sourceFileName) =>
         IsChinese ? $"任务已删除：{sourceFileName}" : $"Job deleted: {sourceFileName}";
+
+    public string QueueSelectionStatus(int selectedCount, int totalCount) =>
+        totalCount <= 0
+            ? Pick("未选择任务", "No jobs selected")
+            : IsChinese
+                ? $"已选择 {selectedCount}/{totalCount} 个任务"
+                : $"{selectedCount}/{totalCount} job(s) selected";
+
+    public string NoSelectedJobsError => Pick("请先选择至少一个任务。", "Select at least one job first.");
+    public string BatchStartNoQueuedJobsError => Pick("所选任务中没有排队中的任务。", "No selected jobs are queued.");
+    public string BatchCancelNoCancelableJobsError => Pick("所选任务中没有可取消的任务。", "No selected jobs can be cancelled.");
+    public string BatchDeleteNoRemovableJobsError => Pick("所选任务中没有可删除的任务。", "No selected jobs can be deleted.");
+
+    public string BatchJobsStartedStatus(int startedCount) =>
+        IsChinese ? $"已开始 {startedCount} 个任务。" : $"Started {startedCount} job(s).";
+
+    public string BatchJobsStartedPartialStatus(int startedCount, int requestedCount, int limit) =>
+        IsChinese
+            ? $"已开始 {startedCount}/{requestedCount} 个排队任务；并发上限为 {limit}。"
+            : $"Started {startedCount}/{requestedCount} queued job(s); concurrent limit is {limit}.";
+
+    public string BatchJobsCancelRequestedStatus(int totalCount, int runningCount, int queuedCount) =>
+        IsChinese
+            ? $"已请求取消 {totalCount} 个任务（运行中 {runningCount}，排队中 {queuedCount}）。"
+            : $"Requested cancellation for {totalCount} job(s) ({runningCount} running, {queuedCount} queued).";
+
+    public string BatchJobsDeletedStatus(int removedCount, int skippedRunningCount) =>
+        skippedRunningCount > 0
+            ? IsChinese
+                ? $"已删除 {removedCount} 个任务，跳过 {skippedRunningCount} 个运行中任务。"
+                : $"Deleted {removedCount} job(s), skipped {skippedRunningCount} running job(s)."
+            : IsChinese
+                ? $"已删除 {removedCount} 个任务。"
+                : $"Deleted {removedCount} job(s).";
+
+    public string QueueBatchSelectionSummary(int selectedCount, int runningCount, int queuedCount, int completedCount, int failedCount, int cancelledCount) =>
+        IsChinese
+            ? $"批量选择 {selectedCount} 个任务：运行中 {runningCount}，排队 {queuedCount}，已完成 {completedCount}，失败 {failedCount}，已取消 {cancelledCount}。"
+            : $"{selectedCount} jobs selected: {runningCount} running, {queuedCount} queued, {completedCount} completed, {failedCount} failed, {cancelledCount} cancelled.";
+
+    public string QueueBatchSelectionProgressLabel(int selectedCount) =>
+        IsChinese ? $"{selectedCount} 项" : $"{selectedCount} selected";
+
+    public string QueueBatchSelectionQueuedMetric(int queuedCount) =>
+        IsChinese ? $"排队 {queuedCount}" : $"Queued {queuedCount}";
+
+    public string QueueBatchSelectionRunningMetric(int runningCount) =>
+        IsChinese ? $"运行 {runningCount}" : $"Running {runningCount}";
+
+    public string QueueBatchSelectionCancelableMetric(int cancelableCount) =>
+        IsChinese ? $"可取消 {cancelableCount}" : $"Cancellable {cancelableCount}";
+
+    public string QueueBatchSelectionRemovableMetric(int removableCount) =>
+        IsChinese ? $"可删除 {removableCount}" : $"Removable {removableCount}";
+
+    public string QueueBatchSelectionCommandText => Pick("当前为批量选择状态。使用队列工具栏执行批量开始、取消或删除。", "Multiple jobs are selected. Use the queue toolbar to start, cancel, or delete them in batch.");
+
+    public string QueueBatchSelectionLogText => Pick("批量选择不显示单个任务日志；只选择一个任务可查看对应命令和日志。", "Batch selection does not show a single job log. Select one job to view its command and log.");
 
     public string StartJobMissingError => Pick("未找到要开始的任务。", "The job to start was not found.");
     public string StartJobInvalidError => Pick("只有排队中的任务才能开始。", "Only queued jobs can be started.");
@@ -1390,6 +1506,7 @@ public sealed class AppText
     public string ErrorCannotStartBluRayDemuxTitle => Pick("无法启动蓝光解复用", "Unable to start Blu-ray demux");
     public string ErrorCannotReorderTitle => Pick("无法调整任务顺序", "Unable to reorder");
     public string ErrorCannotStartTitle => Pick("无法开始任务", "Unable to start");
+    public string ErrorCannotCancelTitle => Pick("无法取消任务", "Unable to cancel");
     public string ErrorCannotRestartTitle => Pick("无法重启任务", "Unable to restart");
 
     private static string FormatTelemetryDuration(TimeSpan duration)

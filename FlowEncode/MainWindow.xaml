@@ -554,6 +554,7 @@
                                         <Grid>
                                             <Grid.RowDefinitions>
                                                 <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
                                                 <RowDefinition Height="*" />
                                             </Grid.RowDefinitions>
 
@@ -570,8 +571,21 @@
                                                 <TextBlock Grid.Column="3" FontWeight="SemiBold" HorizontalAlignment="Center" Text="{Binding Texts.QueueProgressColumn}" />
                                             </Grid>
 
-                                            <Grid Grid.Row="1">
-                                                <ListView x:Name="JobsList" ItemsSource="{Binding Jobs}" MinHeight="320" SelectionMode="Single" SelectionChanged="JobsList_SelectionChanged">
+                                            <CommandBar x:Name="QueueSelectionCommandBar" Grid.Row="1" Padding="6,0" Background="Transparent" DefaultLabelPosition="Right" IsDynamicOverflowEnabled="True" OverflowButtonVisibility="Auto">
+                                                <AppBarButton Icon="SelectAll" Label="{Binding Texts.QueueSelectAllButton}" Click="SelectAllQueueJobsButton_Click" IsEnabled="{Binding CanSelectAllQueueJobs}" />
+                                                <AppBarButton Icon="Switch" Label="{Binding Texts.QueueInvertSelectionButton}" Click="InvertQueueSelectionButton_Click" IsEnabled="{Binding CanInvertQueueSelection}" />
+                                                <AppBarButton Icon="Clear" Label="{Binding Texts.QueueClearSelectionButton}" Click="ClearQueueSelectionButton_Click" IsEnabled="{Binding CanClearQueueSelection}" />
+                                                <AppBarSeparator />
+                                                <AppBarButton Icon="Play" Label="{Binding Texts.QueueBatchStartButton}" Click="StartSelectedJobsButton_Click" IsEnabled="{Binding CanStartSelectedJobs}" />
+                                                <AppBarButton Icon="Cancel" Label="{Binding Texts.QueueBatchCancelButton}" Click="CancelSelectedJobsButton_Click" IsEnabled="{Binding CanCancelSelectedJobs}" />
+                                                <AppBarButton Icon="Delete" Label="{Binding Texts.QueueBatchDeleteButton}" Click="DeleteSelectedJobsButton_Click" IsEnabled="{Binding CanDeleteSelectedJobs}" />
+                                                <CommandBar.Content>
+                                                    <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding QueueSelectionStatusText}" TextTrimming="CharacterEllipsis" />
+                                                </CommandBar.Content>
+                                            </CommandBar>
+
+                                            <Grid Grid.Row="2">
+                                                <ListView x:Name="JobsList" ItemsSource="{Binding Jobs}" MinHeight="320" SelectionMode="Multiple" SelectionChanged="JobsList_SelectionChanged">
                                                     <ListView.ItemTemplate>
                                                         <DataTemplate>
                                                             <Grid Padding="14,12">
