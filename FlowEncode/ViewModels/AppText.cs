@@ -325,6 +325,8 @@ public sealed class AppText
         IsChinese ? $"章节导入失败：{detail}" : $"Chapter import failed: {detail}";
     public string VapourSynthPreviewChapterExportFailedStatus(string detail) =>
         IsChinese ? $"章节导出失败：{detail}" : $"Chapter export failed: {detail}";
+    public string VapourSynthPreviewChapterDialogFailedStatus(string detail) =>
+        IsChinese ? $"打开章节编辑对话框失败：{detail}" : $"Opening the chapter dialog failed: {detail}";
     public string VapourSynthPreviewChapterTimecodeInvalidStatus =>
         Pick("时间码格式无效，请使用 HH:MM:SS.mmm。", "Invalid timecode. Use HH:MM:SS.mmm.");
     public string VapourSynthPreviewCropPaneTitle => Pick("裁剪助手", "Crop Assistant");
@@ -352,6 +354,8 @@ public sealed class AppText
         "可用占位符：{scriptName} {output} {frame} {time} {ext}。",
         "Placeholders: {scriptName} {output} {frame} {time} {ext}.");
     public string VapourSynthPreviewAdvancedSettingsSavedStatus => Pick("预览高级设置已更新。", "Preview advanced settings updated.");
+    public string VapourSynthPreviewAdvancedSettingsFailedStatus(string detail) =>
+        IsChinese ? $"打开预览高级设置失败：{detail}" : $"Opening preview advanced settings failed: {detail}";
     public string VapourSynthPreviewEvaluatingStatus(string documentName) =>
         IsChinese ? $"正在求值脚本：{documentName}" : $"Evaluating script: {documentName}";
     public string VapourSynthPreviewSessionReadyStatus => Pick(
@@ -376,6 +380,8 @@ public sealed class AppText
     public string VapourSynthPreviewSnapshotFileTypeDescription => Pick("PNG 图像", "PNG Image");
     public string VapourSynthPreviewSnapshotSavedStatus(string filePath) =>
         IsChinese ? $"已保存当前帧：{filePath}" : $"Saved current frame: {filePath}";
+    public string VapourSynthPreviewSnapshotSaveFailedStatus(string detail) =>
+        IsChinese ? $"保存当前帧失败：{detail}" : $"Saving the current frame failed: {detail}";
     public string VapourSynthPreviewAllSnapshotsSavedStatus(int savedCount, int totalCount, int frameNumber) =>
         IsChinese
             ? $"已保存 {savedCount}/{totalCount} 个输出的第 {frameNumber} 帧。"
@@ -383,9 +389,13 @@ public sealed class AppText
     public string VapourSynthPreviewAllSnapshotsFailedStatus(string detail) =>
         IsChinese ? $"保存所有输出失败：{detail}" : $"Saving all outputs failed: {detail}";
     public string VapourSynthPreviewFrameCopiedStatus => Pick("已复制当前帧到剪贴板。", "Copied the current frame to the clipboard.");
+    public string VapourSynthPreviewFrameCopyFailedStatus(string detail) =>
+        IsChinese ? $"复制当前帧失败：{detail}" : $"Copying the current frame failed: {detail}";
     public string VapourSynthPreviewFrameNumberInsertedStatus => Pick("已把当前帧号插入脚本。", "Inserted the current frame number into the script.");
     public string VapourSynthPreviewCropSnippetInsertedStatus => Pick("已把裁剪命令插入脚本。", "Inserted the crop command into the script.");
     public string VapourSynthPreviewCropCommandCopiedStatus => Pick("已复制裁剪命令。", "Copied the crop command.");
+    public string VapourSynthPreviewCropCommandCopyFailedStatus(string detail) =>
+        IsChinese ? $"复制裁剪命令失败：{detail}" : $"Copying the crop command failed: {detail}";
     public string VapourSynthPreviewEditorBridgeUnavailableStatus => Pick(
         "编辑器当前不可用，无法回写脚本。",
         "The editor is unavailable, so the script could not be updated.");

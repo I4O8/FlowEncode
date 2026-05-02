@@ -1,4 +1,5 @@
 import json
+import mmap
 import os
 import sys
 import traceback
@@ -68,6 +69,26 @@ def range_prop_to_string(value):
         0: "full",
         1: "limited",
     }.get(int(value))
+
+
+def write_frame_to_shared_memory(shared_memory_name, shared_memory_capacity, bgra):
+    if not shared_memory_name:
+        raise RuntimeError("Shared memory transport name is missing.")
+
+    pixel_bytes = int(bgra.nbytes)
+    shared_memory_capacity = int(shared_memory_capacity or 0)
+    if shared_memory_capacity < pixel_bytes:
+        raise RuntimeError(
+            f"Shared memory transport capacity is too small. required={pixel_bytes} capacity={shared_memory_capacity}"
+        )
+
+    flat_pixels = np.ascontiguousarray(bgra, dtype=np.uint8).reshape(-1)
+    with mmap.mmap(-1, shared_memory_capacity, tagname=shared_memory_name, access=mmap.ACCESS_WRITE) as shared_buffer:
+        shared_buffer.seek(0)
+        shared_buffer.write(memoryview(flat_pixels))
+        shared_buffer.flush()
+
+    return pixel_bytes
 
 
 class PreviewSession:
@@ -186,7 +207,15 @@ class PreviewSession:
         self.render_clips[output_index] = render_clip
         return render_clip
 
-    def render_frame(self, output_index, frame_number, raw_path):
+    def render_frame(
+        self,
+        output_index,
+        frame_number,
+        transport_kind=None,
+        shared_memory_name=None,
+        shared_memory_capacity=None,
+        raw_path=None,
+    ):
         if output_index not in self.video_outputs:
             raise RuntimeError(f"Output {output_index} does not exist.")
 
@@ -202,9 +231,15 @@ class PreviewSession:
         blue = np.asarray(frame[2])
         alpha = np.full(red.shape, 255, dtype=np.uint8)
         bgra = np.dstack((blue, green, red, alpha))
+        pixel_bytes = int(bgra.nbytes)
 
-        os.makedirs(os.path.dirname(raw_path), exist_ok=True)
-        bgra.tofile(raw_path)
+        if transport_kind == "sharedMemory":
+            pixel_bytes = write_frame_to_shared_memory(shared_memory_name, shared_memory_capacity, bgra)
+        elif raw_path:
+            os.makedirs(os.path.dirname(raw_path), exist_ok=True)
+            bgra.tofile(raw_path)
+        else:
+            raise RuntimeError("Preview frame transport is not configured.")
 
         props = []
         for key in sorted(frame.props.keys()):
@@ -222,7 +257,7 @@ class PreviewSession:
             "frameNumber": int(frame_number),
             "width": int(frame.width),
             "height": int(frame.height),
-            "rawPixelPath": raw_path,
+            "pixelBytes": pixel_bytes,
             "frameType": frame_type,
             "properties": props,
         }
@@ -267,7 +302,10 @@ def main():
                 response = session.render_frame(
                     int(command["outputIndex"]),
                     int(command["frameNumber"]),
-                    command["rawPath"],
+                    command.get("transportKind"),
+                    command.get("sharedMemoryName"),
+                    command.get("sharedMemoryCapacity"),
+                    command.get("rawPath"),
                 )
                 response["requestId"] = request_id
                 emit(response)

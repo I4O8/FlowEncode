@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -11,6 +13,7 @@ using FlowEncode.Domain;
 
 namespace FlowEncode.Infrastructure;
 
+[SupportedOSPlatform("windows")]
 public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -20,12 +23,14 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
     };
 
     private readonly LocalAppPaths _appPaths;
+    private readonly IPreviewFrameTransportFactory _frameTransportFactory;
     private readonly IVapourSynthPreviewHostFactory _hostFactory;
     private readonly string _sessionRootPath;
     private readonly SemaphoreSlim _stateLock = new(1, 1);
     private readonly TimeSpan _closeTimeout = TimeSpan.FromSeconds(2);
     private readonly TimeSpan _killWaitTimeout = TimeSpan.FromSeconds(5);
     private readonly StringBuilder _stderrBuffer = new();
+    private IPreviewFrameTransportSession? _frameTransportSession;
     private IVapourSynthPreviewHostSession? _hostSession;
     private string? _activeSessionPath;
     private int _commandCounter;
@@ -37,17 +42,19 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
     public VapourSynthPreviewService(
         IToolProbeService toolProbeService,
         LocalAppPaths appPaths)
-        : this(appPaths, new ProcessVapourSynthPreviewHostFactory(toolProbeService))
+        : this(appPaths, new ProcessVapourSynthPreviewHostFactory(toolProbeService), new SharedMemoryPreviewFrameTransportFactory())
     {
     }
 
     internal VapourSynthPreviewService(
         LocalAppPaths appPaths,
         IVapourSynthPreviewHostFactory hostFactory,
+        IPreviewFrameTransportFactory? frameTransportFactory = null,
         string? sessionRootPath = null)
     {
         _appPaths = appPaths;
         _hostFactory = hostFactory;
+        _frameTransportFactory = frameTransportFactory ?? new SharedMemoryPreviewFrameTransportFactory();
         _sessionRootPath = string.IsNullOrWhiteSpace(sessionRootPath)
             ? Path.Combine(appPaths.DataRootPath, "vapoursynth-preview")
             : sessionRootPath;
@@ -115,6 +122,7 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
                 throw new InvalidOperationException("The script did not expose any video outputs.");
             }
 
+            _frameTransportSession = _frameTransportFactory.CreateSession(GetMaximumFrameByteSize(outputs));
             return new VapourSynthPreviewSessionInfo(outputs);
         }
         catch (OperationCanceledException)
@@ -136,6 +144,7 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
     public async Task<VapourSynthPreviewFrameData> RenderFrameAsync(
         int outputIndex,
         int frameNumber,
+        byte[]? reusablePixelBuffer = null,
         CancellationToken cancellationToken = default)
     {
         await _stateLock.WaitAsync(cancellationToken);
@@ -148,6 +157,11 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
                 throw new InvalidOperationException("Preview session is not open.");
             }
 
+            if (_frameTransportSession is null)
+            {
+                throw new InvalidOperationException("Preview frame transport is not ready.");
+            }
+
             if (_hostSession.HasExited)
             {
                 throw new InvalidOperationException(BuildHostFailureMessage(
@@ -155,12 +169,21 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
             }
 
             var requestId = Interlocked.Increment(ref _commandCounter);
-            var rawPath = Path.Combine(_activeSessionPath, $"frame-{requestId:D6}.bgra");
-            var command = new FrameCommandDto("renderFrame", requestId, outputIndex, frameNumber, rawPath);
+            var transportDescriptor = _frameTransportSession.Descriptor;
+            var helperRenderStopwatch = Stopwatch.StartNew();
+            var command = new FrameCommandDto(
+                "renderFrame",
+                requestId,
+                outputIndex,
+                frameNumber,
+                transportDescriptor.Kind,
+                transportDescriptor.SharedMemoryName,
+                transportDescriptor.CapacityBytes);
             var commandJson = JsonSerializer.Serialize(command, JsonOptions);
             await _hostSession.WriteLineAsync(commandJson, cancellationToken);
 
             var response = await ReadResponseAsync(cancellationToken);
+            helperRenderStopwatch.Stop();
             if (!string.Equals(response.Type, "frame", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(GetResponseErrorMessage(response)
@@ -172,10 +195,18 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
                 throw new InvalidOperationException("Preview helper returned a mismatched frame response.");
             }
 
-            if (string.IsNullOrWhiteSpace(response.RawPixelPath) || !File.Exists(response.RawPixelPath))
+            var expectedPixelBytes = checked(response.Width * response.Height * 4);
+            if (response.PixelBytes <= 0 || response.PixelBytes != expectedPixelBytes)
             {
                 throw new InvalidOperationException("Preview helper did not produce a frame buffer.");
             }
+
+            var transportReadStopwatch = Stopwatch.StartNew();
+            var pixels = await _frameTransportSession.ReadFrameAsync(
+                response.PixelBytes,
+                reusablePixelBuffer,
+                cancellationToken);
+            transportReadStopwatch.Stop();
 
             var properties = response.Properties?
                 .Select(static item => new VapourSynthPreviewFrameProperty(
@@ -189,9 +220,11 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
                 response.FrameNumber,
                 response.Width,
                 response.Height,
-                response.RawPixelPath,
+                pixels,
                 response.FrameType,
-                properties);
+                properties,
+                helperRenderStopwatch.Elapsed,
+                transportReadStopwatch.Elapsed);
         }
         finally
         {
@@ -322,6 +355,8 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         }
 
         _hostSession = null;
+        _frameTransportSession?.Dispose();
+        _frameTransportSession = null;
         _commandCounter = 0;
         _stderrTracebackActive = false;
 
@@ -499,6 +534,21 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         ObjectDisposedException.ThrowIf(_disposed, nameof(VapourSynthPreviewService));
     }
 
+    private static int GetMaximumFrameByteSize(IReadOnlyList<VapourSynthPreviewOutputInfo> outputs)
+    {
+        var maxSize = 0;
+        foreach (var output in outputs)
+        {
+            var outputBytes = checked(output.Width * output.Height * 4);
+            if (outputBytes > maxSize)
+            {
+                maxSize = outputBytes;
+            }
+        }
+
+        return Math.Max(1, maxSize);
+    }
+
     private sealed record StartupRequestDto(
         string? SourceFilePath,
         string DisplayName,
@@ -510,7 +560,9 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         int RequestId,
         int OutputIndex,
         int FrameNumber,
-        string RawPath);
+        string TransportKind,
+        string SharedMemoryName,
+        int SharedMemoryCapacity);
 
     private sealed record CloseCommandDto(string Command);
 
@@ -526,8 +578,6 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
 
         public string? Message { get; set; }
 
-        public string? RawPixelPath { get; set; }
-
         public int OutputIndex { get; set; }
 
         public int FrameNumber { get; set; }
@@ -535,6 +585,8 @@ public sealed class VapourSynthPreviewService : IVapourSynthPreviewService
         public int Width { get; set; }
 
         public int Height { get; set; }
+
+        public int PixelBytes { get; set; }
 
         public string? FrameType { get; set; }
 

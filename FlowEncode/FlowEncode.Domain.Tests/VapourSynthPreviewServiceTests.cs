@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.IO.MemoryMappedFiles;
+using System.Runtime.Versioning;
 using FlowEncode.Application;
 using FlowEncode.Infrastructure;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -6,6 +8,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 namespace FlowEncode.Domain.Tests;
 
 [TestClass]
+[SupportedOSPlatform("windows")]
 public sealed class VapourSynthPreviewServiceTests
 {
     [TestMethod]
@@ -67,7 +70,9 @@ public sealed class VapourSynthPreviewServiceTests
             requestId: 999,
             outputIndex: 0,
             frameNumber: 12,
-            rawPixelPath: Path.Combine(context.TempRootPath, "frame-999.bgra")));
+            width: 2,
+            height: 1,
+            pixelBytes: 8));
         await context.Service.OpenSessionAsync(CreateOpenRequest());
 
         var exception = await AssertThrowsAsync<InvalidOperationException>(
@@ -77,7 +82,7 @@ public sealed class VapourSynthPreviewServiceTests
     }
 
     [TestMethod]
-    public async Task RenderFrameAsync_WhenRawPixelPathMissing_Throws()
+    public async Task RenderFrameAsync_WhenPixelBytesMissing_Throws()
     {
         using var context = CreateContext();
         context.Session.EnqueueResponse(CreateReadyResponseJson((0, "Preview", 1920, 1080, 100)));
@@ -85,13 +90,40 @@ public sealed class VapourSynthPreviewServiceTests
             requestId: 1,
             outputIndex: 0,
             frameNumber: 5,
-            rawPixelPath: Path.Combine(context.TempRootPath, "missing-frame.bgra")));
+            width: 2,
+            height: 1,
+            pixelBytes: 0));
         await context.Service.OpenSessionAsync(CreateOpenRequest());
 
         var exception = await AssertThrowsAsync<InvalidOperationException>(
             () => context.Service.RenderFrameAsync(0, 5));
 
         StringAssert.Contains(exception.Message, "did not produce a frame buffer");
+    }
+
+    [TestMethod]
+    public async Task RenderFrameAsync_WhenFrameResponseValid_ReturnsSharedMemoryPixels()
+    {
+        using var context = CreateContext();
+        var expectedPixels = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
+        context.Session.EnqueueResponse(CreateReadyResponseJson((0, "Preview", 1920, 1080, 100)));
+        context.Session.EnqueueFramePixels(expectedPixels);
+        context.Session.EnqueueResponse(CreateFrameResponseJson(
+            requestId: 1,
+            outputIndex: 0,
+            frameNumber: 5,
+            width: 2,
+            height: 1,
+            pixelBytes: expectedPixels.Length));
+        await context.Service.OpenSessionAsync(CreateOpenRequest());
+
+        var reusableBuffer = new byte[expectedPixels.Length];
+        var frame = await context.Service.RenderFrameAsync(0, 5, reusableBuffer);
+
+        Assert.AreSame(reusableBuffer, frame.Pixels);
+        CollectionAssert.AreEqual(expectedPixels, frame.Pixels);
+        Assert.IsTrue(frame.HelperRenderElapsed >= TimeSpan.Zero);
+        Assert.IsTrue(frame.TransportReadElapsed >= TimeSpan.Zero);
     }
 
     [TestMethod]
@@ -127,7 +159,7 @@ public sealed class VapourSynthPreviewServiceTests
         var service = new VapourSynthPreviewService(
             new LocalAppPaths(),
             factory,
-            tempRootPath);
+            sessionRootPath: tempRootPath);
 
         return new TestContext(tempRootPath, service, factory, session);
     }
@@ -172,7 +204,13 @@ public sealed class VapourSynthPreviewServiceTests
         });
     }
 
-    private static string CreateFrameResponseJson(int requestId, int outputIndex, int frameNumber, string rawPixelPath)
+    private static string CreateFrameResponseJson(
+        int requestId,
+        int outputIndex,
+        int frameNumber,
+        int width,
+        int height,
+        int pixelBytes)
     {
         return JsonSerializer.Serialize(new
         {
@@ -180,9 +218,9 @@ public sealed class VapourSynthPreviewServiceTests
             requestId,
             outputIndex,
             frameNumber,
-            width = 1920,
-            height = 1080,
-            rawPixelPath,
+            width,
+            height,
+            pixelBytes,
             frameType = "I",
             properties = Array.Empty<object>()
         });
@@ -270,6 +308,7 @@ public sealed class VapourSynthPreviewServiceTests
 
     private sealed class FakePreviewHostSession : IVapourSynthPreviewHostSession
     {
+        private readonly Queue<byte[]?> _framePixels = new();
         private readonly Queue<string?> _responses = new();
         private readonly Queue<Func<FakePreviewHostSession, CancellationToken, Task>> _waitBehaviors = new();
         private Action<string>? _stderrLineHandler;
@@ -285,6 +324,11 @@ public sealed class VapourSynthPreviewServiceTests
         public void EnqueueResponse(string response)
         {
             _responses.Enqueue(response);
+        }
+
+        public void EnqueueFramePixels(byte[] framePixels)
+        {
+            _framePixels.Enqueue(framePixels);
         }
 
         public void SetStderrLineHandler(Action<string>? stderrLineHandler)
@@ -305,6 +349,7 @@ public sealed class VapourSynthPreviewServiceTests
         public Task WriteLineAsync(string line, CancellationToken cancellationToken = default)
         {
             WrittenLines.Add(line);
+            TryWriteFramePixelsToSharedMemory(line);
             return Task.CompletedTask;
         }
 
@@ -336,6 +381,37 @@ public sealed class VapourSynthPreviewServiceTests
         public void EmitStderrLine(string line)
         {
             _stderrLineHandler?.Invoke(line);
+        }
+
+        private void TryWriteFramePixelsToSharedMemory(string line)
+        {
+            if (_framePixels.Count == 0)
+            {
+                return;
+            }
+
+            using var document = JsonDocument.Parse(line);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("command", out var commandElement)
+                || !string.Equals(commandElement.GetString(), "renderFrame", StringComparison.Ordinal)
+                || !root.TryGetProperty("sharedMemoryName", out var sharedMemoryNameElement)
+                || !root.TryGetProperty("sharedMemoryCapacity", out var sharedMemoryCapacityElement))
+            {
+                return;
+            }
+
+            var pixels = _framePixels.Dequeue();
+            if (pixels is null)
+            {
+                return;
+            }
+
+            var sharedMemoryName = sharedMemoryNameElement.GetString();
+            var sharedMemoryCapacity = sharedMemoryCapacityElement.GetInt32();
+            using var memoryMappedFile = MemoryMappedFile.OpenExisting(sharedMemoryName!);
+            using var stream = memoryMappedFile.CreateViewStream(0, sharedMemoryCapacity, MemoryMappedFileAccess.Write);
+            stream.Write(pixels, 0, pixels.Length);
+            stream.Flush();
         }
     }
 }

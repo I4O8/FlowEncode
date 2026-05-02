@@ -16,6 +16,7 @@ public interface IVapourSynthPreviewService : IDisposable
     Task<VapourSynthPreviewFrameData> RenderFrameAsync(
         int outputIndex,
         int frameNumber,
+        byte[]? reusablePixelBuffer = null,
         CancellationToken cancellationToken = default);
 
     Task CloseSessionAsync(CancellationToken cancellationToken = default);
@@ -46,9 +47,11 @@ public sealed record VapourSynthPreviewFrameData(
     int FrameNumber,
     int Width,
     int Height,
-    string RawPixelPath,
+    byte[] Pixels,
     string? FrameType,
-    IReadOnlyList<VapourSynthPreviewFrameProperty> Properties);
+    IReadOnlyList<VapourSynthPreviewFrameProperty> Properties,
+    TimeSpan HelperRenderElapsed,
+    TimeSpan TransportReadElapsed);
 
 public sealed record VapourSynthPreviewFrameProperty(
     string Key,

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -10,6 +11,7 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 using FlowEncode.Application;
 using FlowEncode.Domain;
+using FlowEncode.Infrastructure;
 using FlowEncode.ViewModels;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -32,20 +34,25 @@ namespace FlowEncode;
 
 public sealed partial class VapourSynthPreviewWindow : Window
 {
+    private readonly LocalAppPaths _appPaths;
     private readonly Dictionary<int, PreviewOutputState> _outputStates = [];
+    private readonly PreviewBitmapSurface _bitmapSurface = new();
+    private readonly LatestRequestScheduler<PreviewFrameRequest> _frameRequestScheduler;
+    private readonly PreviewFrameComposer _frameComposer = new();
+    private readonly PreviewRenderDiagnostics _renderDiagnostics;
     private readonly IVapourSynthPreviewService _previewService;
     private bool _isClosed;
-    private bool _isFrameLoadInProgress;
     private bool _isFullScreenActive;
     private bool _isInternalControlUpdate;
     private bool _isPreviewPanActive;
     private bool _isPlaying;
     private bool _hasEverActivated;
     private Task? _closePreviewSessionTask;
-    private int? _pendingFrameNumber;
     private uint _previewPanPointerId;
+    private long _previewSessionRevision;
     private string? _pendingStatusText;
     private byte[]? _displayedFramePixels;
+    private byte[]? _reusableDisplayedFramePixels;
     private int _displayedFrameHeight;
     private int _displayedFrameWidth;
     private readonly List<TextBox> _attachedPreviewNumberBoxEditors = [];
@@ -55,6 +62,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
     private double _previewPanStartVerticalOffset;
     private VapourSynthPreviewFrameData? _lastFrameData;
     private byte[]? _sourceFramePixels;
+    private byte[]? _reusableSourceFramePixels;
     private int _sourceFrameHeight;
     private int _sourceFrameWidth;
     private VapourSynthPreviewOpenRequest? _currentRequest;
@@ -71,7 +79,10 @@ public sealed partial class VapourSynthPreviewWindow : Window
         IVapourSynthPreviewService previewService)
     {
         ViewModel = viewModel;
+        _appPaths = App.GetService<LocalAppPaths>();
         _previewService = previewService;
+        _frameRequestScheduler = new LatestRequestScheduler<PreviewFrameRequest>(ExecuteScheduledFrameRequestAsync);
+        _renderDiagnostics = new PreviewRenderDiagnostics(_appPaths);
         InitializeComponent();
 
         if (Content is FrameworkElement root)
@@ -186,7 +197,9 @@ public sealed partial class VapourSynthPreviewWindow : Window
             return false;
         }
 
+        _previewSessionRevision++;
         StopPlayback();
+        _frameRequestScheduler.ClearPending();
         SaveCurrentOutputState();
 
         var previousOutputIndex = _selectedOutputInfo?.Index ?? 0;
@@ -199,11 +212,14 @@ public sealed partial class VapourSynthPreviewWindow : Window
         _selectedOutputInfo = null;
         _lastFrameData = null;
         _sourceFramePixels = null;
+        _reusableSourceFramePixels = null;
         _sourceFrameWidth = 0;
         _sourceFrameHeight = 0;
         _displayedFramePixels = null;
+        _reusableDisplayedFramePixels = null;
         _displayedFrameWidth = 0;
         _displayedFrameHeight = 0;
+        _bitmapSurface.Reset();
         SyncControls();
 
         try
@@ -259,81 +275,140 @@ public sealed partial class VapourSynthPreviewWindow : Window
             outputState,
             explicitFrameNumber,
             useExplicitFrame);
-        await RenderFrameAsync(targetFrame);
+        await RequestFrameAsync(outputInfo, targetFrame);
     }
 
-    private async Task RenderFrameAsync(int frameNumber)
+    private Task RequestFrameAsync(int frameNumber)
     {
         if (_selectedOutputInfo is null)
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        frameNumber = Math.Clamp(frameNumber, 0, Math.Max(0, _selectedOutputInfo.TotalFrames - 1));
-        if (_isFrameLoadInProgress)
+        return RequestFrameAsync(_selectedOutputInfo, frameNumber);
+    }
+
+    private Task RequestFrameAsync(
+        VapourSynthPreviewOutputInfo outputInfo,
+        int frameNumber)
+    {
+        if (_isClosed)
         {
-            _pendingFrameNumber = frameNumber;
-            return;
+            return Task.CompletedTask;
         }
 
-        _isFrameLoadInProgress = true;
-        _pendingFrameNumber = null;
+        frameNumber = Math.Clamp(frameNumber, 0, Math.Max(0, outputInfo.TotalFrames - 1));
+        var request = new PreviewFrameRequest(_previewSessionRevision, outputInfo, frameNumber);
+        return _frameRequestScheduler.ScheduleAsync(request);
+    }
+
+    private async Task ExecuteScheduledFrameRequestAsync(
+        LatestRequestScheduler<PreviewFrameRequest>.ScheduledRequest scheduledRequest)
+    {
+        var request = scheduledRequest.Request;
+        var helperRenderElapsed = TimeSpan.Zero;
+        var transportReadElapsed = TimeSpan.Zero;
+        var composeElapsed = TimeSpan.Zero;
+        var bitmapUpdateElapsed = TimeSpan.Zero;
+        byte[]? loadedSourcePixels = null;
+        DisplayFramePayload? displayPayload = null;
 
         try
         {
-            var frameData = await _previewService.RenderFrameAsync(_selectedOutputInfo.Index, frameNumber);
-            _lastFrameData = frameData;
-            _sourceFramePixels = await LoadFramePixelsAsync(frameData.RawPixelPath);
-            _sourceFrameWidth = frameData.Width;
-            _sourceFrameHeight = frameData.Height;
+            var frameData = await _previewService.RenderFrameAsync(
+                request.OutputInfo.Index,
+                request.FrameNumber,
+                ConsumeReusableSourcePixels());
+            helperRenderElapsed = frameData.HelperRenderElapsed;
+            transportReadElapsed = frameData.TransportReadElapsed;
+            loadedSourcePixels = frameData.Pixels;
 
-            await RefreshDisplayedFrameAsync();
-            QueueFrameStatusText(ViewModel.Texts.VapourSynthPreviewReadyStatus(_selectedOutputInfo.Index, frameNumber));
+            displayPayload = await CreateDisplayFramePayloadAsync(
+                request.OutputInfo,
+                frameData,
+                loadedSourcePixels,
+                frameData.Width,
+                frameData.Height);
+            composeElapsed = displayPayload.ComposeElapsed;
+            bitmapUpdateElapsed = displayPayload.BitmapUpdateElapsed;
+
+            if (!ShouldApplyFrameRequest(request, scheduledRequest))
+            {
+                CaptureReusableFrameBuffers(loadedSourcePixels, displayPayload.Pixels);
+                return;
+            }
+
+            ApplyDisplayedFrame(
+                request.OutputInfo,
+                frameData,
+                loadedSourcePixels,
+                displayPayload);
+
+            _renderDiagnostics.WriteFrameSuccess(
+                request.OutputInfo.Index,
+                request.FrameNumber,
+                _isPlaying,
+                ViewModel.IsCropPanelVisible,
+                frameData.Width,
+                frameData.Height,
+                loadedSourcePixels.Length,
+                _displayedFrameWidth,
+                _displayedFrameHeight,
+                _displayedFramePixels?.Length ?? 0,
+                helperRenderElapsed,
+                transportReadElapsed,
+                composeElapsed,
+                bitmapUpdateElapsed);
+            QueueFrameStatusText(ViewModel.Texts.VapourSynthPreviewReadyStatus(request.OutputInfo.Index, request.FrameNumber));
             SyncControls();
         }
         catch (Exception ex)
         {
-            StopPlayback();
-            SetStatusText(ViewModel.Texts.VapourSynthPreviewRenderFailedStatus(ex.Message));
-        }
-        finally
-        {
-            _isFrameLoadInProgress = false;
-        }
+            _renderDiagnostics.WriteFrameFailure(
+                request.OutputInfo.Index,
+                request.FrameNumber,
+                _isPlaying,
+                ViewModel.IsCropPanelVisible,
+                helperRenderElapsed,
+                transportReadElapsed,
+                composeElapsed,
+                bitmapUpdateElapsed,
+                ex);
 
-        if (_pendingFrameNumber is int pendingFrameNumber && pendingFrameNumber != ViewModel.CurrentFrame)
-        {
-            _pendingFrameNumber = null;
-            await RenderFrameAsync(pendingFrameNumber);
+            if (loadedSourcePixels is not null)
+            {
+                CaptureReusableFrameBuffers(loadedSourcePixels, displayPayload?.Pixels);
+            }
+
+            if (ShouldSurfaceFrameRequestFailure(request, scheduledRequest))
+            {
+                StopPlayback();
+                SetStatusText(ViewModel.Texts.VapourSynthPreviewRenderFailedStatus(ex.Message));
+            }
         }
     }
 
-    private async Task RefreshDisplayedFrameAsync()
+    private async Task RefreshDisplayedFrameAsync(
+        VapourSynthPreviewOutputInfo? outputInfo = null,
+        VapourSynthPreviewFrameData? frameData = null,
+        byte[]? sourcePixels = null)
     {
-        if (_selectedOutputInfo is null || _lastFrameData is null || _sourceFramePixels is null)
+        outputInfo ??= _selectedOutputInfo;
+        frameData ??= _lastFrameData;
+        sourcePixels ??= _sourceFramePixels;
+
+        if (outputInfo is null || frameData is null || sourcePixels is null)
         {
             return;
         }
 
         var displayPayload = await CreateDisplayFramePayloadAsync(
-            _selectedOutputInfo,
-            _lastFrameData,
-            _sourceFramePixels,
-            _sourceFrameWidth,
-            _sourceFrameHeight);
-
-        _displayedFramePixels = displayPayload.Pixels;
-        _displayedFrameWidth = displayPayload.Width;
-        _displayedFrameHeight = displayPayload.Height;
-        ViewModel.UpdateCropPreviewState(ViewModel.IsCropPanelVisible);
-        ViewModel.UpdateFrame(
-            _selectedOutputInfo,
-            _lastFrameData,
-            displayPayload.Bitmap,
-            displayPayload.Width,
-            displayPayload.Height,
-            displayPayload.ResolutionText);
-        SaveCurrentOutputState();
+            outputInfo,
+            frameData,
+            sourcePixels,
+            frameData.Width,
+            frameData.Height);
+        ApplyDisplayedFrame(outputInfo, frameData, sourcePixels, displayPayload);
     }
 
     private async Task<DisplayFramePayload> CreateDisplayFramePayloadAsync(
@@ -343,71 +418,87 @@ public sealed partial class VapourSynthPreviewWindow : Window
         int sourceWidth,
         int sourceHeight)
     {
-        var outputState = GetOrCreateOutputState(outputInfo);
-        var cropBounds = GetEffectiveCropBounds(outputState, sourceWidth, sourceHeight);
+        var compositionRequest = CreateFrameCompositionRequest(outputInfo, sourcePixels, sourceWidth, sourceHeight);
+        var composeStopwatch = Stopwatch.StartNew();
+        var compositionResult = _frameComposer.Compose(compositionRequest, ConsumeReusableDisplayedPixels());
+        composeStopwatch.Stop();
 
-        byte[] displayPixels;
-        int displayWidth;
-        int displayHeight;
-
-        if (ViewModel.IsCropPanelVisible)
-        {
-            displayWidth = cropBounds.Width;
-            displayHeight = cropBounds.Height;
-
-            if (cropBounds.Left == 0
-                && cropBounds.Top == 0
-                && displayWidth == sourceWidth
-                && displayHeight == sourceHeight)
-            {
-                displayPixels = sourcePixels;
-            }
-            else
-            {
-                displayPixels = CropPixels(
-                    sourcePixels,
-                    sourceWidth,
-                    cropBounds.Left,
-                    cropBounds.Top,
-                    displayWidth,
-                    displayHeight);
-            }
-        }
-        else
-        {
-            displayPixels = sourcePixels;
-            displayWidth = sourceWidth;
-            displayHeight = sourceHeight;
-        }
-
-        var bitmap = await CreateBitmapAsync(displayPixels, displayWidth, displayHeight);
+        var bitmapStopwatch = Stopwatch.StartNew();
+        var bitmap = await _bitmapSurface.UpdateAsync(compositionResult.Pixels, compositionResult.Width, compositionResult.Height);
+        bitmapStopwatch.Stop();
         var resolutionText = ViewModel.IsCropPanelVisible
-            && (displayWidth != frameData.Width || displayHeight != frameData.Height)
-            ? $"{frameData.Width} x {frameData.Height} -> {displayWidth} x {displayHeight}"
+            && (compositionResult.Width != frameData.Width || compositionResult.Height != frameData.Height)
+            ? $"{frameData.Width} x {frameData.Height} -> {compositionResult.Width} x {compositionResult.Height}"
             : $"{frameData.Width} x {frameData.Height}";
 
         return new DisplayFramePayload(
             bitmap,
-            displayPixels,
-            displayWidth,
-            displayHeight,
-            resolutionText);
+            compositionResult.Pixels,
+            compositionResult.Width,
+            compositionResult.Height,
+            resolutionText,
+            composeStopwatch.Elapsed,
+            bitmapStopwatch.Elapsed);
     }
 
-    private static async Task<byte[]> LoadFramePixelsAsync(string rawPath)
+    private void ApplyDisplayedFrame(
+        VapourSynthPreviewOutputInfo outputInfo,
+        VapourSynthPreviewFrameData frameData,
+        byte[] sourcePixels,
+        DisplayFramePayload displayPayload)
     {
-        var pixels = await File.ReadAllBytesAsync(rawPath);
-        TryDeleteFile(rawPath);
-        return pixels;
+        _lastFrameData = frameData;
+        CommitActiveFrameBuffers(
+            frameData,
+            sourcePixels,
+            displayPayload.Width,
+            displayPayload.Height,
+            displayPayload.Pixels);
+        ViewModel.UpdateCropPreviewState(ViewModel.IsCropPanelVisible);
+        ViewModel.UpdateFrame(
+            outputInfo,
+            frameData,
+            displayPayload.Bitmap,
+            displayPayload.Width,
+            displayPayload.Height,
+            displayPayload.ResolutionText);
+        SaveCurrentOutputState();
     }
 
-    private static async Task<WriteableBitmap> CreateBitmapAsync(byte[] pixels, int width, int height)
+    private PreviewFrameCompositionRequest CreateFrameCompositionRequest(
+        VapourSynthPreviewOutputInfo outputInfo,
+        byte[] sourcePixels,
+        int sourceWidth,
+        int sourceHeight)
     {
-        var bitmap = new WriteableBitmap(width, height);
-        using var stream = bitmap.PixelBuffer.AsStream();
-        await stream.WriteAsync(pixels);
-        await stream.FlushAsync();
-        return bitmap;
+        var outputState = GetOrCreateOutputState(outputInfo);
+        return new PreviewFrameCompositionRequest(
+            sourcePixels,
+            sourceWidth,
+            sourceHeight,
+            CreateCropSettings(outputState, ViewModel.IsCropPanelVisible));
+    }
+
+    private bool ShouldApplyFrameRequest(
+        PreviewFrameRequest request,
+        LatestRequestScheduler<PreviewFrameRequest>.ScheduledRequest scheduledRequest)
+    {
+        return !_isClosed
+            && scheduledRequest.MatchesLatestRequest
+            && _selectedOutputInfo is { } selectedOutput
+            && selectedOutput.Index == request.OutputInfo.Index
+            && request.SessionRevision == _previewSessionRevision;
+    }
+
+    private bool ShouldSurfaceFrameRequestFailure(
+        PreviewFrameRequest request,
+        LatestRequestScheduler<PreviewFrameRequest>.ScheduledRequest scheduledRequest)
+    {
+        return !_isClosed
+            && scheduledRequest.MatchesLatestRequest
+            && _selectedOutputInfo is { } selectedOutput
+            && selectedOutput.Index == request.OutputInfo.Index
+            && request.SessionRevision == _previewSessionRevision;
     }
 
     private void SyncControls()
@@ -503,26 +594,40 @@ public sealed partial class VapourSynthPreviewWindow : Window
             }
             catch (Exception ex)
             {
-                SetStatusText(ViewModel.Texts.VapourSynthPreviewSnapshotTemplateFailedStatus(ex.Message));
+                LogWindowOperationFailure("SaveSilentSnapshot", ex);
+                SetStatusText(ViewModel.Texts.VapourSynthPreviewSnapshotTemplateFailedStatus(GetWindowOperationErrorDetail(ex)));
             }
         }
 
-        var picker = new FileSavePicker
-        {
-            SuggestedStartLocation = PickerLocationId.PicturesLibrary,
-            SuggestedFileName = BuildShortcutSnapshotFileName(withExtension: false),
-            DefaultFileExtension = ".png"
-        };
-        picker.FileTypeChoices.Add(ViewModel.Texts.VapourSynthPreviewSnapshotFileTypeDescription, [".png"]);
-        InitializeWithWindow.Initialize(picker, GetWindowHandle());
-
-        var file = await picker.PickSaveFileAsync();
-        if (file is null)
+        var (pickSucceeded, file) = await TryRunWindowOperationAsync(
+            "PickSnapshotSaveFile",
+            async () =>
+            {
+                var picker = new FileSavePicker
+                {
+                    SuggestedStartLocation = PickerLocationId.PicturesLibrary,
+                    SuggestedFileName = BuildShortcutSnapshotFileName(withExtension: false),
+                    DefaultFileExtension = ".png"
+                };
+                picker.FileTypeChoices.Add(ViewModel.Texts.VapourSynthPreviewSnapshotFileTypeDescription, [".png"]);
+                InitializeWithWindow.Initialize(picker, GetWindowHandle());
+                return await picker.PickSaveFileAsync();
+            },
+            ViewModel.Texts.VapourSynthPreviewSnapshotSaveFailedStatus);
+        if (!pickSucceeded || file is null)
         {
             return;
         }
 
-        await SavePixelsAsPngAsync(file.Path, _displayedFramePixels, _displayedFrameWidth, _displayedFrameHeight);
+        var saved = await TryRunWindowActionAsync(
+            "SaveSnapshotFile",
+            () => SavePixelsAsPngAsync(file.Path, _displayedFramePixels, _displayedFrameWidth, _displayedFrameHeight),
+            ViewModel.Texts.VapourSynthPreviewSnapshotSaveFailedStatus);
+        if (!saved)
+        {
+            return;
+        }
+
         SetStatusText(ViewModel.Texts.VapourSynthPreviewSnapshotSavedStatus(file.Path));
     }
 
@@ -533,29 +638,39 @@ public sealed partial class VapourSynthPreviewWindow : Window
             return;
         }
 
-        try
-        {
-            var picker = new FolderPicker
+        var (pickSucceeded, folder) = await TryRunWindowOperationAsync(
+            "PickQuickSnapshotFolder",
+            async () =>
             {
-                SuggestedStartLocation = PickerLocationId.PicturesLibrary
-            };
-            picker.FileTypeFilter.Add("*");
-            InitializeWithWindow.Initialize(picker, GetWindowHandle());
-
-            var folder = await picker.PickSingleFolderAsync();
-            if (folder is null)
-            {
-                return;
-            }
-
-            var snapshotPath = Path.Combine(folder.Path, BuildShortcutSnapshotFileName(withExtension: true));
-            await SavePixelsAsPngAsync(snapshotPath, _displayedFramePixels, _displayedFrameWidth, _displayedFrameHeight);
-            SetStatusText(ViewModel.Texts.VapourSynthPreviewSnapshotSavedStatus(snapshotPath));
-        }
-        catch (Exception ex)
+                var picker = new FolderPicker
+                {
+                    SuggestedStartLocation = PickerLocationId.PicturesLibrary
+                };
+                picker.FileTypeFilter.Add("*");
+                InitializeWithWindow.Initialize(picker, GetWindowHandle());
+                return await picker.PickSingleFolderAsync();
+            },
+            ViewModel.Texts.VapourSynthPreviewSnapshotSaveFailedStatus);
+        if (!pickSucceeded || folder is null)
         {
-            SetStatusText(ViewModel.Texts.VapourSynthPreviewSnapshotTemplateFailedStatus(ex.Message));
+            return;
         }
+
+        string? snapshotPath = null;
+        var saved = await TryRunWindowActionAsync(
+            "SaveQuickSnapshot",
+            async () =>
+            {
+                snapshotPath = Path.Combine(folder.Path, BuildShortcutSnapshotFileName(withExtension: true));
+                await SavePixelsAsPngAsync(snapshotPath, _displayedFramePixels, _displayedFrameWidth, _displayedFrameHeight);
+            },
+            ViewModel.Texts.VapourSynthPreviewSnapshotSaveFailedStatus);
+        if (!saved || string.IsNullOrWhiteSpace(snapshotPath))
+        {
+            return;
+        }
+
+        SetStatusText(ViewModel.Texts.VapourSynthPreviewSnapshotSavedStatus(snapshotPath));
     }
 
     private async void CopyFrameButton_Click(object sender, RoutedEventArgs e)
@@ -565,24 +680,36 @@ public sealed partial class VapourSynthPreviewWindow : Window
             return;
         }
 
-        var stream = new InMemoryRandomAccessStream();
-        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
-        encoder.SetPixelData(
-            BitmapPixelFormat.Bgra8,
-            BitmapAlphaMode.Ignore,
-            (uint)_displayedFrameWidth,
-            (uint)_displayedFrameHeight,
-            96,
-            96,
-            _displayedFramePixels);
-        await encoder.FlushAsync();
-        stream.Seek(0);
+        try
+        {
+            var stream = new InMemoryRandomAccessStream();
+            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+            encoder.SetPixelData(
+                BitmapPixelFormat.Bgra8,
+                BitmapAlphaMode.Ignore,
+                (uint)_displayedFrameWidth,
+                (uint)_displayedFrameHeight,
+                96,
+                96,
+                _displayedFramePixels);
+            await encoder.FlushAsync();
+            stream.Seek(0);
 
-        var dataPackage = new DataPackage();
-        dataPackage.SetBitmap(RandomAccessStreamReference.CreateFromStream(stream));
-        Clipboard.SetContent(dataPackage);
-        Clipboard.Flush();
-        SetStatusText(ViewModel.Texts.VapourSynthPreviewFrameCopiedStatus);
+            var dataPackage = new DataPackage();
+            dataPackage.SetBitmap(RandomAccessStreamReference.CreateFromStream(stream));
+            if (!TrySetClipboardContent(dataPackage, "frame", out var errorDetail))
+            {
+                SetStatusText(ViewModel.Texts.VapourSynthPreviewFrameCopyFailedStatus(errorDetail));
+                return;
+            }
+
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewFrameCopiedStatus);
+        }
+        catch (Exception ex)
+        {
+            LogWindowOperationFailure("PrepareFrameImage", ex);
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewFrameCopyFailedStatus(GetWindowOperationErrorDetail(ex)));
+        }
     }
 
     private void ReturnToEditorButton_Click(object sender, RoutedEventArgs e)
@@ -646,7 +773,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
             return;
         }
 
-        await RenderFrameAsync(requestedFrame);
+        await RequestFrameAsync(requestedFrame);
     }
 
     private async void FrameNumberBox_LostFocus(object sender, RoutedEventArgs e)
@@ -656,7 +783,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
             return;
         }
 
-        await RenderFrameAsync((int)Math.Round(FrameNumberBox.Value));
+        await RequestFrameAsync((int)Math.Round(FrameNumberBox.Value));
     }
 
     private void ZoomModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -778,11 +905,23 @@ public sealed partial class VapourSynthPreviewWindow : Window
             return;
         }
 
-        var dataPackage = new DataPackage();
-        dataPackage.SetText(BuildCropCommandSnippet(useSnippetPlaceholder: false));
-        Clipboard.SetContent(dataPackage);
-        Clipboard.Flush();
-        SetStatusText(ViewModel.Texts.VapourSynthPreviewCropCommandCopiedStatus);
+        try
+        {
+            var dataPackage = new DataPackage();
+            dataPackage.SetText(BuildCropCommandSnippet(useSnippetPlaceholder: false));
+            if (!TrySetClipboardContent(dataPackage, "crop-command", out var errorDetail))
+            {
+                SetStatusText(ViewModel.Texts.VapourSynthPreviewCropCommandCopyFailedStatus(errorDetail));
+                return;
+            }
+
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewCropCommandCopiedStatus);
+        }
+        catch (Exception ex)
+        {
+            LogWindowOperationFailure("PrepareCropCommand", ex);
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewCropCommandCopyFailedStatus(GetWindowOperationErrorDetail(ex)));
+        }
     }
 
     private void PreviewViewportHost_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -909,12 +1048,12 @@ public sealed partial class VapourSynthPreviewWindow : Window
 
     private async void FirstFrameButton_Click(object sender, RoutedEventArgs e)
     {
-        await RenderFrameAsync(0);
+        await RequestFrameAsync(0);
     }
 
     private async void StepBackButton_Click(object sender, RoutedEventArgs e)
     {
-        await RenderFrameAsync(Math.Max(0, ViewModel.CurrentFrame - ViewModel.StepSize));
+        await RequestFrameAsync(Math.Max(0, ViewModel.CurrentFrame - ViewModel.StepSize));
     }
 
     private async void PlayPauseButton_Click(object sender, RoutedEventArgs e)
@@ -942,12 +1081,12 @@ public sealed partial class VapourSynthPreviewWindow : Window
 
     private async void StepForwardButton_Click(object sender, RoutedEventArgs e)
     {
-        await RenderFrameAsync(Math.Min(Math.Max(0, ViewModel.TotalFrames - 1), ViewModel.CurrentFrame + ViewModel.StepSize));
+        await RequestFrameAsync(Math.Min(Math.Max(0, ViewModel.TotalFrames - 1), ViewModel.CurrentFrame + ViewModel.StepSize));
     }
 
     private async void LastFrameButton_Click(object sender, RoutedEventArgs e)
     {
-        await RenderFrameAsync(Math.Max(0, ViewModel.TotalFrames - 1));
+        await RequestFrameAsync(Math.Max(0, ViewModel.TotalFrames - 1));
     }
 
     private void StepSizeBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
@@ -969,7 +1108,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
 
         var frameNumber = (int)Math.Round(e.NewValue);
         UpdateActiveChapter(frameNumber);
-        await RenderFrameAsync(frameNumber);
+        await RequestFrameAsync(frameNumber);
     }
 
     private async void FrameSliderHost_PointerPressed(object sender, PointerRoutedEventArgs e)
@@ -1011,7 +1150,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         _activeChapterIndex = nearest.Index;
         RedrawChapterMarkers();
         e.Handled = true;
-        await RenderFrameAsync(nearest.Frame);
+        await RequestFrameAsync(nearest.Frame);
     }
 
     private void ChapterMarkerCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1036,21 +1175,26 @@ public sealed partial class VapourSynthPreviewWindow : Window
 
         _activeChapterIndex = index;
         RedrawChapterMarkers();
-        await RenderFrameAsync(TimecodeToFrame(chapter.Timecode, _selectedOutputInfo));
+        await RequestFrameAsync(TimecodeToFrame(chapter.Timecode, _selectedOutputInfo));
     }
 
     private async void ImportChapterButton_Click(object sender, RoutedEventArgs e)
     {
-        var picker = new FileOpenPicker
-        {
-            SuggestedStartLocation = PickerLocationId.DocumentsLibrary
-        };
-        picker.FileTypeFilter.Add(".txt");
-        picker.FileTypeFilter.Add(".xml");
-        InitializeWithWindow.Initialize(picker, GetWindowHandle());
-
-        var file = await picker.PickSingleFileAsync();
-        if (file is null)
+        var (pickSucceeded, file) = await TryRunWindowOperationAsync(
+            "PickChapterImportFile",
+            async () =>
+            {
+                var picker = new FileOpenPicker
+                {
+                    SuggestedStartLocation = PickerLocationId.DocumentsLibrary
+                };
+                picker.FileTypeFilter.Add(".txt");
+                picker.FileTypeFilter.Add(".xml");
+                InitializeWithWindow.Initialize(picker, GetWindowHandle());
+                return await picker.PickSingleFileAsync();
+            },
+            ViewModel.Texts.VapourSynthPreviewChapterImportFailedStatus);
+        if (!pickSucceeded || file is null)
         {
             return;
         }
@@ -1068,7 +1212,8 @@ public sealed partial class VapourSynthPreviewWindow : Window
         }
         catch (Exception ex)
         {
-            SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterImportFailedStatus(ex.Message));
+            LogWindowOperationFailure("LoadChapterFile", ex);
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterImportFailedStatus(GetWindowOperationErrorDetail(ex)));
         }
     }
 
@@ -1079,18 +1224,23 @@ public sealed partial class VapourSynthPreviewWindow : Window
             return;
         }
 
-        var picker = new FileSavePicker
-        {
-            SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
-            SuggestedFileName = "chapters",
-            DefaultFileExtension = ".txt"
-        };
-        picker.FileTypeChoices.Add(ViewModel.Texts.VapourSynthPreviewOgmChapterFileTypeDescription, [".txt"]);
-        picker.FileTypeChoices.Add(ViewModel.Texts.VapourSynthPreviewXmlChapterFileTypeDescription, [".xml"]);
-        InitializeWithWindow.Initialize(picker, GetWindowHandle());
-
-        var file = await picker.PickSaveFileAsync();
-        if (file is null)
+        var (pickSucceeded, file) = await TryRunWindowOperationAsync(
+            "PickChapterExportFile",
+            async () =>
+            {
+                var picker = new FileSavePicker
+                {
+                    SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+                    SuggestedFileName = "chapters",
+                    DefaultFileExtension = ".txt"
+                };
+                picker.FileTypeChoices.Add(ViewModel.Texts.VapourSynthPreviewOgmChapterFileTypeDescription, [".txt"]);
+                picker.FileTypeChoices.Add(ViewModel.Texts.VapourSynthPreviewXmlChapterFileTypeDescription, [".xml"]);
+                InitializeWithWindow.Initialize(picker, GetWindowHandle());
+                return await picker.PickSaveFileAsync();
+            },
+            ViewModel.Texts.VapourSynthPreviewChapterExportFailedStatus);
+        if (!pickSucceeded || file is null)
         {
             return;
         }
@@ -1111,7 +1261,8 @@ public sealed partial class VapourSynthPreviewWindow : Window
         }
         catch (Exception ex)
         {
-            SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterExportFailedStatus(ex.Message));
+            LogWindowOperationFailure("ExportChapterFile", ex);
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterExportFailedStatus(GetWindowOperationErrorDetail(ex)));
         }
     }
 
@@ -1132,7 +1283,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         UpdateChapterButtons();
         RedrawChapterMarkers();
         SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterAddedStatus(result.Title));
-        await RenderFrameAsync(TimecodeToFrame(result.Timecode, _selectedOutputInfo));
+        await RequestFrameAsync(TimecodeToFrame(result.Timecode, _selectedOutputInfo));
     }
 
     private async void EditChapterButton_Click(object sender, RoutedEventArgs e)
@@ -1162,7 +1313,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         UpdateChapterButtons();
         RedrawChapterMarkers();
         SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterUpdatedStatus(result.Title));
-        await RenderFrameAsync(TimecodeToFrame(result.Timecode, _selectedOutputInfo));
+        await RequestFrameAsync(TimecodeToFrame(result.Timecode, _selectedOutputInfo));
     }
 
     private void DeleteChapterButton_Click(object sender, RoutedEventArgs e)
@@ -1218,12 +1369,12 @@ public sealed partial class VapourSynthPreviewWindow : Window
 
         _activeChapterIndex = next.Index;
         RedrawChapterMarkers();
-        await RenderFrameAsync(next.Frame);
+        await RequestFrameAsync(next.Frame);
     }
 
     private async void PlaybackTimer_Tick(object? sender, object e)
     {
-        if (_isFrameLoadInProgress)
+        if (_frameRequestScheduler.IsBusy)
         {
             return;
         }
@@ -1234,7 +1385,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
             return;
         }
 
-        await RenderFrameAsync(ViewModel.CurrentFrame + 1);
+        await RequestFrameAsync(ViewModel.CurrentFrame + 1);
     }
 
     private async void VapourSynthPreviewWindow_Closed(object sender, WindowEventArgs args)
@@ -1246,6 +1397,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
 
         _isClosed = true;
         StopPlayback();
+        _frameRequestScheduler.Dispose();
         SaveCurrentOutputState();
         DetachXamlRoot();
         DetachPreviewNumberBoxEditorHandlers();
@@ -1315,7 +1467,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         var targetFrame = deltaSeconds < 0
             ? ViewModel.CurrentFrame - frameDelta
             : ViewModel.CurrentFrame + frameDelta;
-        await RenderFrameAsync(targetFrame);
+        await RequestFrameAsync(targetFrame);
     }
 
     private void SaveCurrentOutputState()
@@ -1457,6 +1609,23 @@ public sealed partial class VapourSynthPreviewWindow : Window
             : 24.0;
     }
 
+    private static PreviewFrameCropSettings CreateCropSettings(PreviewOutputState outputState, bool cropEnabled)
+    {
+        return new PreviewFrameCropSettings(
+            cropEnabled,
+            IsAbsoluteCropMode(outputState.CropMode) ? PreviewCropMode.Absolute : PreviewCropMode.Relative,
+            new PreviewAbsoluteCrop(
+                outputState.AbsoluteCrop.Left,
+                outputState.AbsoluteCrop.Top,
+                outputState.AbsoluteCrop.Width,
+                outputState.AbsoluteCrop.Height),
+            new PreviewRelativeCrop(
+                outputState.RelativeCrop.Left,
+                outputState.RelativeCrop.Top,
+                outputState.RelativeCrop.Right,
+                outputState.RelativeCrop.Bottom));
+    }
+
     private PreviewOutputState GetOrCreateOutputState(VapourSynthPreviewOutputInfo outputInfo)
     {
         if (!_outputStates.TryGetValue(outputInfo.Index, out var outputState))
@@ -1482,7 +1651,10 @@ public sealed partial class VapourSynthPreviewWindow : Window
     private void ApplyCropControlsFromState(PreviewOutputState outputState, VapourSynthPreviewOutputInfo outputInfo)
     {
         var absoluteMode = IsAbsoluteCropMode(outputState.CropMode);
-        var cropBounds = GetEffectiveCropBounds(outputState, outputInfo.Width, outputInfo.Height);
+        var cropBounds = _frameComposer.ResolveCropBounds(
+            CreateCropSettings(outputState, cropEnabled: true),
+            outputInfo.Width,
+            outputInfo.Height);
 
         CropLeftBox.Minimum = 0;
         CropLeftBox.Maximum = Math.Max(0, outputInfo.Width - 1);
@@ -1647,34 +1819,6 @@ public sealed partial class VapourSynthPreviewWindow : Window
         }
     }
 
-    private static CropBounds GetEffectiveCropBounds(PreviewOutputState outputState, int sourceWidth, int sourceHeight)
-    {
-        if (IsAbsoluteCropMode(outputState.CropMode))
-        {
-            EnsureAbsoluteCropStateWithinBounds(outputState.AbsoluteCrop, sourceWidth, sourceHeight);
-            var right = Math.Max(0, sourceWidth - outputState.AbsoluteCrop.Left - outputState.AbsoluteCrop.Width);
-            var bottom = Math.Max(0, sourceHeight - outputState.AbsoluteCrop.Top - outputState.AbsoluteCrop.Height);
-            return new CropBounds(
-                outputState.AbsoluteCrop.Left,
-                outputState.AbsoluteCrop.Top,
-                outputState.AbsoluteCrop.Width,
-                outputState.AbsoluteCrop.Height,
-                right,
-                bottom);
-        }
-
-        EnsureRelativeCropStateWithinBounds(outputState.RelativeCrop, sourceWidth, sourceHeight);
-        var width = Math.Max(1, sourceWidth - outputState.RelativeCrop.Left - outputState.RelativeCrop.Right);
-        var height = Math.Max(1, sourceHeight - outputState.RelativeCrop.Top - outputState.RelativeCrop.Bottom);
-        return new CropBounds(
-            outputState.RelativeCrop.Left,
-            outputState.RelativeCrop.Top,
-            width,
-            height,
-            outputState.RelativeCrop.Right,
-            outputState.RelativeCrop.Bottom);
-    }
-
     private string ResolveSilentSnapshotPath()
     {
         if (_selectedOutputInfo is null || _currentRequest is null)
@@ -1771,15 +1915,20 @@ public sealed partial class VapourSynthPreviewWindow : Window
             return;
         }
 
-        var picker = new FolderPicker
-        {
-            SuggestedStartLocation = PickerLocationId.PicturesLibrary
-        };
-        picker.FileTypeFilter.Add("*");
-        InitializeWithWindow.Initialize(picker, GetWindowHandle());
-
-        var folder = await picker.PickSingleFolderAsync();
-        if (folder is null)
+        var (pickSucceeded, folder) = await TryRunWindowOperationAsync(
+            "PickAllSnapshotsFolder",
+            async () =>
+            {
+                var picker = new FolderPicker
+                {
+                    SuggestedStartLocation = PickerLocationId.PicturesLibrary
+                };
+                picker.FileTypeFilter.Add("*");
+                InitializeWithWindow.Initialize(picker, GetWindowHandle());
+                return await picker.PickSingleFolderAsync();
+            },
+            ViewModel.Texts.VapourSynthPreviewAllSnapshotsFailedStatus);
+        if (!pickSucceeded || folder is null)
         {
             return;
         }
@@ -1807,15 +1956,16 @@ public sealed partial class VapourSynthPreviewWindow : Window
                 savedCount++;
             }
 
-            await SelectOutputAsync(previousOutput, Math.Clamp(lockedFrame, 0, Math.Max(0, previousOutput.TotalFrames - 1)), useExplicitFrame: true);
+            await RestoreOutputAfterBatchSaveAsync(previousOutput, lockedFrame);
             SetStatusText(ViewModel.Texts.VapourSynthPreviewAllSnapshotsSavedStatus(savedCount, outputs.Count, lockedFrame));
         }
         catch (Exception ex)
         {
-            SetStatusText(ViewModel.Texts.VapourSynthPreviewAllSnapshotsFailedStatus(ex.Message));
+            LogWindowOperationFailure("SaveAllSnapshots", ex);
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewAllSnapshotsFailedStatus(GetWindowOperationErrorDetail(ex)));
             if (_selectedOutputInfo?.Index != previousOutput.Index)
             {
-                await SelectOutputAsync(previousOutput, Math.Clamp(lockedFrame, 0, Math.Max(0, previousOutput.TotalFrames - 1)), useExplicitFrame: true);
+                await RestoreOutputAfterBatchSaveAsync(previousOutput, lockedFrame);
             }
         }
     }
@@ -1831,34 +1981,14 @@ public sealed partial class VapourSynthPreviewWindow : Window
         return ParseOgmChapters(await File.ReadAllLinesAsync(filePath));
     }
 
-    private async Task<SnapshotFramePayload> RenderSnapshotFrameAsync(
+    private async Task<PreviewFrameCompositionResult> RenderSnapshotFrameAsync(
         VapourSynthPreviewOutputInfo outputInfo,
         int frameNumber)
     {
         var frameData = await _previewService.RenderFrameAsync(outputInfo.Index, frameNumber);
-        var sourcePixels = await LoadFramePixelsAsync(frameData.RawPixelPath);
-        var outputState = GetOrCreateOutputState(outputInfo);
-        var cropBounds = GetEffectiveCropBounds(outputState, frameData.Width, frameData.Height);
-
-        if (!ViewModel.IsCropPanelVisible
-            || (cropBounds.Left == 0
-                && cropBounds.Top == 0
-                && cropBounds.Width == frameData.Width
-                && cropBounds.Height == frameData.Height))
-        {
-            return new SnapshotFramePayload(sourcePixels, frameData.Width, frameData.Height);
-        }
-
-        return new SnapshotFramePayload(
-            CropPixels(
-                sourcePixels,
-                frameData.Width,
-                cropBounds.Left,
-                cropBounds.Top,
-                cropBounds.Width,
-                cropBounds.Height),
-            cropBounds.Width,
-            cropBounds.Height);
+        var sourcePixels = frameData.Pixels;
+        return _frameComposer.Compose(
+            CreateFrameCompositionRequest(outputInfo, sourcePixels, frameData.Width, frameData.Height));
     }
 
     private IReadOnlyList<VapourSynthPreviewChapterOption> BuildChapterOptions(IEnumerable<ChapterEntry> chapters)
@@ -2046,8 +2176,11 @@ public sealed partial class VapourSynthPreviewWindow : Window
             Content = panel
         };
 
-        var result = await dialog.ShowAsync();
-        if (result != ContentDialogResult.Primary)
+        var (showSucceeded, result) = await TryRunWindowOperationAsync(
+            "ShowChapterEditDialog",
+            async () => await dialog.ShowAsync(),
+            ViewModel.Texts.VapourSynthPreviewChapterDialogFailedStatus);
+        if (!showSucceeded || result != ContentDialogResult.Primary)
         {
             return null;
         }
@@ -2225,6 +2358,23 @@ public sealed partial class VapourSynthPreviewWindow : Window
         await encoder.FlushAsync();
     }
 
+    private async Task RestoreOutputAfterBatchSaveAsync(
+        VapourSynthPreviewOutputInfo outputInfo,
+        int frameNumber)
+    {
+        try
+        {
+            await SelectOutputAsync(
+                outputInfo,
+                Math.Clamp(frameNumber, 0, Math.Max(0, outputInfo.TotalFrames - 1)),
+                useExplicitFrame: true);
+        }
+        catch (Exception ex)
+        {
+            LogWindowOperationFailure("RestoreOutputAfterBatchSave", ex);
+        }
+    }
+
     private async Task ShowAdvancedSettingsAsync()
     {
         var outputSyncComboBox = new ComboBox
@@ -2281,8 +2431,11 @@ public sealed partial class VapourSynthPreviewWindow : Window
             }
         };
 
-        var result = await dialog.ShowAsync();
-        if (result != ContentDialogResult.Primary)
+        var (showSucceeded, result) = await TryRunWindowOperationAsync(
+            "ShowAdvancedSettingsDialog",
+            async () => await dialog.ShowAsync(),
+            ViewModel.Texts.VapourSynthPreviewAdvancedSettingsFailedStatus);
+        if (!showSucceeded || result != ContentDialogResult.Primary)
         {
             return;
         }
@@ -2298,7 +2451,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
     {
         _playbackTimer.Stop();
         _isPlaying = false;
-        _pendingFrameNumber = null;
+        _frameRequestScheduler.ClearPending();
         PlayPauseIcon.Symbol = Symbol.Play;
 
         if (updateStatus && _selectedOutputInfo is not null && _lastFrameData is not null)
@@ -2313,6 +2466,79 @@ public sealed partial class VapourSynthPreviewWindow : Window
         _statusCommitTimer.Stop();
         ViewModel.UpdateStatus(statusText);
     }
+
+    private async Task<bool> TryRunWindowActionAsync(
+        string operationName,
+        Func<Task> operationAsync,
+        Func<string, string> failureStatusFactory)
+    {
+        try
+        {
+            await operationAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LogWindowOperationFailure(operationName, ex);
+            SetStatusText(failureStatusFactory(GetWindowOperationErrorDetail(ex)));
+            return false;
+        }
+    }
+
+    private async Task<(bool Success, TResult Result)> TryRunWindowOperationAsync<TResult>(
+        string operationName,
+        Func<Task<TResult>> operationAsync,
+        Func<string, string> failureStatusFactory)
+    {
+        try
+        {
+            return (true, await operationAsync());
+        }
+        catch (Exception ex)
+        {
+            LogWindowOperationFailure(operationName, ex);
+            SetStatusText(failureStatusFactory(GetWindowOperationErrorDetail(ex)));
+            return (false, default!);
+        }
+    }
+
+    private bool TrySetClipboardContent(DataPackage dataPackage, string operationName, out string errorDetail)
+    {
+        try
+        {
+            Clipboard.SetContent(dataPackage);
+        }
+        catch (Exception ex)
+        {
+            LogWindowOperationFailure($"Clipboard.SetContent:{operationName}", ex);
+            errorDetail = GetWindowOperationErrorDetail(ex);
+            return false;
+        }
+
+        try
+        {
+            Clipboard.Flush();
+        }
+        catch (Exception ex)
+        {
+            LogWindowOperationFailure($"Clipboard.Flush:{operationName}", ex);
+        }
+
+        errorDetail = string.Empty;
+        return true;
+    }
+
+    private void LogWindowOperationFailure(string operationName, Exception exception)
+    {
+        AppDiagnosticsLog.Write(
+            _appPaths,
+            nameof(VapourSynthPreviewWindow),
+            $"{operationName} failed. {exception.GetType().Name}: {exception.Message}");
+        Debug.WriteLine(exception);
+    }
+
+    private static string GetWindowOperationErrorDetail(Exception exception) =>
+        string.IsNullOrWhiteSpace(exception.Message) ? exception.GetType().Name : exception.Message;
 
     private void QueueFrameStatusText(string statusText)
     {
@@ -2471,21 +2697,75 @@ public sealed partial class VapourSynthPreviewWindow : Window
         }
     }
 
-    private static byte[] CropPixels(byte[] sourcePixels, int sourceWidth, int left, int top, int width, int height)
+    private byte[]? ConsumeReusableSourcePixels()
     {
-        var targetPixels = new byte[width * height * 4];
-        var bytesPerPixel = 4;
-        var sourceStride = sourceWidth * bytesPerPixel;
-        var targetStride = width * bytesPerPixel;
+        var reusableBuffer = _reusableSourceFramePixels;
+        _reusableSourceFramePixels = null;
+        return reusableBuffer;
+    }
 
-        for (var row = 0; row < height; row++)
+    private byte[]? ConsumeReusableDisplayedPixels()
+    {
+        var reusableBuffer = _reusableDisplayedFramePixels;
+        _reusableDisplayedFramePixels = null;
+        return reusableBuffer;
+    }
+
+    private void CommitActiveFrameBuffers(
+        VapourSynthPreviewFrameData frameData,
+        byte[] sourcePixels,
+        int displayWidth,
+        int displayHeight,
+        byte[] displayPixels)
+    {
+        var previousSourcePixels = _sourceFramePixels;
+        var previousDisplayedPixels = _displayedFramePixels;
+
+        _sourceFramePixels = sourcePixels;
+        _sourceFrameWidth = frameData.Width;
+        _sourceFrameHeight = frameData.Height;
+        _displayedFramePixels = displayPixels;
+        _displayedFrameWidth = displayWidth;
+        _displayedFrameHeight = displayHeight;
+
+        _reusableSourceFramePixels = CanReuseBuffer(previousSourcePixels, _sourceFramePixels, _displayedFramePixels)
+            ? previousSourcePixels
+            : null;
+        _reusableDisplayedFramePixels = CanReuseBuffer(previousDisplayedPixels, _sourceFramePixels, _displayedFramePixels, _reusableSourceFramePixels)
+            ? previousDisplayedPixels
+            : null;
+    }
+
+    private void CaptureReusableFrameBuffers(byte[] sourcePixels, byte[]? displayPixels = null)
+    {
+        if (CanReuseBuffer(sourcePixels, _sourceFramePixels, _displayedFramePixels, _reusableDisplayedFramePixels))
         {
-            var sourceOffset = ((top + row) * sourceWidth + left) * bytesPerPixel;
-            var targetOffset = row * targetStride;
-            System.Buffer.BlockCopy(sourcePixels, sourceOffset, targetPixels, targetOffset, targetStride);
+            _reusableSourceFramePixels = sourcePixels;
         }
 
-        return targetPixels;
+        if (displayPixels is not null
+            && CanReuseBuffer(displayPixels, sourcePixels, _sourceFramePixels, _displayedFramePixels, _reusableSourceFramePixels))
+        {
+            _reusableDisplayedFramePixels = displayPixels;
+        }
+    }
+
+    private static bool CanReuseBuffer(byte[]? candidate, params byte[]?[] activeBuffers)
+    {
+        if (candidate is null)
+        {
+            return false;
+        }
+
+        foreach (var activeBuffer in activeBuffers)
+        {
+            if (ReferenceEquals(candidate, activeBuffer))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static int GetIntValue(NumberBox numberBox)
@@ -2566,20 +2846,6 @@ public sealed partial class VapourSynthPreviewWindow : Window
         return Microsoft.UI.Input.InputKeyboardSource
             .GetKeyStateForCurrentThread(VirtualKey.Control)
             .HasFlag(CoreVirtualKeyStates.Down);
-    }
-
-    private static void TryDeleteFile(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch
-        {
-        }
     }
 
     private void RootLayout_Loaded(object sender, RoutedEventArgs e)
@@ -2678,7 +2944,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         if (TryGetFrameNavigationDelta(e.Key, out var frameDelta))
         {
             e.Handled = true;
-            await RenderFrameAsync(ViewModel.CurrentFrame + frameDelta);
+            await RequestFrameAsync(ViewModel.CurrentFrame + frameDelta);
             return;
         }
 
@@ -2931,12 +3197,14 @@ public sealed partial class VapourSynthPreviewWindow : Window
         byte[] Pixels,
         int Width,
         int Height,
-        string ResolutionText);
+        string ResolutionText,
+        TimeSpan ComposeElapsed,
+        TimeSpan BitmapUpdateElapsed);
 
-    private sealed record SnapshotFramePayload(
-        byte[] Pixels,
-        int Width,
-        int Height);
+    private sealed record PreviewFrameRequest(
+        long SessionRevision,
+        VapourSynthPreviewOutputInfo OutputInfo,
+        int FrameNumber);
 
     private sealed record ChapterEntry(
         TimeSpan Timecode,
@@ -3015,14 +3283,6 @@ public sealed partial class VapourSynthPreviewWindow : Window
             };
         }
     }
-
-    private sealed record CropBounds(
-        int Left,
-        int Top,
-        int Width,
-        int Height,
-        int Right,
-        int Bottom);
 
     private enum CropField
     {
