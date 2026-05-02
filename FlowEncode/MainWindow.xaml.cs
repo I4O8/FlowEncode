@@ -713,6 +713,7 @@ public sealed partial class MainWindow : Window
             }
             catch (Exception ex)
             {
+                TryWriteWindowDiagnostic($"Failed to launch downloaded installer '{installerPath}'. {ex.GetType().Name}: {ex.Message}");
                 await ShowMessageAsync(ViewModel.Texts.ErrorInstallFailedTitle, ex.Message);
             }
 
@@ -1412,6 +1413,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            TryWriteWindowDiagnostic($"Failed to save template from save-as dialog. {ex.GetType().Name}: {ex.Message}");
             await ShowMessageAsync(ViewModel.Texts.ErrorSaveFailedTitle, ex.Message);
         }
     }
@@ -1911,6 +1913,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            TryWriteWindowDiagnostic($"Failed to import template. {ex.GetType().Name}: {ex.Message}");
             await ShowMessageAsync(ViewModel.Texts.ErrorImportFailedTitle, ex.Message);
         }
     }
@@ -1929,6 +1932,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            TryWriteWindowDiagnostic($"Failed to export template. {ex.GetType().Name}: {ex.Message}");
             await ShowMessageAsync(ViewModel.Texts.ErrorExportFailedTitle, ex.Message);
         }
     }
@@ -1975,6 +1979,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            TryWriteWindowDiagnostic($"Failed to delete template '{template.Name}'. {ex.GetType().Name}: {ex.Message}");
             await ShowMessageAsync(ViewModel.Texts.ErrorDeleteFailedTitle, ex.Message);
         }
     }
@@ -1998,6 +2003,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            TryWriteWindowDiagnostic($"Failed to toggle pinned state for template '{templateItem.TemplateId}'. {ex.GetType().Name}: {ex.Message}");
             await ShowMessageAsync(ViewModel.Texts.ErrorPinFailedTitle, ex.Message);
         }
     }

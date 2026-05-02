@@ -46,6 +46,10 @@ public sealed class LocalAppSettingsService : IAppSettingsService
             catch (Exception ex)
             {
                 _lastLoadRecoveryInfo = RecoverBrokenSettingsFileUnsafe(ex);
+                AppDiagnosticsLog.Write(
+                    _paths,
+                    nameof(LocalAppSettingsService),
+                    $"Failed to load settings from '{_paths.SettingsPath}'. {ex.GetType().Name}: {ex.Message}");
                 _cache = AppSettings.Default;
             }
 
@@ -94,6 +98,10 @@ public sealed class LocalAppSettingsService : IAppSettingsService
         }
         catch (Exception moveException)
         {
+            AppDiagnosticsLog.Write(
+                _paths,
+                nameof(LocalAppSettingsService),
+                $"Failed to back up broken settings file '{_paths.SettingsPath}' to '{brokenPath}'. {moveException.GetType().Name}: {moveException.Message}");
             return new SettingsLoadRecoveryInfo(
                 _paths.SettingsPath,
                 null,

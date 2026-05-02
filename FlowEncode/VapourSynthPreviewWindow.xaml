@@ -9,382 +9,13 @@
         x:Name="RootLayout"
         Background="{ThemeResource WindowBackgroundBrush}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <Grid
             Grid.Row="0"
-            Background="{ThemeResource CardBrush}"
-            ColumnSpacing="4">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-
-            <CommandBar
-                Grid.Column="0"
-                Background="Transparent"
-                DefaultLabelPosition="Collapsed"
-                IsDynamicOverflowEnabled="False"
-                OverflowButtonVisibility="Collapsed">
-                <AppBarButton
-                    x:Name="ReloadPreviewButton"
-                    Click="ReloadPreviewButton_Click"
-                    Label="{Binding Texts.VapourSynthReloadButton}"
-                    ToolTipService.ToolTip="{Binding Texts.VapourSynthReloadButton}">
-                    <AppBarButton.Icon>
-                        <SymbolIcon Symbol="Refresh" />
-                    </AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarButton
-                    x:Name="SaveSnapshotButton"
-                    Click="SaveSnapshotButton_Click"
-                    Label="{Binding Texts.VapourSynthPreviewSaveFrameButton}"
-                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewSaveFrameButton}">
-                    <AppBarButton.Icon>
-                        <SymbolIcon Symbol="SaveLocal" />
-                    </AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarButton
-                    x:Name="CopyFrameButton"
-                    Click="CopyFrameButton_Click"
-                    Label="{Binding Texts.VapourSynthPreviewCopyFrameButton}"
-                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewCopyFrameButton}">
-                    <AppBarButton.Icon>
-                        <SymbolIcon Symbol="Copy" />
-                    </AppBarButton.Icon>
-                </AppBarButton>
-                <AppBarToggleButton
-                    x:Name="TimelineToggleButton"
-                    Checked="TimelineToggleButton_Checked"
-                    Label="{Binding Texts.VapourSynthPreviewTimelineButton}"
-                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewTimelineButton}"
-                    Unchecked="TimelineToggleButton_Unchecked">
-                    <AppBarToggleButton.Icon>
-                        <SymbolIcon Symbol="Clock" />
-                    </AppBarToggleButton.Icon>
-                </AppBarToggleButton>
-                <AppBarToggleButton
-                    x:Name="CropToggleButton"
-                    Checked="CropToggleButton_Checked"
-                    Label="{Binding Texts.VapourSynthPreviewCropButton}"
-                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewCropButton}"
-                    Unchecked="CropToggleButton_Unchecked">
-                    <AppBarToggleButton.Icon>
-                        <SymbolIcon Symbol="Cut" />
-                    </AppBarToggleButton.Icon>
-                </AppBarToggleButton>
-                <AppBarToggleButton
-                    x:Name="FramePropsToggleButton"
-                    Checked="FramePropsToggleButton_Checked"
-                    Label="{Binding Texts.VapourSynthPreviewFramePropsButton}"
-                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewFramePropsButton}"
-                    Unchecked="FramePropsToggleButton_Unchecked">
-                    <AppBarToggleButton.Icon>
-                        <SymbolIcon Symbol="List" />
-                    </AppBarToggleButton.Icon>
-                </AppBarToggleButton>
-                <AppBarButton
-                    x:Name="AdvancedSettingsButton"
-                    Click="AdvancedSettingsButton_Click"
-                    Label="{Binding Texts.VapourSynthPreviewAdvancedSettingsButton}"
-                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewAdvancedSettingsButton}">
-                    <AppBarButton.Icon>
-                        <SymbolIcon Symbol="Setting" />
-                    </AppBarButton.Icon>
-                </AppBarButton>
-            </CommandBar>
-
-            <CommandBar
-                Grid.Column="1"
-                Margin="0,0,8,0"
-                Background="Transparent"
-                DefaultLabelPosition="Collapsed"
-                HorizontalAlignment="Right"
-                IsDynamicOverflowEnabled="False"
-                OverflowButtonVisibility="Collapsed">
-                <AppBarButton
-                    x:Name="ReturnToEditorButton"
-                    Click="ReturnToEditorButton_Click"
-                    Label="{Binding Texts.VapourSynthPreviewExitButton}"
-                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewExitButton}">
-                    <AppBarButton.Icon>
-                        <SymbolIcon Symbol="Back" />
-                    </AppBarButton.Icon>
-                </AppBarButton>
-            </CommandBar>
-        </Grid>
-
-        <Border
-            Grid.Row="1"
-            Margin="8,8,8,0"
-            Padding="8,6"
-            Background="{ThemeResource CardAltBrush}"
-            BorderBrush="{ThemeResource CardBorderBrush}"
-            BorderThickness="{StaticResource AppCardBorderThickness}"
-            CornerRadius="{StaticResource AppCardCornerRadius}">
-            <Grid RowSpacing="4">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="156" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="108" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="108" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <TextBlock VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewOutputHeader}" />
-                    <ComboBox
-                        x:Name="OutputSelectorComboBox"
-                        Grid.Column="1"
-                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewOutputHeader}"
-                        DisplayMemberPath="Label"
-                        ItemsSource="{Binding Outputs}"
-                        SelectionChanged="OutputSelectorComboBox_SelectionChanged" />
-
-                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewFrameHeader}" />
-                    <NumberBox
-                        x:Name="FrameNumberBox"
-                        Grid.Column="3"
-                        AcceptsExpression="False"
-                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewFrameHeader}"
-                        LargeChange="10"
-                        LostFocus="FrameNumberBox_LostFocus"
-                        Minimum="0"
-                        SmallChange="1"
-                        SpinButtonPlacementMode="Hidden"
-                        Width="108"
-                        ValueChanged="FrameNumberBox_ValueChanged" />
-
-                    <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewZoomHeader}" />
-                    <ComboBox
-                        x:Name="ZoomModeComboBox"
-                        Grid.Column="5"
-                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewZoomHeader}"
-                        DisplayMemberPath="Label"
-                        ItemsSource="{Binding ZoomModes}"
-                        SelectedItem="{Binding SelectedZoomMode, Mode=TwoWay}"
-                        SelectionChanged="ZoomModeComboBox_SelectionChanged" />
-                    <NumberBox
-                        x:Name="ZoomRatioBox"
-                        Grid.Column="6"
-                        AcceptsExpression="False"
-                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewZoomHeader}"
-                        Minimum="5"
-                        SmallChange="5"
-                        SpinButtonPlacementMode="Hidden"
-                        Width="96"
-                        ValueChanged="ZoomRatioBox_ValueChanged"
-                        Visibility="{Binding CustomZoomVisibility}" />
-
-                    <TextBlock
-                        Grid.Column="7"
-                        VerticalAlignment="Center"
-                        Foreground="{ThemeResource SubtleTextBrush}"
-                        Text="{Binding WindowTitle}"
-                        TextTrimming="CharacterEllipsis" />
-                </Grid>
-
-                <Grid
-                    Grid.Row="1"
-                    ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-
-                    <TextBlock
-                        Foreground="{ThemeResource SubtleTextBrush}"
-                        Text="{Binding StatusText}"
-                        TextTrimming="CharacterEllipsis" />
-                    <TextBlock Grid.Column="1" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding FrameProgressText}" />
-                    <TextBlock Grid.Column="2" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding CurrentTimeText}" />
-                    <TextBlock Grid.Column="3" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding ResolutionText}" />
-                    <TextBlock Grid.Column="4" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding FormatText}" />
-                    <TextBlock Grid.Column="5" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding BitDepthText}" />
-                    <TextBlock Grid.Column="6" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding FpsText}" />
-                    <TextBlock Grid.Column="7" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding FrameTypeText}" />
-                </Grid>
-
-                <Grid
-                    Grid.Row="2"
-                    ColumnSpacing="6">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="108" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-
-                    <Button
-                        x:Name="FirstFrameButton"
-                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewFirstFrameButton}"
-                        Click="FirstFrameButton_Click"
-                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewFirstFrameButton}">
-                        <StackPanel Orientation="Horizontal" Spacing="0">
-                            <SymbolIcon Symbol="Back" />
-                            <SymbolIcon Symbol="Back" />
-                        </StackPanel>
-                    </Button>
-                    <Button
-                        x:Name="StepBackButton"
-                        Grid.Column="1"
-                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewPreviousFrameButton}"
-                        Click="StepBackButton_Click"
-                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewPreviousFrameButton}">
-                        <SymbolIcon Symbol="Back" />
-                    </Button>
-                    <Button
-                        x:Name="PlayPauseButton"
-                        Grid.Column="2"
-                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewPlayPauseButton}"
-                        Click="PlayPauseButton_Click"
-                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewPlayPauseButton}">
-                        <SymbolIcon x:Name="PlayPauseIcon" Symbol="Play" />
-                    </Button>
-                    <Button
-                        x:Name="StepForwardButton"
-                        Grid.Column="3"
-                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewNextFrameButton}"
-                        Click="StepForwardButton_Click"
-                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewNextFrameButton}">
-                        <SymbolIcon Symbol="Forward" />
-                    </Button>
-                    <Button
-                        x:Name="LastFrameButton"
-                        Grid.Column="4"
-                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewLastFrameButton}"
-                        Click="LastFrameButton_Click"
-                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewLastFrameButton}">
-                        <StackPanel Orientation="Horizontal" Spacing="0">
-                            <SymbolIcon Symbol="Forward" />
-                            <SymbolIcon Symbol="Forward" />
-                        </StackPanel>
-                    </Button>
-
-                    <TextBlock
-                        Grid.Column="5"
-                        Margin="6,0,2,0"
-                        VerticalAlignment="Center"
-                        Text="{Binding Texts.VapourSynthPreviewStepHeader}" />
-                    <NumberBox
-                        x:Name="StepSizeBox"
-                        Grid.Column="6"
-                        AcceptsExpression="False"
-                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewStepHeader}"
-                        Minimum="1"
-                        SmallChange="1"
-                        SpinButtonPlacementMode="Hidden"
-                        Width="108"
-                        Value="1"
-                        ValueChanged="StepSizeBox_ValueChanged" />
-                    <Slider
-                        x:Name="FrameSlider"
-                        Grid.Column="7"
-                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewFrameHeader}"
-                        LargeChange="10"
-                        Minimum="0"
-                        SmallChange="1"
-                        ValueChanged="FrameSlider_ValueChanged" />
-                </Grid>
-            </Grid>
-        </Border>
-
-        <Border
-            Grid.Row="2"
-            Margin="8,8,8,0"
-            Padding="10,8"
-            Background="{ThemeResource CardBrush}"
-            BorderBrush="{ThemeResource CardBorderBrush}"
-            BorderThickness="{StaticResource AppCardBorderThickness}"
-            CornerRadius="{StaticResource AppCardCornerRadius}"
-            Visibility="{Binding TimelinePanelVisibility}">
-            <Grid ColumnSpacing="8">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="110" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="110" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-
-                <TextBlock VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewTimelineModeHeader}" />
-                <ComboBox
-                    x:Name="TimelineModeComboBox"
-                    Grid.Column="1"
-                    AutomationProperties.Name="{Binding Texts.VapourSynthPreviewTimelineModeHeader}"
-                    DisplayMemberPath="Label"
-                    ItemsSource="{Binding TimelineModes}"
-                    SelectedItem="{Binding SelectedTimelineMode, Mode=TwoWay}"
-                    SelectionChanged="TimelineModeComboBox_SelectionChanged" />
-                <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewTimeStepHeader}" />
-                <NumberBox
-                    x:Name="TimeStepSecondsBox"
-                    Grid.Column="3"
-                    AcceptsExpression="False"
-                    AutomationProperties.Name="{Binding Texts.VapourSynthPreviewTimeStepHeader}"
-                    Minimum="0.001"
-                    SmallChange="0.1"
-                    SpinButtonPlacementMode="Hidden"
-                    Width="112"
-                    ValueChanged="TimeStepSecondsBox_ValueChanged" />
-                <Button
-                    x:Name="TimeStepBackButton"
-                    Grid.Column="4"
-                    AutomationProperties.Name="{Binding Texts.VapourSynthPreviewTimeStepBackButton}"
-                    Click="TimeStepBackButton_Click"
-                    MinWidth="32"
-                    Padding="8,4"
-                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewTimeStepBackButton}">
-                    <SymbolIcon Symbol="Back" />
-                </Button>
-                <Button
-                    x:Name="TimeStepForwardButton"
-                    Grid.Column="5"
-                    AutomationProperties.Name="{Binding Texts.VapourSynthPreviewTimeStepForwardButton}"
-                    Click="TimeStepForwardButton_Click"
-                    MinWidth="32"
-                    Padding="8,4"
-                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewTimeStepForwardButton}">
-                    <SymbolIcon Symbol="Forward" />
-                </Button>
-                <TextBlock
-                    Grid.Column="6"
-                    VerticalAlignment="Center"
-                    Foreground="{ThemeResource SubtleTextBrush}"
-                    Text="{Binding TimelinePositionText}" />
-            </Grid>
-        </Border>
-
-        <Grid
-            Grid.Row="3"
             Margin="8"
             ColumnSpacing="8">
             <Grid.ColumnDefinitions>
@@ -460,7 +91,7 @@
         </Grid>
 
         <Border
-            Grid.Row="4"
+            Grid.Row="1"
             Margin="8,0,8,8"
             Padding="10,8"
             Background="{ThemeResource CardAltBrush}"
@@ -468,7 +99,7 @@
             BorderThickness="{StaticResource AppCardBorderThickness}"
             CornerRadius="{StaticResource AppCardCornerRadius}"
             Visibility="{Binding CropPanelVisibility}">
-            <Grid ColumnSpacing="6" RowSpacing="6">
+            <Grid ColumnSpacing="6">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="110" />
@@ -490,10 +121,6 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
 
                 <TextBlock VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewCropModeHeader}" />
                 <ComboBox
@@ -503,7 +130,8 @@
                     DisplayMemberPath="Label"
                     ItemsSource="{Binding CropModes}"
                     SelectedItem="{Binding SelectedCropMode, Mode=TwoWay}"
-                    SelectionChanged="CropModeComboBox_SelectionChanged" />
+                    SelectionChanged="CropModeComboBox_SelectionChanged"
+                    VerticalAlignment="Center" />
 
                 <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewCropLeftHeader}" />
                 <NumberBox
@@ -513,7 +141,8 @@
                     AutomationProperties.Name="{Binding Texts.VapourSynthPreviewCropLeftHeader}"
                     Minimum="0"
                     SpinButtonPlacementMode="Hidden"
-                    ValueChanged="CropLeftBox_ValueChanged" />
+                    ValueChanged="CropLeftBox_ValueChanged"
+                    VerticalAlignment="Center" />
                 <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewCropTopHeader}" />
                 <NumberBox
                     x:Name="CropTopBox"
@@ -522,7 +151,8 @@
                     AutomationProperties.Name="{Binding Texts.VapourSynthPreviewCropTopHeader}"
                     Minimum="0"
                     SpinButtonPlacementMode="Hidden"
-                    ValueChanged="CropTopBox_ValueChanged" />
+                    ValueChanged="CropTopBox_ValueChanged"
+                    VerticalAlignment="Center" />
                 <TextBlock Grid.Column="6" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewCropWidthHeader}" />
                 <NumberBox
                     x:Name="CropWidthBox"
@@ -531,7 +161,8 @@
                     AutomationProperties.Name="{Binding Texts.VapourSynthPreviewCropWidthHeader}"
                     Minimum="1"
                     SpinButtonPlacementMode="Hidden"
-                    ValueChanged="CropWidthBox_ValueChanged" />
+                    ValueChanged="CropWidthBox_ValueChanged"
+                    VerticalAlignment="Center" />
                 <TextBlock Grid.Column="8" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewCropHeightHeader}" />
                 <NumberBox
                     x:Name="CropHeightBox"
@@ -540,7 +171,8 @@
                     AutomationProperties.Name="{Binding Texts.VapourSynthPreviewCropHeightHeader}"
                     Minimum="1"
                     SpinButtonPlacementMode="Hidden"
-                    ValueChanged="CropHeightBox_ValueChanged" />
+                    ValueChanged="CropHeightBox_ValueChanged"
+                    VerticalAlignment="Center" />
                 <TextBlock Grid.Column="10" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewCropRightHeader}" />
                 <NumberBox
                     x:Name="CropRightBox"
@@ -549,7 +181,8 @@
                     AutomationProperties.Name="{Binding Texts.VapourSynthPreviewCropRightHeader}"
                     Minimum="0"
                     SpinButtonPlacementMode="Hidden"
-                    ValueChanged="CropRightBox_ValueChanged" />
+                    ValueChanged="CropRightBox_ValueChanged"
+                    VerticalAlignment="Center" />
                 <TextBlock Grid.Column="12" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewCropBottomHeader}" />
                 <NumberBox
                     x:Name="CropBottomBox"
@@ -558,7 +191,8 @@
                     AutomationProperties.Name="{Binding Texts.VapourSynthPreviewCropBottomHeader}"
                     Minimum="0"
                     SpinButtonPlacementMode="Hidden"
-                    ValueChanged="CropBottomBox_ValueChanged" />
+                    ValueChanged="CropBottomBox_ValueChanged"
+                    VerticalAlignment="Center" />
                 <TextBlock Grid.Column="14" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewCropZoomHeader}" />
                 <NumberBox
                     x:Name="CropZoomBox"
@@ -568,14 +202,16 @@
                     Minimum="10"
                     SmallChange="10"
                     SpinButtonPlacementMode="Hidden"
-                    ValueChanged="CropZoomBox_ValueChanged" />
+                    ValueChanged="CropZoomBox_ValueChanged"
+                    VerticalAlignment="Center" />
                 <Button
                     x:Name="CopyCropCommandButton"
                     Grid.Column="16"
                     AutomationProperties.Name="{Binding Texts.VapourSynthPreviewCopyCropCommandButton}"
                     Click="CopyCropCommandButton_Click"
                     Padding="10,4"
-                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewCopyCropCommandButton}">
+                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewCopyCropCommandButton}"
+                    VerticalAlignment="Center">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <SymbolIcon Symbol="Copy" />
                         <TextBlock Text="{Binding Texts.VapourSynthPreviewCopyCropCommandButton}" />
@@ -583,12 +219,450 @@
                 </Button>
 
                 <TextBlock
-                    Grid.Row="1"
-                    Grid.ColumnSpan="19"
+                    Grid.Column="18"
                     Foreground="{ThemeResource SubtleTextBrush}"
-                    Text="{Binding ResolutionText}" />
+                    Text="{Binding ResolutionText}"
+                    TextTrimming="CharacterEllipsis"
+                    VerticalAlignment="Center" />
             </Grid>
         </Border>
 
+        <Border
+            Grid.Row="2"
+            Margin="8,0,8,8"
+            Padding="8,6"
+            Background="{ThemeResource CardAltBrush}"
+            BorderBrush="{ThemeResource CardBorderBrush}"
+            BorderThickness="{StaticResource AppCardBorderThickness}"
+            CornerRadius="{StaticResource AppCardCornerRadius}">
+            <Grid RowSpacing="4">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid ColumnSpacing="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="156" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="108" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="108" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="108" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="108" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewOutputHeader}" />
+                    <ComboBox
+                        x:Name="OutputSelectorComboBox"
+                        Grid.Column="1"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewOutputHeader}"
+                        DisplayMemberPath="Label"
+                        ItemsSource="{Binding Outputs}"
+                        SelectionChanged="OutputSelectorComboBox_SelectionChanged"
+                        VerticalAlignment="Center" />
+
+                    <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewFrameHeader}" />
+                    <NumberBox
+                        x:Name="FrameNumberBox"
+                        Grid.Column="3"
+                        AcceptsExpression="False"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewFrameHeader}"
+                        LargeChange="10"
+                        LostFocus="FrameNumberBox_LostFocus"
+                        Minimum="0"
+                        SmallChange="1"
+                        SpinButtonPlacementMode="Hidden"
+                        Width="108"
+                        ValueChanged="FrameNumberBox_ValueChanged"
+                        VerticalAlignment="Center" />
+
+                    <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewZoomHeader}" />
+                    <ComboBox
+                        x:Name="ZoomModeComboBox"
+                        Grid.Column="5"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewZoomHeader}"
+                        DisplayMemberPath="Label"
+                        ItemsSource="{Binding ZoomModes}"
+                        SelectedItem="{Binding SelectedZoomMode, Mode=TwoWay}"
+                        SelectionChanged="ZoomModeComboBox_SelectionChanged"
+                        VerticalAlignment="Center" />
+                    <NumberBox
+                        x:Name="ZoomRatioBox"
+                        Grid.Column="6"
+                        AcceptsExpression="False"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewZoomHeader}"
+                        Minimum="5"
+                        SmallChange="5"
+                        SpinButtonPlacementMode="Hidden"
+                        Width="108"
+                        ValueChanged="ZoomRatioBox_ValueChanged"
+                        VerticalAlignment="Center"
+                        Visibility="{Binding CustomZoomVisibility}" />
+
+                    <TextBlock
+                        Grid.Column="7"
+                        VerticalAlignment="Center"
+                        Text="{Binding Texts.VapourSynthPreviewTimelineModeHeader}" />
+                    <ComboBox
+                        x:Name="TimelineModeComboBox"
+                        Grid.Column="8"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewTimelineModeHeader}"
+                        DisplayMemberPath="Label"
+                        ItemsSource="{Binding TimelineModes}"
+                        SelectedItem="{Binding SelectedTimelineMode, Mode=TwoWay}"
+                        SelectionChanged="TimelineModeComboBox_SelectionChanged"
+                        VerticalAlignment="Center" />
+
+                    <TextBlock Grid.Column="9" VerticalAlignment="Center" Text="{Binding Texts.VapourSynthPreviewTimeStepHeader}" />
+                    <NumberBox
+                        x:Name="TimeStepSecondsBox"
+                        Grid.Column="10"
+                        AcceptsExpression="False"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewTimeStepHeader}"
+                        Minimum="0.001"
+                        SmallChange="0.1"
+                        SpinButtonPlacementMode="Hidden"
+                        Width="108"
+                        ValueChanged="TimeStepSecondsBox_ValueChanged"
+                        VerticalAlignment="Center" />
+                    <Button
+                        x:Name="TimeStepBackButton"
+                        Grid.Column="11"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewTimeStepBackButton}"
+                        Click="TimeStepBackButton_Click"
+                        MinWidth="32"
+                        Padding="8,4"
+                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewTimeStepBackButton}"
+                        VerticalAlignment="Center">
+                        <SymbolIcon Symbol="Back" />
+                    </Button>
+                    <Button
+                        x:Name="TimeStepForwardButton"
+                        Grid.Column="12"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewTimeStepForwardButton}"
+                        Click="TimeStepForwardButton_Click"
+                        MinWidth="32"
+                        Padding="8,4"
+                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewTimeStepForwardButton}"
+                        VerticalAlignment="Center">
+                        <SymbolIcon Symbol="Forward" />
+                    </Button>
+
+                    <CommandBar
+                        Grid.Column="13"
+                        Background="Transparent"
+                        DefaultLabelPosition="Collapsed"
+                        HorizontalAlignment="Stretch"
+                        IsDynamicOverflowEnabled="True"
+                        MinWidth="0"
+                        VerticalAlignment="Center">
+                        <AppBarButton
+                            x:Name="ReloadPreviewButton"
+                            Click="ReloadPreviewButton_Click"
+                            Label="{Binding Texts.VapourSynthReloadButton}"
+                            ToolTipService.ToolTip="{Binding Texts.VapourSynthReloadButton}">
+                            <AppBarButton.Icon>
+                                <SymbolIcon Symbol="Refresh" />
+                            </AppBarButton.Icon>
+                        </AppBarButton>
+                        <AppBarButton
+                            x:Name="SaveAllOutputsButton"
+                            Click="SaveAllOutputsButton_Click"
+                            Label="{Binding Texts.VapourSynthPreviewSaveAllFramesButton}"
+                            ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewSaveAllFramesButton}">
+                            <AppBarButton.Icon>
+                                <SymbolIcon Symbol="Save" />
+                            </AppBarButton.Icon>
+                        </AppBarButton>
+                        <AppBarButton
+                            x:Name="SaveSnapshotButton"
+                            Click="SaveSnapshotButton_Click"
+                            Label="{Binding Texts.VapourSynthPreviewSaveFrameButton}"
+                            ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewSaveFrameButton}">
+                            <AppBarButton.Icon>
+                                <SymbolIcon Symbol="SaveLocal" />
+                            </AppBarButton.Icon>
+                        </AppBarButton>
+                        <AppBarButton
+                            x:Name="CopyFrameButton"
+                            Click="CopyFrameButton_Click"
+                            Label="{Binding Texts.VapourSynthPreviewCopyFrameButton}"
+                            ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewCopyFrameButton}">
+                            <AppBarButton.Icon>
+                                <SymbolIcon Symbol="Copy" />
+                            </AppBarButton.Icon>
+                        </AppBarButton>
+                        <AppBarToggleButton
+                            x:Name="CropToggleButton"
+                            Checked="CropToggleButton_Checked"
+                            Label="{Binding Texts.VapourSynthPreviewCropButton}"
+                            ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewCropButton}"
+                            Unchecked="CropToggleButton_Unchecked">
+                            <AppBarToggleButton.Icon>
+                                <SymbolIcon Symbol="Cut" />
+                            </AppBarToggleButton.Icon>
+                        </AppBarToggleButton>
+                        <AppBarToggleButton
+                            x:Name="FramePropsToggleButton"
+                            Checked="FramePropsToggleButton_Checked"
+                            Label="{Binding Texts.VapourSynthPreviewFramePropsButton}"
+                            ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewFramePropsButton}"
+                            Unchecked="FramePropsToggleButton_Unchecked">
+                            <AppBarToggleButton.Icon>
+                                <SymbolIcon Symbol="List" />
+                            </AppBarToggleButton.Icon>
+                        </AppBarToggleButton>
+                    </CommandBar>
+
+                    <CommandBar
+                        Grid.Column="14"
+                        Background="Transparent"
+                        DefaultLabelPosition="Collapsed"
+                        HorizontalAlignment="Right"
+                        IsDynamicOverflowEnabled="False"
+                        OverflowButtonVisibility="Collapsed"
+                        VerticalAlignment="Center">
+                        <AppBarButton
+                            x:Name="AdvancedSettingsButton"
+                            Click="AdvancedSettingsButton_Click"
+                            Label="{Binding Texts.VapourSynthPreviewAdvancedSettingsButton}"
+                            ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewAdvancedSettingsButton}">
+                            <AppBarButton.Icon>
+                                <SymbolIcon Symbol="Setting" />
+                            </AppBarButton.Icon>
+                        </AppBarButton>
+                        <AppBarButton
+                            x:Name="ReturnToEditorButton"
+                            Click="ReturnToEditorButton_Click"
+                            Label="{Binding Texts.VapourSynthPreviewExitButton}"
+                            ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewExitButton}">
+                            <AppBarButton.Icon>
+                                <SymbolIcon Symbol="Back" />
+                            </AppBarButton.Icon>
+                        </AppBarButton>
+                    </CommandBar>
+                </Grid>
+
+                <Grid
+                    Grid.Row="1"
+                    ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock
+                        Foreground="{ThemeResource SubtleTextBrush}"
+                        Text="{Binding StatusText}"
+                        TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Column="1" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding FrameProgressText}" />
+                    <TextBlock Grid.Column="2" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding CurrentTimeText}" />
+                    <TextBlock Grid.Column="3" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding ResolutionText}" />
+                    <TextBlock Grid.Column="4" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding FormatText}" />
+                    <TextBlock Grid.Column="5" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding BitDepthText}" />
+                    <TextBlock Grid.Column="6" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding FpsText}" />
+                    <TextBlock Grid.Column="7" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding FrameTypeText}" />
+                </Grid>
+
+                <Grid
+                    Grid.Row="2"
+                    ColumnSpacing="6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="108" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Button
+                        x:Name="FirstFrameButton"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewFirstFrameButton}"
+                        Click="FirstFrameButton_Click"
+                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewFirstFrameButton}"
+                        VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Spacing="0">
+                            <SymbolIcon Symbol="Back" />
+                            <SymbolIcon Symbol="Back" />
+                        </StackPanel>
+                    </Button>
+                    <Button
+                        x:Name="StepBackButton"
+                        Grid.Column="1"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewPreviousFrameButton}"
+                        Click="StepBackButton_Click"
+                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewPreviousFrameButton}"
+                        VerticalAlignment="Center">
+                        <SymbolIcon Symbol="Back" />
+                    </Button>
+                    <Button
+                        x:Name="PlayPauseButton"
+                        Grid.Column="2"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewPlayPauseButton}"
+                        Click="PlayPauseButton_Click"
+                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewPlayPauseButton}"
+                        VerticalAlignment="Center">
+                        <SymbolIcon x:Name="PlayPauseIcon" Symbol="Play" />
+                    </Button>
+                    <Button
+                        x:Name="StepForwardButton"
+                        Grid.Column="3"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewNextFrameButton}"
+                        Click="StepForwardButton_Click"
+                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewNextFrameButton}"
+                        VerticalAlignment="Center">
+                        <SymbolIcon Symbol="Forward" />
+                    </Button>
+                    <Button
+                        x:Name="LastFrameButton"
+                        Grid.Column="4"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewLastFrameButton}"
+                        Click="LastFrameButton_Click"
+                        ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewLastFrameButton}"
+                        VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Spacing="0">
+                            <SymbolIcon Symbol="Forward" />
+                            <SymbolIcon Symbol="Forward" />
+                        </StackPanel>
+                    </Button>
+
+                    <TextBlock
+                        Grid.Column="5"
+                        Margin="6,0,2,0"
+                        VerticalAlignment="Center"
+                        Text="{Binding Texts.VapourSynthPreviewStepHeader}" />
+                    <NumberBox
+                        x:Name="StepSizeBox"
+                        Grid.Column="6"
+                        AcceptsExpression="False"
+                        AutomationProperties.Name="{Binding Texts.VapourSynthPreviewStepHeader}"
+                        Minimum="1"
+                        SmallChange="1"
+                        SpinButtonPlacementMode="Hidden"
+                        Width="108"
+                        Value="1"
+                        ValueChanged="StepSizeBox_ValueChanged"
+                        VerticalAlignment="Center" />
+
+                    <Grid
+                        Grid.Column="7"
+                        ColumnSpacing="4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ComboBox
+                            x:Name="ChapterSelectorComboBox"
+                            AutomationProperties.Name="{Binding Texts.VapourSynthPreviewChapterDialogTitle}"
+                            DisplayMemberPath="Label"
+                            ItemsSource="{Binding Chapters}"
+                            MaxWidth="220"
+                            MinWidth="120"
+                            SelectionChanged="ChapterSelectorComboBox_SelectionChanged"
+                            VerticalAlignment="Center" />
+                        <CommandBar
+                            Grid.Column="1"
+                            Background="Transparent"
+                            DefaultLabelPosition="Collapsed"
+                            IsDynamicOverflowEnabled="True"
+                            VerticalAlignment="Center">
+                            <AppBarButton
+                                x:Name="AddChapterButton"
+                                Click="AddChapterButton_Click"
+                                Label="{Binding Texts.VapourSynthPreviewAddChapterButton}"
+                                ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewAddChapterButton}">
+                                <AppBarButton.Icon>
+                                    <SymbolIcon Symbol="Add" />
+                                </AppBarButton.Icon>
+                            </AppBarButton>
+                            <AppBarButton
+                                x:Name="NextChapterButton"
+                                Click="NextChapterButton_Click"
+                                Label="{Binding Texts.VapourSynthPreviewNextChapterButton}"
+                                ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewNextChapterButton}">
+                                <AppBarButton.Icon>
+                                    <SymbolIcon Symbol="Forward" />
+                                </AppBarButton.Icon>
+                            </AppBarButton>
+                            <CommandBar.SecondaryCommands>
+                                <AppBarButton
+                                    x:Name="ImportChapterButton"
+                                    Click="ImportChapterButton_Click"
+                                    Label="{Binding Texts.VapourSynthPreviewImportChaptersButton}"
+                                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewImportChaptersButton}">
+                                    <AppBarButton.Icon>
+                                        <FontIcon Glyph="&#xE8E5;" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <AppBarButton
+                                    x:Name="ExportChapterButton"
+                                    Click="ExportChapterButton_Click"
+                                    Label="{Binding Texts.VapourSynthPreviewExportChaptersButton}"
+                                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewExportChaptersButton}">
+                                    <AppBarButton.Icon>
+                                        <FontIcon Glyph="&#xED25;" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <AppBarButton
+                                    x:Name="EditChapterButton"
+                                    Click="EditChapterButton_Click"
+                                    Label="{Binding Texts.VapourSynthPreviewEditChapterButton}"
+                                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewEditChapterButton}">
+                                    <AppBarButton.Icon>
+                                        <SymbolIcon Symbol="Edit" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                                <AppBarButton
+                                    x:Name="DeleteChapterButton"
+                                    Click="DeleteChapterButton_Click"
+                                    Label="{Binding Texts.VapourSynthPreviewDeleteChapterButton}"
+                                    ToolTipService.ToolTip="{Binding Texts.VapourSynthPreviewDeleteChapterButton}">
+                                    <AppBarButton.Icon>
+                                        <SymbolIcon Symbol="Delete" />
+                                    </AppBarButton.Icon>
+                                </AppBarButton>
+                            </CommandBar.SecondaryCommands>
+                        </CommandBar>
+                    </Grid>
+
+                    <Grid
+                        x:Name="FrameSliderHost"
+                        Grid.Column="8"
+                        PointerPressed="FrameSliderHost_PointerPressed">
+                        <Slider
+                            x:Name="FrameSlider"
+                            AutomationProperties.Name="{Binding Texts.VapourSynthPreviewFrameHeader}"
+                            LargeChange="10"
+                            Minimum="0"
+                            SmallChange="1"
+                            ValueChanged="FrameSlider_ValueChanged" />
+                        <Canvas
+                            x:Name="ChapterMarkerCanvas"
+                            IsHitTestVisible="False"
+                            SizeChanged="ChapterMarkerCanvas_SizeChanged" />
+                    </Grid>
+                </Grid>
+            </Grid>
+        </Border>
     </Grid>
 </Window>

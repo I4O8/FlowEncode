@@ -159,8 +159,9 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
                 progress?.Report(1.0);
                 return downloadPath;
             }
-            catch
+            catch (Exception ex)
             {
+                WriteDiagnostic($"Cached installer verification failed for '{downloadPath}'. {ex.GetType().Name}: {ex.Message}");
                 try
                 {
                     File.Delete(downloadPath);
@@ -180,8 +181,9 @@ public sealed class GitHubAppUpdateService : IAppUpdateService, IDisposable
             progress?.Report(1.0);
             return downloadPath;
         }
-        catch
+        catch (Exception ex)
         {
+            WriteDiagnostic($"Downloaded installer verification failed for '{downloadPath}'. {ex.GetType().Name}: {ex.Message}");
             try
             {
                 if (File.Exists(downloadPath))

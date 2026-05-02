@@ -32,7 +32,6 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
     private double _frameSliderMaximum;
     private bool _isFramePropsVisible;
     private bool _isCropPanelVisible;
-    private bool _isTimelinePanelVisible;
     private bool _isCropPreviewActive;
     private bool _silentSnapshotEnabled;
     private double _zoomRatio;
@@ -91,6 +90,8 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
     public ObservableCollection<StringChoiceOption> CropModes { get; }
 
     public ObservableCollection<StringChoiceOption> OutputSyncModes { get; }
+
+    public ObservableCollection<VapourSynthPreviewChapterOption> Chapters { get; } = [];
 
     public string WindowTitle
     {
@@ -243,23 +244,9 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
         }
     }
 
-    public bool IsTimelinePanelVisible
-    {
-        get => _isTimelinePanelVisible;
-        set
-        {
-            if (SetProperty(ref _isTimelinePanelVisible, value))
-            {
-                OnPropertyChanged(nameof(TimelinePanelVisibility));
-            }
-        }
-    }
-
     public Visibility FramePropsVisibility => _isFramePropsVisible ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility CropPanelVisibility => _isCropPanelVisible ? Visibility.Visible : Visibility.Collapsed;
-
-    public Visibility TimelinePanelVisibility => _isTimelinePanelVisible ? Visibility.Visible : Visibility.Collapsed;
 
     public double ZoomRatio
     {
@@ -379,6 +366,8 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
         ? $"{_currentTimeText} / {_totalTimeText}"
         : FrameProgressText;
 
+    public bool HasChapters => Chapters.Count > 0;
+
     public void ApplyLanguage(AppLanguage language)
     {
         if (Texts.Language == language)
@@ -399,6 +388,7 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(IsCustomZoomVisible));
         OnPropertyChanged(nameof(CustomZoomVisibility));
         OnPropertyChanged(nameof(IsAbsoluteCropMode));
+        RebuildChapterLabels();
     }
 
     public string WindowTitleDocumentName { get; private set; } = "VapourSynth";
@@ -436,6 +426,22 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
         _sourceFrameHeight = 0;
         RecomputeImageLayout();
         RaiseTimelinePropertyChanges();
+    }
+
+    public void ReplaceChapters(IEnumerable<VapourSynthPreviewChapterOption> chapters)
+    {
+        Chapters.Clear();
+        foreach (var chapter in chapters.OrderBy(static item => item.Timecode))
+        {
+            Chapters.Add(chapter);
+        }
+
+        OnPropertyChanged(nameof(HasChapters));
+    }
+
+    public void NotifyChaptersChanged()
+    {
+        OnPropertyChanged(nameof(HasChapters));
     }
 
     public void UpdateForOutput(VapourSynthPreviewOutputInfo outputInfo)
@@ -627,8 +633,34 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
         PreviewImageWidth = Math.Max(1, Math.Round(_sourceFrameWidth * ratio));
         PreviewImageHeight = Math.Max(1, Math.Round(_sourceFrameHeight * ratio));
     }
+
+    private void RebuildChapterLabels()
+    {
+        for (var index = 0; index < Chapters.Count; index++)
+        {
+            Chapters[index] = Chapters[index] with { Label = FormatChapterLabel(index + 1, Chapters[index].Timecode, Chapters[index].Title) };
+        }
+    }
+
+    public string FormatChapterLabel(int index, TimeSpan timecode, string title)
+    {
+        var name = string.IsNullOrWhiteSpace(title)
+            ? Texts.VapourSynthPreviewChapterFallbackTitle(index)
+            : title.Trim();
+        return $"{FormatChapterTimecode(timecode)} · {name}";
+    }
+
+    public static string FormatChapterTimecode(TimeSpan timecode)
+    {
+        return timecode.ToString(@"hh\:mm\:ss\.fff");
+    }
 }
 
 public sealed record VapourSynthPreviewOutputOption(
     VapourSynthPreviewOutputInfo Info,
+    string Label);
+
+public sealed record VapourSynthPreviewChapterOption(
+    TimeSpan Timecode,
+    string Title,
     string Label);

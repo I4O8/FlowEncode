@@ -198,8 +198,9 @@ public sealed class LocalExternalToolService : IExternalToolService, IDisposable
                     Directory.Delete(extractRoot, true);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                WriteDiagnostic($"Failed to delete extracted update directory '{extractRoot}'. {ex.GetType().Name}: {ex.Message}");
             }
         }
     }
@@ -258,6 +259,11 @@ public sealed class LocalExternalToolService : IExternalToolService, IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
+    }
+
+    private void WriteDiagnostic(string message)
+    {
+        AppDiagnosticsLog.Write(_paths, nameof(LocalExternalToolService), message);
     }
 
     private static void DeleteIfExists(string path)
@@ -590,8 +596,10 @@ public sealed class LocalExternalToolService : IExternalToolService, IDisposable
                 .FirstOrDefault(static line => !string.IsNullOrWhiteSpace(line))
                 ?? "Present";
         }
-        catch
+        catch (Exception ex)
         {
+            // System probe is best-effort, but keep a breadcrumb for environment-specific failures.
+            Debug.WriteLine($"Failed to probe external tool version for '{executablePath}'. {ex}");
             return "Present (version probe failed)";
         }
     }

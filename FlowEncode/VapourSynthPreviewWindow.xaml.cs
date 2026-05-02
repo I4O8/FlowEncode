@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using FlowEncode.Application;
 using FlowEncode.Domain;
 using FlowEncode.ViewModels;
@@ -57,6 +60,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
     private VapourSynthPreviewOpenRequest? _currentRequest;
     private VapourSynthPreviewSessionInfo? _currentSession;
     private VapourSynthPreviewOutputInfo? _selectedOutputInfo;
+    private int _activeChapterIndex = -1;
 
     public VapourSynthPreviewWindowViewModel ViewModel { get; }
 
@@ -98,7 +102,15 @@ public sealed partial class VapourSynthPreviewWindow : Window
         AppLanguage language,
         AppThemePreference themePreference)
     {
+        var shouldResetChapters = _currentRequest is not null
+            && !IsSamePreviewTarget(_currentRequest, request);
         _currentRequest = request;
+        if (shouldResetChapters)
+        {
+            _activeChapterIndex = -1;
+            ViewModel.ReplaceChapters([]);
+        }
+
         ApplyPresentation(language, themePreference);
         var loaded = await LoadSessionAsync(preserveCurrentFrame: true);
         if (!loaded)
@@ -116,6 +128,33 @@ public sealed partial class VapourSynthPreviewWindow : Window
         EnsurePreferredWindowPresentation();
         RefreshDisplayScale();
         return true;
+    }
+
+    private static bool IsSamePreviewTarget(
+        VapourSynthPreviewOpenRequest left,
+        VapourSynthPreviewOpenRequest right)
+    {
+        return string.Equals(
+            BuildPreviewTargetKey(left),
+            BuildPreviewTargetKey(right),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildPreviewTargetKey(VapourSynthPreviewOpenRequest request)
+    {
+        if (!string.IsNullOrWhiteSpace(request.SourceFilePath))
+        {
+            try
+            {
+                return $"file:{Path.GetFullPath(request.SourceFilePath)}";
+            }
+            catch
+            {
+                return $"file:{request.SourceFilePath.Trim()}";
+            }
+        }
+
+        return $"buffer:{request.WorkingDirectory}|{request.DisplayName}";
     }
 
     public async Task CloseForOwnerShutdownAsync()
@@ -383,17 +422,21 @@ public sealed partial class VapourSynthPreviewWindow : Window
             FrameNumberBox.Value = ViewModel.CurrentFrame;
             FrameSlider.Maximum = ViewModel.FrameSliderMaximum;
             FrameSlider.Value = ViewModel.CurrentFrame;
+            UpdateActiveChapter(ViewModel.CurrentFrame);
+            RedrawChapterMarkers();
             StepSizeBox.Value = ViewModel.StepSize;
             ZoomRatioBox.Value = Math.Round(ViewModel.ZoomRatio * 100);
             ZoomRatioBox.Visibility = ViewModel.CustomZoomVisibility;
             FramePropsPanel.Visibility = ViewModel.IsFramePropsVisible ? Visibility.Visible : Visibility.Collapsed;
             PropsColumn.Width = ViewModel.IsFramePropsVisible ? new GridLength(300) : new GridLength(0);
             FramePropsToggleButton.IsChecked = ViewModel.IsFramePropsVisible;
-            TimelineToggleButton.IsChecked = ViewModel.IsTimelinePanelVisible;
             CropToggleButton.IsChecked = ViewModel.IsCropPanelVisible;
             TimelineModeComboBox.SelectedItem = ViewModel.SelectedTimelineMode;
             TimeStepSecondsBox.Value = ViewModel.TimeStepSeconds;
             CropModeComboBox.SelectedItem = ViewModel.SelectedCropMode;
+            ChapterSelectorComboBox.SelectedItem = _activeChapterIndex >= 0 && _activeChapterIndex < ViewModel.Chapters.Count
+                ? ViewModel.Chapters[_activeChapterIndex]
+                : null;
             Title = ViewModel.WindowTitle;
 
             if (_selectedOutputInfo is not null)
@@ -432,6 +475,16 @@ public sealed partial class VapourSynthPreviewWindow : Window
     }
 
     private async void SaveSnapshotButton_Click(object sender, RoutedEventArgs e)
+    {
+        await SaveCurrentSnapshotAsync();
+    }
+
+    private async void SaveAllOutputsButton_Click(object sender, RoutedEventArgs e)
+    {
+        await SaveAllOutputsAtCurrentFrameAsync();
+    }
+
+    private async Task SaveCurrentSnapshotAsync()
     {
         if (_displayedFramePixels is null || _displayedFrameWidth <= 0 || _displayedFrameHeight <= 0)
         {
@@ -546,18 +599,6 @@ public sealed partial class VapourSynthPreviewWindow : Window
     private void FramePropsToggleButton_Unchecked(object sender, RoutedEventArgs e)
     {
         ViewModel.IsFramePropsVisible = false;
-        SyncControls();
-    }
-
-    private void TimelineToggleButton_Checked(object sender, RoutedEventArgs e)
-    {
-        ViewModel.IsTimelinePanelVisible = true;
-        SyncControls();
-    }
-
-    private void TimelineToggleButton_Unchecked(object sender, RoutedEventArgs e)
-    {
-        ViewModel.IsTimelinePanelVisible = false;
         SyncControls();
     }
 
@@ -926,7 +967,258 @@ public sealed partial class VapourSynthPreviewWindow : Window
             return;
         }
 
-        await RenderFrameAsync((int)Math.Round(e.NewValue));
+        var frameNumber = (int)Math.Round(e.NewValue);
+        UpdateActiveChapter(frameNumber);
+        await RenderFrameAsync(frameNumber);
+    }
+
+    private async void FrameSliderHost_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (_selectedOutputInfo is null || ViewModel.Chapters.Count == 0)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(FrameSliderHost).Position;
+        var track = MeasureSliderTrackBounds();
+        if (track.width <= 0)
+        {
+            return;
+        }
+
+        var clickedFrame = (int)Math.Round(Math.Clamp((point.X - track.offset) / track.width, 0, 1) * ViewModel.FrameSliderMaximum);
+        var nearest = ViewModel.Chapters
+            .Select((chapter, index) => new
+            {
+                Chapter = chapter,
+                Index = index,
+                Frame = TimecodeToFrame(chapter.Timecode, _selectedOutputInfo)
+            })
+            .OrderBy(item => Math.Abs(item.Frame - clickedFrame))
+            .FirstOrDefault();
+
+        if (nearest is null)
+        {
+            return;
+        }
+
+        var toleranceFrames = Math.Max(3, (int)Math.Round(GetOutputFps(_selectedOutputInfo) * 0.5));
+        if (Math.Abs(nearest.Frame - clickedFrame) > toleranceFrames)
+        {
+            return;
+        }
+
+        _activeChapterIndex = nearest.Index;
+        RedrawChapterMarkers();
+        e.Handled = true;
+        await RenderFrameAsync(nearest.Frame);
+    }
+
+    private void ChapterMarkerCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        RedrawChapterMarkers();
+    }
+
+    private async void ChapterSelectorComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isInternalControlUpdate
+            || _selectedOutputInfo is null
+            || ChapterSelectorComboBox.SelectedItem is not VapourSynthPreviewChapterOption chapter)
+        {
+            return;
+        }
+
+        var index = ViewModel.Chapters.IndexOf(chapter);
+        if (index < 0)
+        {
+            return;
+        }
+
+        _activeChapterIndex = index;
+        RedrawChapterMarkers();
+        await RenderFrameAsync(TimecodeToFrame(chapter.Timecode, _selectedOutputInfo));
+    }
+
+    private async void ImportChapterButton_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new FileOpenPicker
+        {
+            SuggestedStartLocation = PickerLocationId.DocumentsLibrary
+        };
+        picker.FileTypeFilter.Add(".txt");
+        picker.FileTypeFilter.Add(".xml");
+        InitializeWithWindow.Initialize(picker, GetWindowHandle());
+
+        var file = await picker.PickSingleFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var chapters = await LoadChapterFileAsync(file.Path);
+            ViewModel.ReplaceChapters(BuildChapterOptions(chapters));
+            _activeChapterIndex = -1;
+            UpdateChapterButtons();
+            RedrawChapterMarkers();
+            SetStatusText(ViewModel.Chapters.Count > 0
+                ? ViewModel.Texts.VapourSynthPreviewChaptersImportedStatus(ViewModel.Chapters.Count)
+                : ViewModel.Texts.VapourSynthPreviewNoChaptersFoundStatus);
+        }
+        catch (Exception ex)
+        {
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterImportFailedStatus(ex.Message));
+        }
+    }
+
+    private async void ExportChapterButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Chapters.Count == 0)
+        {
+            return;
+        }
+
+        var picker = new FileSavePicker
+        {
+            SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+            SuggestedFileName = "chapters",
+            DefaultFileExtension = ".txt"
+        };
+        picker.FileTypeChoices.Add(ViewModel.Texts.VapourSynthPreviewOgmChapterFileTypeDescription, [".txt"]);
+        picker.FileTypeChoices.Add(ViewModel.Texts.VapourSynthPreviewXmlChapterFileTypeDescription, [".xml"]);
+        InitializeWithWindow.Initialize(picker, GetWindowHandle());
+
+        var file = await picker.PickSaveFileAsync();
+        if (file is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var chapters = GetChapterEntries();
+            if (string.Equals(Path.GetExtension(file.Path), ".xml", StringComparison.OrdinalIgnoreCase))
+            {
+                await File.WriteAllTextAsync(file.Path, BuildMatroskaChaptersXml(chapters));
+            }
+            else
+            {
+                await File.WriteAllLinesAsync(file.Path, BuildOgmChapterLines(chapters));
+            }
+
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewChaptersExportedStatus(chapters.Count, file.Path));
+        }
+        catch (Exception ex)
+        {
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterExportFailedStatus(ex.Message));
+        }
+    }
+
+    private async void AddChapterButton_Click(object sender, RoutedEventArgs e)
+    {
+        var timecode = CurrentFrameToTimecode();
+        var title = ViewModel.Texts.VapourSynthPreviewChapterFallbackTitle(ViewModel.Chapters.Count + 1);
+        var result = await ShowChapterEditDialogAsync(timecode, title);
+        if (result is null)
+        {
+            return;
+        }
+
+        var chapters = GetChapterEntries();
+        chapters.Add(result);
+        ViewModel.ReplaceChapters(BuildChapterOptions(chapters));
+        UpdateActiveChapter(TimecodeToFrame(result.Timecode, _selectedOutputInfo));
+        UpdateChapterButtons();
+        RedrawChapterMarkers();
+        SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterAddedStatus(result.Title));
+        await RenderFrameAsync(TimecodeToFrame(result.Timecode, _selectedOutputInfo));
+    }
+
+    private async void EditChapterButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Chapters.Count == 0)
+        {
+            return;
+        }
+
+        var index = ResolveActiveChapterIndex();
+        if (index < 0)
+        {
+            return;
+        }
+
+        var current = ViewModel.Chapters[index];
+        var result = await ShowChapterEditDialogAsync(current.Timecode, current.Title);
+        if (result is null)
+        {
+            return;
+        }
+
+        var chapters = GetChapterEntries();
+        chapters[index] = result;
+        ViewModel.ReplaceChapters(BuildChapterOptions(chapters));
+        UpdateActiveChapter(TimecodeToFrame(result.Timecode, _selectedOutputInfo));
+        UpdateChapterButtons();
+        RedrawChapterMarkers();
+        SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterUpdatedStatus(result.Title));
+        await RenderFrameAsync(TimecodeToFrame(result.Timecode, _selectedOutputInfo));
+    }
+
+    private void DeleteChapterButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Chapters.Count == 0)
+        {
+            return;
+        }
+
+        var index = ResolveActiveChapterIndex();
+        if (index < 0)
+        {
+            return;
+        }
+
+        var chapters = GetChapterEntries();
+        var title = chapters[index].Title;
+        chapters.RemoveAt(index);
+        ViewModel.ReplaceChapters(BuildChapterOptions(chapters));
+        _activeChapterIndex = -1;
+        UpdateChapterButtons();
+        RedrawChapterMarkers();
+        SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterDeletedStatus(title));
+    }
+
+    private async void NextChapterButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Chapters.Count == 0)
+        {
+            return;
+        }
+
+        var currentFrame = ViewModel.CurrentFrame;
+        var next = ViewModel.Chapters
+            .Select((chapter, index) => new
+            {
+                Chapter = chapter,
+                Index = index,
+                Frame = TimecodeToFrame(chapter.Timecode, _selectedOutputInfo)
+            })
+            .Where(item => item.Frame > currentFrame)
+            .OrderBy(item => item.Frame)
+            .FirstOrDefault()
+            ?? ViewModel.Chapters
+                .Select((chapter, index) => new
+                {
+                    Chapter = chapter,
+                    Index = index,
+                    Frame = TimecodeToFrame(chapter.Timecode, _selectedOutputInfo)
+                })
+                .OrderBy(item => item.Frame)
+                .First();
+
+        _activeChapterIndex = next.Index;
+        RedrawChapterMarkers();
+        await RenderFrameAsync(next.Frame);
     }
 
     private async void PlaybackTimer_Tick(object? sender, object e)
@@ -1138,6 +1430,24 @@ public sealed partial class VapourSynthPreviewWindow : Window
         }
 
         return frameNumber / (outputInfo.FpsNumerator / (double)outputInfo.FpsDenominator);
+    }
+
+    private TimeSpan CurrentFrameToTimecode()
+    {
+        return FrameToTimecode(ViewModel.CurrentFrame, _selectedOutputInfo);
+    }
+
+    private static TimeSpan FrameToTimecode(int frameNumber, VapourSynthPreviewOutputInfo? outputInfo)
+    {
+        var fps = outputInfo is null ? 24.0 : GetOutputFps(outputInfo);
+        return TimeSpan.FromSeconds(Math.Max(0, frameNumber) / fps);
+    }
+
+    private static int TimecodeToFrame(TimeSpan timecode, VapourSynthPreviewOutputInfo? outputInfo)
+    {
+        var fps = outputInfo is null ? 24.0 : GetOutputFps(outputInfo);
+        var maxFrame = outputInfo is null ? int.MaxValue : Math.Max(0, outputInfo.TotalFrames - 1);
+        return Math.Clamp((int)Math.Round(Math.Max(0, timecode.TotalSeconds) * fps), 0, maxFrame);
     }
 
     private static double GetOutputFps(VapourSynthPreviewOutputInfo outputInfo)
@@ -1427,6 +1737,464 @@ public sealed partial class VapourSynthPreviewWindow : Window
         return withExtension ? $"{fileName}.png" : fileName;
     }
 
+    private string BuildShortcutSnapshotFileName(
+        VapourSynthPreviewOutputInfo outputInfo,
+        int frameNumber,
+        bool withExtension)
+    {
+        if (_currentRequest is null)
+        {
+            throw new InvalidOperationException("Preview context is not ready.");
+        }
+
+        var scriptFileName = !string.IsNullOrWhiteSpace(_currentRequest.SourceFilePath)
+            ? Path.GetFileName(_currentRequest.SourceFilePath)
+            : _currentRequest.DisplayName;
+        if (string.IsNullOrWhiteSpace(scriptFileName))
+        {
+            scriptFileName = "preview.vpy";
+        }
+        else if (string.IsNullOrWhiteSpace(Path.GetExtension(scriptFileName)))
+        {
+            scriptFileName += ".vpy";
+        }
+
+        scriptFileName = SanitizePathToken(scriptFileName);
+        var fileName = $"{scriptFileName}-{frameNumber}-{outputInfo.Index}";
+        return withExtension ? $"{fileName}.png" : fileName;
+    }
+
+    private async Task SaveAllOutputsAtCurrentFrameAsync()
+    {
+        if (_currentRequest is null || _selectedOutputInfo is null || ViewModel.Outputs.Count == 0)
+        {
+            return;
+        }
+
+        var picker = new FolderPicker
+        {
+            SuggestedStartLocation = PickerLocationId.PicturesLibrary
+        };
+        picker.FileTypeFilter.Add("*");
+        InitializeWithWindow.Initialize(picker, GetWindowHandle());
+
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder is null)
+        {
+            return;
+        }
+
+        StopPlayback();
+        var lockedFrame = ViewModel.CurrentFrame;
+        var previousOutput = _selectedOutputInfo;
+        var savedCount = 0;
+        var outputs = ViewModel.Outputs.Select(static option => option.Info).ToList();
+
+        try
+        {
+            foreach (var output in outputs)
+            {
+                var frameNumber = Math.Clamp(lockedFrame, 0, Math.Max(0, output.TotalFrames - 1));
+                var snapshotFrame = await RenderSnapshotFrameAsync(output, frameNumber);
+
+                if (snapshotFrame.Pixels.Length == 0 || snapshotFrame.Width <= 0 || snapshotFrame.Height <= 0)
+                {
+                    continue;
+                }
+
+                var snapshotPath = Path.Combine(folder.Path, BuildShortcutSnapshotFileName(output, frameNumber, withExtension: true));
+                await SavePixelsAsPngAsync(snapshotPath, snapshotFrame.Pixels, snapshotFrame.Width, snapshotFrame.Height);
+                savedCount++;
+            }
+
+            await SelectOutputAsync(previousOutput, Math.Clamp(lockedFrame, 0, Math.Max(0, previousOutput.TotalFrames - 1)), useExplicitFrame: true);
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewAllSnapshotsSavedStatus(savedCount, outputs.Count, lockedFrame));
+        }
+        catch (Exception ex)
+        {
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewAllSnapshotsFailedStatus(ex.Message));
+            if (_selectedOutputInfo?.Index != previousOutput.Index)
+            {
+                await SelectOutputAsync(previousOutput, Math.Clamp(lockedFrame, 0, Math.Max(0, previousOutput.TotalFrames - 1)), useExplicitFrame: true);
+            }
+        }
+    }
+
+    private async Task<IReadOnlyList<ChapterEntry>> LoadChapterFileAsync(string filePath)
+    {
+        var extension = Path.GetExtension(filePath);
+        if (string.Equals(extension, ".xml", StringComparison.OrdinalIgnoreCase))
+        {
+            return ParseMatroskaChaptersXml(await File.ReadAllTextAsync(filePath));
+        }
+
+        return ParseOgmChapters(await File.ReadAllLinesAsync(filePath));
+    }
+
+    private async Task<SnapshotFramePayload> RenderSnapshotFrameAsync(
+        VapourSynthPreviewOutputInfo outputInfo,
+        int frameNumber)
+    {
+        var frameData = await _previewService.RenderFrameAsync(outputInfo.Index, frameNumber);
+        var sourcePixels = await LoadFramePixelsAsync(frameData.RawPixelPath);
+        var outputState = GetOrCreateOutputState(outputInfo);
+        var cropBounds = GetEffectiveCropBounds(outputState, frameData.Width, frameData.Height);
+
+        if (!ViewModel.IsCropPanelVisible
+            || (cropBounds.Left == 0
+                && cropBounds.Top == 0
+                && cropBounds.Width == frameData.Width
+                && cropBounds.Height == frameData.Height))
+        {
+            return new SnapshotFramePayload(sourcePixels, frameData.Width, frameData.Height);
+        }
+
+        return new SnapshotFramePayload(
+            CropPixels(
+                sourcePixels,
+                frameData.Width,
+                cropBounds.Left,
+                cropBounds.Top,
+                cropBounds.Width,
+                cropBounds.Height),
+            cropBounds.Width,
+            cropBounds.Height);
+    }
+
+    private IReadOnlyList<VapourSynthPreviewChapterOption> BuildChapterOptions(IEnumerable<ChapterEntry> chapters)
+    {
+        return chapters
+            .OrderBy(static chapter => chapter.Timecode)
+            .Select((chapter, index) => new VapourSynthPreviewChapterOption(
+                chapter.Timecode,
+                chapter.Title,
+                ViewModel.FormatChapterLabel(index + 1, chapter.Timecode, chapter.Title)))
+            .ToList();
+    }
+
+    private List<ChapterEntry> GetChapterEntries()
+    {
+        return ViewModel.Chapters
+            .Select(static chapter => new ChapterEntry(chapter.Timecode, chapter.Title))
+            .OrderBy(static chapter => chapter.Timecode)
+            .ToList();
+    }
+
+    private static IReadOnlyList<ChapterEntry> ParseOgmChapters(IEnumerable<string> lines)
+    {
+        var timecodes = new Dictionary<int, TimeSpan>();
+        var titles = new Dictionary<int, string>();
+        var pattern = new Regex(@"^CHAPTER(?<index>\d+)(?<name>NAME)?=(?<value>.*)$", RegexOptions.IgnoreCase);
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+            if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#'))
+            {
+                continue;
+            }
+
+            var match = pattern.Match(line);
+            if (!match.Success
+                || !int.TryParse(match.Groups["index"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index))
+            {
+                continue;
+            }
+
+            var value = match.Groups["value"].Value.Trim();
+            if (match.Groups["name"].Success)
+            {
+                titles[index] = StripOgmLanguagePrefix(value);
+            }
+            else if (TryParseChapterTimecode(value, out var timecode))
+            {
+                timecodes[index] = timecode;
+            }
+        }
+
+        return timecodes
+            .OrderBy(static item => item.Key)
+            .Select(item => new ChapterEntry(
+                item.Value,
+                titles.TryGetValue(item.Key, out var title) && !string.IsNullOrWhiteSpace(title)
+                    ? title
+                    : $"Chapter {item.Key:00}"))
+            .ToList();
+    }
+
+    private static IReadOnlyList<ChapterEntry> ParseMatroskaChaptersXml(string xml)
+    {
+        var document = XDocument.Parse(xml);
+        return document
+            .Descendants("ChapterAtom")
+            .Select(atom =>
+            {
+                var startText = atom.Element("ChapterTimeStart")?.Value.Trim();
+                var title = atom
+                    .Elements("ChapterDisplay")
+                    .Elements("ChapterString")
+                    .FirstOrDefault()
+                    ?.Value
+                    .Trim();
+
+                return TryParseChapterTimecode(startText, out var timecode)
+                    ? new ChapterEntry(timecode, string.IsNullOrWhiteSpace(title) ? "Chapter" : title)
+                    : null;
+            })
+            .Where(static chapter => chapter is not null)
+            .Select(static chapter => chapter!)
+            .OrderBy(static chapter => chapter.Timecode)
+            .ToList();
+    }
+
+    private static IEnumerable<string> BuildOgmChapterLines(IReadOnlyList<ChapterEntry> chapters)
+    {
+        for (var index = 0; index < chapters.Count; index++)
+        {
+            var chapterNumber = index + 1;
+            yield return $"CHAPTER{chapterNumber:00}={FormatChapterTimecode(chapters[index].Timecode)}";
+            yield return $"CHAPTER{chapterNumber:00}NAME={chapters[index].Title}";
+        }
+    }
+
+    private static string BuildMatroskaChaptersXml(IReadOnlyList<ChapterEntry> chapters)
+    {
+        var editionEntry = new XElement("EditionEntry",
+            chapters.Select((chapter, index) =>
+                new XElement("ChapterAtom",
+                    new XElement("ChapterTimeStart", FormatChapterTimecode(chapter.Timecode)),
+                    new XElement("ChapterUID", index + 1),
+                    new XElement("ChapterDisplay",
+                        new XElement("ChapterString", chapter.Title),
+                        new XElement("ChapterLanguage", "und")))));
+
+        var document = new XDocument(
+            new XDeclaration("1.0", "UTF-8", null),
+            new XElement("Chapters", editionEntry));
+        return document.ToString();
+    }
+
+    private static bool TryParseChapterTimecode(string? value, out TimeSpan timecode)
+    {
+        timecode = default;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var text = value.Trim().Replace(',', '.');
+        var parts = text.Split(':');
+        if (parts.Length == 2)
+        {
+            text = $"00:{text}";
+        }
+
+        return TimeSpan.TryParseExact(
+                text,
+                [@"h\:mm\:ss\.fff", @"hh\:mm\:ss\.fff", @"h\:mm\:ss", @"hh\:mm\:ss"],
+                CultureInfo.InvariantCulture,
+                out timecode)
+            || TimeSpan.TryParse(text, CultureInfo.InvariantCulture, out timecode);
+    }
+
+    private static string FormatChapterTimecode(TimeSpan timecode)
+    {
+        return timecode.ToString(@"hh\:mm\:ss\.fff", CultureInfo.InvariantCulture);
+    }
+
+    private static string StripOgmLanguagePrefix(string value)
+    {
+        var separatorIndex = value.IndexOf(':', StringComparison.Ordinal);
+        if (separatorIndex > 0 && separatorIndex <= 3)
+        {
+            return value[(separatorIndex + 1)..].Trim();
+        }
+
+        return value.Trim();
+    }
+
+    private async Task<ChapterEntry?> ShowChapterEditDialogAsync(TimeSpan timecode, string title)
+    {
+        var titleBox = new TextBox
+        {
+            Header = ViewModel.Texts.VapourSynthPreviewChapterTitleHeader,
+            Text = title
+        };
+        var timecodeBox = new TextBox
+        {
+            Header = ViewModel.Texts.VapourSynthPreviewChapterTimecodeHeader,
+            Text = FormatChapterTimecode(timecode)
+        };
+        var panel = new StackPanel
+        {
+            Spacing = 12,
+            Children =
+            {
+                titleBox,
+                timecodeBox
+            }
+        };
+
+        var dialog = new ContentDialog
+        {
+            Title = ViewModel.Texts.VapourSynthPreviewChapterDialogTitle,
+            PrimaryButtonText = ViewModel.Texts.SaveButton,
+            CloseButtonText = ViewModel.Texts.CancelButton,
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = RootLayout.XamlRoot,
+            RequestedTheme = RootLayout.ActualTheme,
+            Content = panel
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary)
+        {
+            return null;
+        }
+
+        if (!TryParseChapterTimecode(timecodeBox.Text, out var parsedTimecode))
+        {
+            SetStatusText(ViewModel.Texts.VapourSynthPreviewChapterTimecodeInvalidStatus);
+            return null;
+        }
+
+        var normalizedTitle = titleBox.Text?.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedTitle))
+        {
+            normalizedTitle = ViewModel.Texts.VapourSynthPreviewChapterFallbackTitle(ViewModel.Chapters.Count + 1);
+        }
+
+        return new ChapterEntry(parsedTimecode, normalizedTitle);
+    }
+
+    private void UpdateChapterButtons()
+    {
+        var hasChapters = ViewModel.Chapters.Count > 0;
+        ExportChapterButton.IsEnabled = hasChapters;
+        EditChapterButton.IsEnabled = hasChapters;
+        DeleteChapterButton.IsEnabled = hasChapters;
+        NextChapterButton.IsEnabled = hasChapters;
+        ViewModel.NotifyChaptersChanged();
+    }
+
+    private int ResolveActiveChapterIndex()
+    {
+        if (ViewModel.Chapters.Count == 0)
+        {
+            return -1;
+        }
+
+        if (_activeChapterIndex >= 0 && _activeChapterIndex < ViewModel.Chapters.Count)
+        {
+            return _activeChapterIndex;
+        }
+
+        if (_selectedOutputInfo is null)
+        {
+            return 0;
+        }
+
+        var currentFrame = ViewModel.CurrentFrame;
+        var nearest = ViewModel.Chapters
+            .Select((chapter, index) => new
+            {
+                Index = index,
+                Frame = TimecodeToFrame(chapter.Timecode, _selectedOutputInfo)
+            })
+            .OrderBy(item => Math.Abs(item.Frame - currentFrame))
+            .First();
+
+        _activeChapterIndex = nearest.Index;
+        return nearest.Index;
+    }
+
+    private void UpdateActiveChapter(int frameNumber)
+    {
+        if (_selectedOutputInfo is null || ViewModel.Chapters.Count == 0)
+        {
+            _activeChapterIndex = -1;
+            UpdateChapterButtons();
+            return;
+        }
+
+        var nearest = ViewModel.Chapters
+            .Select((chapter, index) => new
+            {
+                Index = index,
+                Frame = TimecodeToFrame(chapter.Timecode, _selectedOutputInfo)
+            })
+            .OrderBy(item => Math.Abs(item.Frame - frameNumber))
+            .First();
+        var toleranceFrames = Math.Max(1, (int)Math.Round(GetOutputFps(_selectedOutputInfo) * 0.1));
+        _activeChapterIndex = Math.Abs(nearest.Frame - frameNumber) <= toleranceFrames
+            ? nearest.Index
+            : -1;
+        UpdateChapterButtons();
+    }
+
+    private void RedrawChapterMarkers()
+    {
+        ChapterMarkerCanvas.Children.Clear();
+        if (_selectedOutputInfo is null || ViewModel.Chapters.Count == 0)
+        {
+            return;
+        }
+
+        var height = ChapterMarkerCanvas.ActualHeight;
+        if (height <= 0)
+        {
+            height = FrameSlider.ActualHeight;
+        }
+
+        if (height <= 0 || FrameSlider.ActualWidth <= 0)
+        {
+            return;
+        }
+
+        var track = MeasureSliderTrackBounds();
+        if (track.width <= 0)
+        {
+            return;
+        }
+
+        var maxFrame = Math.Max(1, ViewModel.FrameSliderMaximum);
+        for (var index = 0; index < ViewModel.Chapters.Count; index++)
+        {
+            var frame = TimecodeToFrame(ViewModel.Chapters[index].Timecode, _selectedOutputInfo);
+            var x = track.offset + (frame / maxFrame) * track.width;
+            var marker = new Microsoft.UI.Xaml.Shapes.Line
+            {
+                X1 = x,
+                X2 = x,
+                Y1 = 3,
+                Y2 = Math.Max(4, height - 3),
+                StrokeThickness = index == _activeChapterIndex ? 3 : 2,
+                Stroke = new SolidColorBrush(index == _activeChapterIndex
+                    ? Microsoft.UI.Colors.Orange
+                    : Microsoft.UI.Colors.Gold)
+            };
+            ChapterMarkerCanvas.Children.Add(marker);
+        }
+    }
+
+    private (double offset, double width) MeasureSliderTrackBounds()
+    {
+        var thumbWidth = 24.0;
+        try
+        {
+            var thumb = FindDescendant<Thumb>(FrameSlider);
+            if (thumb is not null && thumb.ActualWidth > 0)
+            {
+                thumbWidth = thumb.ActualWidth;
+            }
+        }
+        catch
+        {
+        }
+
+        return (thumbWidth / 2.0, Math.Max(1, FrameSlider.ActualWidth - thumbWidth));
+    }
+
     private static string SanitizePathToken(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -1583,6 +2351,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         CropZoomBox.ValueChanged -= CropZoomBox_ValueChanged;
         StepSizeBox.ValueChanged -= StepSizeBox_ValueChanged;
         FrameSlider.ValueChanged -= FrameSlider_ValueChanged;
+        ChapterSelectorComboBox.SelectionChanged -= ChapterSelectorComboBox_SelectionChanged;
     }
 
     private void AttachControlEvents()
@@ -1620,6 +2389,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         CropZoomBox.ValueChanged += CropZoomBox_ValueChanged;
         StepSizeBox.ValueChanged += StepSizeBox_ValueChanged;
         FrameSlider.ValueChanged += FrameSlider_ValueChanged;
+        ChapterSelectorComboBox.SelectionChanged += ChapterSelectorComboBox_SelectionChanged;
     }
 
     private nint GetWindowHandle()
@@ -1915,7 +2685,14 @@ public sealed partial class VapourSynthPreviewWindow : Window
         if (e.Key == VirtualKey.S)
         {
             e.Handled = true;
-            await QuickSaveSnapshotAsync();
+            if (IsControlKeyPressed())
+            {
+                await SaveAllOutputsAtCurrentFrameAsync();
+            }
+            else
+            {
+                await QuickSaveSnapshotAsync();
+            }
         }
     }
 
@@ -2155,6 +2932,15 @@ public sealed partial class VapourSynthPreviewWindow : Window
         int Width,
         int Height,
         string ResolutionText);
+
+    private sealed record SnapshotFramePayload(
+        byte[] Pixels,
+        int Width,
+        int Height);
+
+    private sealed record ChapterEntry(
+        TimeSpan Timecode,
+        string Title);
 
     private sealed class PreviewOutputState
     {

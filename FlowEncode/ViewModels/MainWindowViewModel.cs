@@ -996,6 +996,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     public Visibility EmptyQueueVisibility => HasJobs ? Visibility.Collapsed : Visibility.Visible;
 
+    public Visibility QueueSelectionCommandBarVisibility => HasJobs ? Visibility.Visible : Visibility.Collapsed;
+
     public int SelectedQueueJobCount => _selectedQueueJobs.Count;
 
     public int SelectedQueuedJobCount => _selectedQueueJobs.Count(static job => job.State == EncodingJobState.Queued);
@@ -1269,6 +1271,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
         catch (Exception ex)
         {
+            WriteDiagnostic($"App update check failed. {ex.GetType().Name}: {ex.Message}");
             _lastAppUpdateErrorMessage = Texts.UpdatesCheckFailedStatus(ex.Message);
             RaiseAppUpdatePropertyChanges();
             if (reportStatus)
@@ -1339,6 +1342,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
         catch (Exception ex)
         {
+            WriteDiagnostic($"App update installer download failed for version '{_lastAppUpdateResult?.LatestVersion ?? "unknown"}'. {ex.GetType().Name}: {ex.Message}");
             _lastAppUpdateErrorMessage = Texts.AppUpdateDownloadFailedStatus(ex.Message);
             RaiseAppUpdatePropertyChanges();
             if (reportStatus)
@@ -1388,6 +1392,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
         catch (Exception ex)
         {
+            WriteDiagnostic($"SaveSettings failed. {ex.GetType().Name}: {ex.Message}");
             return ex.Message;
         }
     }
@@ -3629,10 +3634,16 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             {
                 await _setupBootstrapService.RefreshVsPluginPackageDefinitionsAsync(readiness);
             }
-            catch
+            catch (Exception ex)
             {
+                WriteDiagnostic($"Initial VS plugin dependency refresh failed. {ex.GetType().Name}: {ex.Message}");
             }
         });
+    }
+
+    private void WriteDiagnostic(string message)
+    {
+        AppDiagnosticsLog.Write(_appPaths, nameof(MainWindowViewModel), message);
     }
 
     public async Task<string?> PrepareWorkspaceRootChangeAsync(string proposedWorkspaceRootPath)
@@ -4290,6 +4301,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     {
         OnPropertyChanged(nameof(HasJobs));
         OnPropertyChanged(nameof(EmptyQueueVisibility));
+        OnPropertyChanged(nameof(QueueSelectionCommandBarVisibility));
         OnPropertyChanged(nameof(QueueSummary));
         RaiseQueueSelectionPropertyChanges();
     }

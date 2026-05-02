@@ -7,6 +7,13 @@ namespace FlowEncode.Infrastructure;
 
 public sealed class WindowsQueueCompletionActionService : IQueueCompletionActionService
 {
+    private readonly LocalAppPaths _appPaths;
+
+    public WindowsQueueCompletionActionService(LocalAppPaths appPaths)
+    {
+        _appPaths = appPaths;
+    }
+
     public Task<string?> ExecuteAsync(QueueCompletionAction action)
     {
         try
@@ -36,6 +43,10 @@ public sealed class WindowsQueueCompletionActionService : IQueueCompletionAction
         }
         catch (Exception ex)
         {
+            AppDiagnosticsLog.Write(
+                _appPaths,
+                nameof(WindowsQueueCompletionActionService),
+                $"Failed to execute queue completion action '{action}'. {ex.GetType().Name}: {ex.Message}");
             return Task.FromResult<string?>(ex.Message);
         }
     }

@@ -153,8 +153,9 @@ public sealed class GitHubReleaseEncoderUpdateService : IEncoderUpdateService, I
                     Directory.Delete(extractRoot, true);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                WriteDiagnostic($"Failed to delete extracted encoder update directory '{extractRoot}'. {ex.GetType().Name}: {ex.Message}");
             }
         }
     }
@@ -162,6 +163,11 @@ public sealed class GitHubReleaseEncoderUpdateService : IEncoderUpdateService, I
     public void Dispose()
     {
         _httpClient.Dispose();
+    }
+
+    private void WriteDiagnostic(string message)
+    {
+        AppDiagnosticsLog.Write(_paths, nameof(GitHubReleaseEncoderUpdateService), message);
     }
 
     private static void ExtractArchive(string archivePath, string extractRoot)

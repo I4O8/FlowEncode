@@ -275,6 +275,7 @@ public sealed class AppText
     public string VapourSynthPreviewExitButton => Pick("退出预览", "Exit Preview");
     public string VapourSynthPreviewFramePropsPaneTitle => Pick("Frame Props", "Frame Props");
     public string VapourSynthPreviewSaveFrameButton => Pick("保存帧", "Save Frame");
+    public string VapourSynthPreviewSaveAllFramesButton => Pick("保存所有输出同帧", "Save All Outputs");
     public string VapourSynthPreviewCopyFrameButton => Pick("复制帧", "Copy Frame");
     public string VapourSynthPreviewInsertFrameButton => Pick("插入帧号", "Insert Frame");
     public string VapourSynthPreviewAdvancedSettingsButton => Pick("高级设置", "Advanced");
@@ -295,6 +296,37 @@ public sealed class AppText
     public string VapourSynthPreviewTimelineFramesMode => Pick("帧", "Frames");
     public string VapourSynthPreviewTimelineTimeMode => Pick("时间", "Time");
     public string VapourSynthPreviewTimeStepHeader => Pick("时间步长（秒）", "Time Step (s)");
+    public string VapourSynthPreviewImportChaptersButton => Pick("导入章节", "Import Chapters");
+    public string VapourSynthPreviewExportChaptersButton => Pick("导出章节", "Export Chapters");
+    public string VapourSynthPreviewAddChapterButton => Pick("添加章节", "Add Chapter");
+    public string VapourSynthPreviewEditChapterButton => Pick("编辑章节", "Edit Chapter");
+    public string VapourSynthPreviewDeleteChapterButton => Pick("删除章节", "Delete Chapter");
+    public string VapourSynthPreviewNextChapterButton => Pick("下一章节", "Next Chapter");
+    public string VapourSynthPreviewChapterDialogTitle => Pick("章节", "Chapter");
+    public string VapourSynthPreviewChapterTitleHeader => Pick("章节名", "Title");
+    public string VapourSynthPreviewChapterTimecodeHeader => Pick("时间码", "Timecode");
+    public string VapourSynthPreviewChapterFileTypeDescription => Pick("章节文件", "Chapter File");
+    public string VapourSynthPreviewOgmChapterFileTypeDescription => Pick("OGM 章节文本", "OGM Chapter Text");
+    public string VapourSynthPreviewXmlChapterFileTypeDescription => Pick("Matroska Chapters XML", "Matroska Chapters XML");
+    public string VapourSynthPreviewChapterFallbackTitle(int index) =>
+        IsChinese ? $"Chapter {index:00}" : $"Chapter {index:00}";
+    public string VapourSynthPreviewChaptersImportedStatus(int count) =>
+        IsChinese ? $"已导入 {count} 个章节。" : $"Imported {count} chapters.";
+    public string VapourSynthPreviewChaptersExportedStatus(int count, string filePath) =>
+        IsChinese ? $"已导出 {count} 个章节：{filePath}" : $"Exported {count} chapters: {filePath}";
+    public string VapourSynthPreviewNoChaptersFoundStatus => Pick("没有找到有效章节。", "No valid chapters were found.");
+    public string VapourSynthPreviewChapterAddedStatus(string title) =>
+        IsChinese ? $"已添加章节：{title}" : $"Added chapter: {title}";
+    public string VapourSynthPreviewChapterUpdatedStatus(string title) =>
+        IsChinese ? $"已更新章节：{title}" : $"Updated chapter: {title}";
+    public string VapourSynthPreviewChapterDeletedStatus(string title) =>
+        IsChinese ? $"已删除章节：{title}" : $"Deleted chapter: {title}";
+    public string VapourSynthPreviewChapterImportFailedStatus(string detail) =>
+        IsChinese ? $"章节导入失败：{detail}" : $"Chapter import failed: {detail}";
+    public string VapourSynthPreviewChapterExportFailedStatus(string detail) =>
+        IsChinese ? $"章节导出失败：{detail}" : $"Chapter export failed: {detail}";
+    public string VapourSynthPreviewChapterTimecodeInvalidStatus =>
+        Pick("时间码格式无效，请使用 HH:MM:SS.mmm。", "Invalid timecode. Use HH:MM:SS.mmm.");
     public string VapourSynthPreviewCropPaneTitle => Pick("裁剪助手", "Crop Assistant");
     public string VapourSynthPreviewCropModeHeader => Pick("裁剪模式", "Crop Mode");
     public string VapourSynthPreviewCropAbsoluteMode => Pick("绝对", "Absolute");
@@ -344,6 +376,12 @@ public sealed class AppText
     public string VapourSynthPreviewSnapshotFileTypeDescription => Pick("PNG 图像", "PNG Image");
     public string VapourSynthPreviewSnapshotSavedStatus(string filePath) =>
         IsChinese ? $"已保存当前帧：{filePath}" : $"Saved current frame: {filePath}";
+    public string VapourSynthPreviewAllSnapshotsSavedStatus(int savedCount, int totalCount, int frameNumber) =>
+        IsChinese
+            ? $"已保存 {savedCount}/{totalCount} 个输出的第 {frameNumber} 帧。"
+            : $"Saved frame {frameNumber} for {savedCount}/{totalCount} outputs.";
+    public string VapourSynthPreviewAllSnapshotsFailedStatus(string detail) =>
+        IsChinese ? $"保存所有输出失败：{detail}" : $"Saving all outputs failed: {detail}";
     public string VapourSynthPreviewFrameCopiedStatus => Pick("已复制当前帧到剪贴板。", "Copied the current frame to the clipboard.");
     public string VapourSynthPreviewFrameNumberInsertedStatus => Pick("已把当前帧号插入脚本。", "Inserted the current frame number into the script.");
     public string VapourSynthPreviewCropSnippetInsertedStatus => Pick("已把裁剪命令插入脚本。", "Inserted the crop command into the script.");

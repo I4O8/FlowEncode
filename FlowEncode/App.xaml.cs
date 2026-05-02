@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Windows.AppLifecycle;
 using Microsoft.UI.Xaml;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
@@ -68,8 +69,9 @@ public partial class App : Microsoft.UI.Xaml.Application
             Directory.CreateDirectory(Path.GetDirectoryName(crashPath)!);
             File.WriteAllText(crashPath, e.Exception.ToString());
         }
-        catch
+        catch (Exception ex)
         {
+            Debug.WriteLine($"Failed to persist startup crash log. {ex}");
         }
     }
 
@@ -207,8 +209,9 @@ public partial class App : Microsoft.UI.Xaml.Application
         {
             cancellationTokenSource.Cancel();
         }
-        catch (ObjectDisposedException)
+        catch (ObjectDisposedException ex)
         {
+            WriteLifecycleDiagnostic($"Single-instance pipe cancellation source was already disposed during shutdown. {ex.GetType().Name}: {ex.Message}");
         }
 
         var pipeServerTask = _singleInstancePipeServerTask;
@@ -333,6 +336,9 @@ public partial class App : Microsoft.UI.Xaml.Application
                 Thread.Sleep(150);
             }
         }
+
+        TryWriteSecondaryActivationDiagnostic(
+            $"Failed to forward external open request to main instance after 20 attempts. Path='{normalizedPath}'.");
     }
 
     private void TryWriteActivationErrorLog(Exception exception)
@@ -347,8 +353,9 @@ public partial class App : Microsoft.UI.Xaml.Application
             Directory.CreateDirectory(Path.GetDirectoryName(crashPath)!);
             File.WriteAllText(crashPath, exception.ToString());
         }
-        catch
+        catch (Exception ex)
         {
+            Debug.WriteLine($"Failed to persist activation error log. {ex}");
         }
     }
 
@@ -363,8 +370,9 @@ public partial class App : Microsoft.UI.Xaml.Application
                 return;
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Debug.WriteLine($"Failed to write lifecycle diagnostic. {ex}");
         }
 
         TryWriteShutdownErrorLog(new InvalidOperationException(message));
@@ -378,8 +386,30 @@ public partial class App : Microsoft.UI.Xaml.Application
             Directory.CreateDirectory(Path.GetDirectoryName(crashPath)!);
             File.WriteAllText(crashPath, exception.ToString());
         }
-        catch
+        catch (Exception ex)
         {
+            Debug.WriteLine($"Failed to persist shutdown error log. {ex}");
+        }
+    }
+
+    private static void TryWriteSecondaryActivationDiagnostic(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        try
+        {
+            var crashPath = Path.Combine(GetFallbackCrashRoot(), "activation-error.log");
+            Directory.CreateDirectory(Path.GetDirectoryName(crashPath)!);
+            File.AppendAllText(
+                crashPath,
+                $"[{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}] {message}{Environment.NewLine}");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Failed to persist secondary activation diagnostic. {ex}");
         }
     }
 
