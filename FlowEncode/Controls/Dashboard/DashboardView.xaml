@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="FlowEncode.Controls.Dashboard.DashboardView"
+    x:Name="RootView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+    <ScrollViewer x:Name="DashboardScroller" VerticalScrollBarVisibility="Auto">
+        <StackPanel x:Name="DashboardContentStack" Padding="28,16,28,28" Spacing="24">
+            <Border x:Name="DashboardHeroCard" MinHeight="148" Padding="24" Background="{ThemeResource HeroBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppLargeCornerRadius}">
+                <Grid x:Name="DashboardHeroGrid" ColumnSpacing="20">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel x:Name="DashboardHeaderPanel" HorizontalAlignment="Left" Spacing="4" VerticalAlignment="Center">
+                        <TextBlock x:Name="DashboardHeaderTitle" HorizontalAlignment="Left" FontFamily="{StaticResource AppDisplayFont}" FontSize="38" FontWeight="SemiBold" Text="FlowEncode" TextWrapping="WrapWholeWords" />
+                        <TextBlock HorizontalAlignment="Left" MaxWidth="760" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.DashboardDescription}" TextWrapping="WrapWholeWords" />
+                    </StackPanel>
+
+                    <Border x:Name="DashboardHeroIconFrame" Grid.Column="1" Width="136" Height="136" Padding="0" Background="Transparent" BorderThickness="0" CornerRadius="0">
+                        <Image Stretch="Uniform" AutomationProperties.AccessibilityView="Raw">
+                            <Image.Source>
+                                <BitmapImage UriSource="ms-appx:///Assets/FlowEncodeHammer.png" />
+                            </Image.Source>
+                        </Image>
+                    </Border>
+                </Grid>
+            </Border>
+
+            <Grid x:Name="DashboardCardGrid" ColumnSpacing="20" RowSpacing="20" VerticalAlignment="Stretch">
+                <Grid.RowDefinitions>
+                    <RowDefinition x:Name="DashboardRow0" Height="Auto" />
+                    <RowDefinition x:Name="DashboardRow1" Height="Auto" />
+                    <RowDefinition x:Name="DashboardRow2" Height="Auto" />
+                    <RowDefinition x:Name="DashboardRow3" Height="Auto" />
+                    <RowDefinition x:Name="DashboardRow4" Height="Auto" />
+                    <RowDefinition x:Name="DashboardRow5" Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="DashboardPrimaryColumn" Width="*" />
+                    <ColumnDefinition x:Name="DashboardSecondaryColumn" Width="*" />
+                    <ColumnDefinition x:Name="DashboardTertiaryColumn" Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Button x:Name="DashboardDemuxButton" Grid.Row="0" Grid.Column="0" MinHeight="188" Padding="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" AutomationProperties.Name="{Binding Texts.NavBluRayDemux}" Background="Transparent" BorderThickness="0" Click="DashboardCardButton_Click" Tag="bluray-demux" ToolTipService.ToolTip="{Binding Texts.NavBluRayDemux}">
+                    <Border Padding="26" Background="{ThemeResource CardBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppCardCornerRadius}">
+                        <Grid RowSpacing="20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Viewbox Width="28" Height="28" HorizontalAlignment="Left">
+                                <SymbolIcon Symbol="Library" />
+                            </Viewbox>
+
+                            <StackPanel Grid.Row="1" Spacing="8">
+                                <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavBluRayDemux}" TextWrapping="WrapWholeWords" />
+                                <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardDemuxCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+
+                            <Grid Grid.Row="2" ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock FontWeight="SemiBold" Text="{Binding Texts.DashboardOpenModuleButton}" />
+                                <SymbolIcon Grid.Column="1" Symbol="Forward" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Button>
+
+                <Button x:Name="DashboardVapourSynthButton" Grid.Row="0" Grid.Column="1" MinHeight="188" Padding="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" AutomationProperties.Name="{Binding Texts.NavVapourSynthWorkspace}" Background="Transparent" BorderThickness="0" Click="DashboardCardButton_Click" Tag="vapoursynth-workspace" ToolTipService.ToolTip="{Binding Texts.NavVapourSynthWorkspace}">
+                    <Border Padding="26" Background="{ThemeResource CardBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppCardCornerRadius}">
+                        <Grid RowSpacing="20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Viewbox Width="28" Height="28" HorizontalAlignment="Left">
+                                <SymbolIcon Symbol="Edit" />
+                            </Viewbox>
+
+                            <StackPanel Grid.Row="1" Spacing="8">
+                                <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavVapourSynthWorkspace}" TextWrapping="WrapWholeWords" />
+                                <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardVapourSynthCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+
+                            <Grid Grid.Row="2" ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock FontWeight="SemiBold" Text="{Binding Texts.DashboardOpenModuleButton}" />
+                                <SymbolIcon Grid.Column="1" Symbol="Forward" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Button>
+
+                <Button x:Name="DashboardVideoEncodeButton" Grid.Row="0" Grid.Column="2" MinHeight="188" Padding="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" AutomationProperties.Name="{Binding Texts.NavOverview}" Background="Transparent" BorderThickness="0" Click="DashboardCardButton_Click" Tag="overview" ToolTipService.ToolTip="{Binding Texts.NavOverview}">
+                    <Border Padding="26" Background="{ThemeResource CardBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppCardCornerRadius}">
+                        <Grid RowSpacing="20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Viewbox Width="28" Height="28" HorizontalAlignment="Left">
+                                <SymbolIcon Symbol="Video" />
+                            </Viewbox>
+
+                            <StackPanel Grid.Row="1" Spacing="8">
+                                <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavOverview}" TextWrapping="WrapWholeWords" />
+                                <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardVideoEncodeCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+
+                            <Grid Grid.Row="2" ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock FontWeight="SemiBold" Text="{Binding Texts.DashboardOpenModuleButton}" />
+                                <SymbolIcon Grid.Column="1" Symbol="Forward" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Button>
+
+                <Button x:Name="DashboardAudioButton" Grid.Row="1" Grid.Column="0" MinHeight="188" Padding="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" AutomationProperties.Name="{Binding Texts.NavAudioProcessing}" Background="Transparent" BorderThickness="0" Click="DashboardCardButton_Click" Tag="audio-process" ToolTipService.ToolTip="{Binding Texts.NavAudioProcessing}">
+                    <Border Padding="26" Background="{ThemeResource CardBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppCardCornerRadius}">
+                        <Grid RowSpacing="20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Viewbox Width="28" Height="28" HorizontalAlignment="Left">
+                                <SymbolIcon Symbol="Audio" />
+                            </Viewbox>
+
+                            <StackPanel Grid.Row="1" Spacing="8">
+                                <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavAudioProcessing}" TextWrapping="WrapWholeWords" />
+                                <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardAudioTranscodeCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+
+                            <Grid Grid.Row="2" ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock FontWeight="SemiBold" Text="{Binding Texts.DashboardOpenModuleButton}" />
+                                <SymbolIcon Grid.Column="1" Symbol="Forward" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Button>
+
+                <Button x:Name="DashboardAutoCompressionButton" Grid.Row="1" Grid.Column="1" MinHeight="188" Padding="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" AutomationProperties.Name="{Binding Texts.NavAutoCompression}" Background="Transparent" BorderThickness="0" Click="DashboardCardButton_Click" Tag="auto-compress" ToolTipService.ToolTip="{Binding Texts.NavAutoCompression}">
+                    <Border Padding="26" Background="{ThemeResource CardBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppCardCornerRadius}">
+                        <Grid RowSpacing="20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Viewbox Width="28" Height="28" HorizontalAlignment="Left">
+                                <SymbolIcon Symbol="Play" />
+                            </Viewbox>
+
+                            <StackPanel Grid.Row="1" Spacing="8">
+                                <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavAutoCompression}" TextWrapping="WrapWholeWords" />
+                                <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardAutoCompressionCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+
+                            <Grid Grid.Row="2" ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock FontWeight="SemiBold" Text="{Binding Texts.DashboardOpenModuleButton}" />
+                                <SymbolIcon Grid.Column="1" Symbol="Forward" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Button>
+
+                <Button x:Name="DashboardSettingsButton" Grid.Row="1" Grid.Column="2" MinHeight="188" Padding="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" AutomationProperties.Name="{Binding Texts.NavSettings}" Background="Transparent" BorderThickness="0" Click="DashboardCardButton_Click" Tag="settings" ToolTipService.ToolTip="{Binding Texts.NavSettings}">
+                    <Border Padding="26" Background="{ThemeResource CardBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppCardCornerRadius}">
+                        <Grid RowSpacing="20">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <Viewbox Width="28" Height="28" HorizontalAlignment="Left">
+                                <SymbolIcon Symbol="Setting" />
+                            </Viewbox>
+
+                            <StackPanel Grid.Row="1" Spacing="8">
+                                <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="26" FontWeight="SemiBold" Text="{Binding Texts.NavSettings}" TextWrapping="WrapWholeWords" />
+                                <TextBlock Foreground="{ThemeResource SubtleTextBrush}" MaxLines="3" Text="{Binding Texts.DashboardSettingsCardDescription}" TextTrimming="CharacterEllipsis" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+
+                            <Grid Grid.Row="2" ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock FontWeight="SemiBold" Text="{Binding Texts.DashboardOpenModuleButton}" />
+                                <SymbolIcon Grid.Column="1" Symbol="Forward" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Button>
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -62,13 +62,13 @@ public partial class MainWindowViewModel
     private const int AudioProcessingStageLogLimit = 48;
     private static readonly TimeSpan AudioSourceProbeDebounceInterval = TimeSpan.FromMilliseconds(200);
 
-    public ObservableCollection<AudioWorkflowOption> AudioWorkflowOptions { get; } = [];
+    internal ObservableCollection<AudioWorkflowOption> AudioWorkflowOptions { get; } = [];
 
-    public ObservableCollection<AudioEac3ToOutputFormatOption> AudioEac3ToOutputFormatOptions { get; } = [];
+    internal ObservableCollection<AudioEac3ToOutputFormatOption> AudioEac3ToOutputFormatOptions { get; } = [];
 
-    public ObservableCollection<AudioOpusBitrateOption> AudioOpusBitrateOptions { get; } = [];
+    internal ObservableCollection<AudioOpusBitrateOption> AudioOpusBitrateOptions { get; } = [];
 
-    public string AudioProcessingSourcePath
+    internal string AudioProcessingSourcePath
     {
         get => _audioProcessingSourcePath;
         set
@@ -81,7 +81,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public string AudioProcessingOutputPath
+    internal string AudioProcessingOutputPath
     {
         get => _audioProcessingOutputPath;
         set
@@ -103,7 +103,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public AudioWorkflowOption? SelectedAudioWorkflow
+    internal AudioWorkflowOption? SelectedAudioWorkflow
     {
         get => _selectedAudioWorkflow;
         set
@@ -120,7 +120,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public AudioEac3ToOutputFormatOption? SelectedAudioEac3ToOutputFormat
+    internal AudioEac3ToOutputFormatOption? SelectedAudioEac3ToOutputFormat
     {
         get => _selectedAudioEac3ToOutputFormat;
         set
@@ -134,7 +134,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public AudioOpusBitrateOption? SelectedAudioOpusBitrate
+    internal AudioOpusBitrateOption? SelectedAudioOpusBitrate
     {
         get => _selectedAudioOpusBitrate;
         set
@@ -147,7 +147,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public bool AudioOpusUseMappingFamily1
+    internal bool AudioOpusUseMappingFamily1
     {
         get => _audioOpusUseMappingFamily1;
         set
@@ -160,7 +160,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public string AudioProcessingAdditionalArguments
+    internal string AudioProcessingAdditionalArguments
     {
         get => _audioProcessingAdditionalArguments;
         set
@@ -174,10 +174,10 @@ public partial class MainWindowViewModel
         }
     }
 
-    public string AudioProcessingStatusText
+    internal string AudioProcessingStatusText
     {
         get => _audioProcessingStatusText;
-        private set
+        set
         {
             if (SetProperty(ref _audioProcessingStatusText, value))
             {
@@ -188,10 +188,10 @@ public partial class MainWindowViewModel
         }
     }
 
-    public string AudioProcessingCommandLine
+    internal string AudioProcessingCommandLine
     {
         get => _audioProcessingCommandLine;
-        private set
+        set
         {
             if (SetProperty(ref _audioProcessingCommandLine, value))
             {
@@ -200,10 +200,10 @@ public partial class MainWindowViewModel
         }
     }
 
-    public string AudioProcessingLog
+    internal string AudioProcessingLog
     {
         get => _audioProcessingLog;
-        private set
+        set
         {
             if (SetProperty(ref _audioProcessingLog, value))
             {
@@ -212,10 +212,10 @@ public partial class MainWindowViewModel
         }
     }
 
-    public double AudioProcessingProgressPercent
+    internal double AudioProcessingProgressPercent
     {
         get => _audioProcessingProgressPercent;
-        private set
+        set
         {
             var normalized = Math.Clamp(value, 0, 100);
             if (SetProperty(ref _audioProcessingProgressPercent, normalized))
@@ -227,10 +227,10 @@ public partial class MainWindowViewModel
         }
     }
 
-    public bool AudioProcessingProgressIsIndeterminate
+    internal bool AudioProcessingProgressIsIndeterminate
     {
         get => _audioProcessingProgressIsIndeterminate;
-        private set
+        set
         {
             if (SetProperty(ref _audioProcessingProgressIsIndeterminate, value))
             {
@@ -242,9 +242,9 @@ public partial class MainWindowViewModel
         }
     }
 
-    public bool IsAudioProcessingRunning => _isAudioProcessingRunning;
+    internal bool IsAudioProcessingRunning => _isAudioProcessingRunning;
 
-    public bool CanStartAudioProcessing =>
+    internal bool CanStartAudioProcessing =>
         !_isAudioProcessingRunning
         && SelectedAudioWorkflow is not null
         && !string.IsNullOrWhiteSpace(AudioProcessingSourcePath)
@@ -252,9 +252,9 @@ public partial class MainWindowViewModel
         && GetSelectedAudioCapabilityState() == ReadinessState.Ready
         && string.IsNullOrWhiteSpace(ValidateAudioProcessingConfiguration(requireSourceExists: false, out _));
 
-    public bool CanCancelAudioProcessing => _isAudioProcessingRunning;
+    internal bool CanCancelAudioProcessing => _isAudioProcessingRunning;
 
-    public bool CanClearAudioProcessingTask =>
+    internal bool CanClearAudioProcessingTask =>
         !_isAudioProcessingRunning
         && (!string.IsNullOrWhiteSpace(AudioProcessingSourcePath)
             || !string.IsNullOrWhiteSpace(AudioProcessingOutputPath)
@@ -262,22 +262,22 @@ public partial class MainWindowViewModel
             || !string.IsNullOrWhiteSpace(AudioProcessingLog)
             || !string.Equals(AudioProcessingStatusText, Texts.AudioProcessingIdleStatus, StringComparison.Ordinal));
 
-    public string AudioProcessingProgressLabel =>
+    internal string AudioProcessingProgressLabel =>
         AudioProcessingProgressIsIndeterminate && _isAudioProcessingRunning
             ? Texts.AudioProcessingProgressActiveLabel
             : FormatAudioProcessingPercent(AudioProcessingProgressPercent);
 
-    public double AudioProcessingProgressValue => AudioProcessingProgressPercent / 100.0;
+    internal double AudioProcessingProgressValue => AudioProcessingProgressPercent / 100.0;
 
-    public string AudioProcessingProgressPercentText =>
+    internal string AudioProcessingProgressPercentText =>
         AudioProcessingProgressIsIndeterminate && _isAudioProcessingRunning && AudioProcessingProgressPercent <= 0
             ? "--"
             : FormatAudioProcessingPercent(AudioProcessingProgressPercent);
 
-    public string AudioProcessingProgressPrimaryText =>
+    internal string AudioProcessingProgressPrimaryText =>
         AudioProcessingProgressPercentText;
 
-    public string AudioProcessingProgressSecondaryText =>
+    internal string AudioProcessingProgressSecondaryText =>
         _audioProcessingTelemetry is not null
             ? Texts.AudioProcessingTelemetrySummary(_audioProcessingTelemetry)
             : !string.IsNullOrWhiteSpace(_audioProcessingPhaseLabel)
@@ -289,29 +289,29 @@ public partial class MainWindowViewModel
                         ? Texts.AudioProcessingDdpWarmupHint
                     : string.Empty;
 
-    public Visibility AudioProcessingProgressSecondaryVisibility =>
+    internal Visibility AudioProcessingProgressSecondaryVisibility =>
         string.IsNullOrWhiteSpace(AudioProcessingProgressSecondaryText)
             ? Visibility.Collapsed
             : Visibility.Visible;
 
-    public Visibility AudioProcessingProgressHintVisibility =>
+    internal Visibility AudioProcessingProgressHintVisibility =>
         _isAudioProcessingRunning && AudioProcessingProgressIsIndeterminate
             ? Visibility.Visible
             : Visibility.Collapsed;
 
-    public string AudioProcessingProgressHint => Texts.AudioProcessingProgressIndeterminateHint;
+    internal string AudioProcessingProgressHint => Texts.AudioProcessingProgressIndeterminateHint;
 
-    public Brush AudioProcessingStatusPanelBorderBrush => ResolveTaskStatusPanelBorderBrush(_audioProcessingDisplayState);
+    internal Brush AudioProcessingStatusPanelBorderBrush => ResolveTaskStatusPanelBorderBrush(_audioProcessingDisplayState);
 
-    public Brush AudioProcessingProgressTrackBrush => ResolveAudioProcessingProgressTrackBrush(_audioProcessingDisplayState);
+    internal Brush AudioProcessingProgressTrackBrush => ResolveAudioProcessingProgressTrackBrush(_audioProcessingDisplayState);
 
-    public Brush AudioProcessingProgressBorderBrush => ResolveAudioProcessingProgressBorderBrush(_audioProcessingDisplayState);
+    internal Brush AudioProcessingProgressBorderBrush => ResolveAudioProcessingProgressBorderBrush(_audioProcessingDisplayState);
 
-    public Brush AudioProcessingProgressFillBrush => ResolveAudioProcessingProgressFillBrush(_audioProcessingDisplayState);
+    internal Brush AudioProcessingProgressFillBrush => ResolveAudioProcessingProgressFillBrush(_audioProcessingDisplayState);
 
-    public string AudioProcessingSuggestedOutputExtension => GetAudioProcessingSuggestedExtension();
+    internal string AudioProcessingSuggestedOutputExtension => GetAudioProcessingSuggestedExtension();
 
-    public string AudioProcessingSuggestedOutputFileName
+    internal string AudioProcessingSuggestedOutputFileName
     {
         get
         {
@@ -322,25 +322,25 @@ public partial class MainWindowViewModel
         }
     }
 
-    public string AudioProcessingOutputPreviewText => _isAudioProcessingInputRefreshPending
+    internal string AudioProcessingOutputPreviewText => _isAudioProcessingInputRefreshPending
         ? Texts.OutputPreviewUpdating
         : BuildOutputPreviewText(TryResolveAudioProcessingOutputPreviewPath());
 
-    public string AudioProcessingOutputHeader => Texts.OutputDirectoryHeader;
+    internal string AudioProcessingOutputHeader => Texts.OutputDirectoryHeader;
 
-    public string AudioProcessingOutputBrowseButtonText => Texts.ChooseFolderButton;
+    internal string AudioProcessingOutputBrowseButtonText => Texts.ChooseFolderButton;
 
-    public Visibility AudioEac3ToOptionsVisibility =>
+    internal Visibility AudioEac3ToOptionsVisibility =>
         SelectedAudioWorkflow?.Value == AudioProcessingMode.Eac3To
             ? Visibility.Visible
             : Visibility.Collapsed;
 
-    public Visibility AudioOpusOptionsVisibility =>
+    internal Visibility AudioOpusOptionsVisibility =>
         SelectedAudioWorkflow?.Value == AudioProcessingMode.Opus
             ? Visibility.Visible
             : Visibility.Collapsed;
 
-    public string AudioSourceInfoText
+    internal string AudioSourceInfoText
     {
         get
         {
@@ -370,9 +370,9 @@ public partial class MainWindowViewModel
         }
     }
 
-    public string AudioWorkflowRecommendation => Texts.AudioSourceRecommendation(_audioSourceInfo);
+    internal string AudioWorkflowRecommendation => Texts.AudioSourceRecommendation(_audioSourceInfo);
 
-    public string AudioCapabilitySummary
+    internal string AudioCapabilitySummary
     {
         get
         {
@@ -404,12 +404,12 @@ public partial class MainWindowViewModel
         }
     }
 
-    public string? ValidateAudioProcessingForStart(out string? existingOutputPath)
+    internal string? ValidateAudioProcessingForStart(out string? existingOutputPath)
     {
         return ValidateAudioProcessingConfiguration(requireSourceExists: true, out existingOutputPath);
     }
 
-    public async Task<string?> StartAudioProcessingAsync()
+    internal async Task<string?> StartAudioProcessingAsync()
     {
         if (_isAudioProcessingRunning)
         {
@@ -516,7 +516,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public void CancelAudioProcessing()
+    internal void CancelAudioProcessing()
     {
         if (!_isAudioProcessingRunning)
         {
@@ -534,7 +534,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public void ClearAudioProcessingTask()
+    internal void ClearAudioProcessingTask()
     {
         if (_isAudioProcessingRunning)
         {
@@ -573,15 +573,7 @@ public partial class MainWindowViewModel
 
     partial void InitializeAudioProcessingState()
     {
-        ReplaceItems(AudioWorkflowOptions, BuildAudioWorkflowOptions());
-        ReplaceItems(AudioEac3ToOutputFormatOptions, BuildAudioEac3ToOutputFormatOptions());
-        ReplaceItems(AudioOpusBitrateOptions, BuildAudioOpusBitrateOptions());
-        _selectedAudioWorkflow = AudioWorkflowOptions.FirstOrDefault();
-        _selectedAudioEac3ToOutputFormat = AudioEac3ToOutputFormatOptions.FirstOrDefault();
-        _selectedAudioOpusBitrate = null;
-        _audioOpusUseMappingFamily1 = false;
-        _audioProcessingDisplayState = null;
-        _audioProcessingStatusText = _texts.AudioProcessingIdleStatus;
+        AudioProcessingModule.InitializeState();
     }
 
     partial void DisposeAudioProcessingState()
@@ -594,79 +586,12 @@ public partial class MainWindowViewModel
 
     partial void HandleAudioEnvironmentReadinessApplied()
     {
-        RaiseAudioProcessingEnvironmentPropertyChanges();
+        AudioProcessingModule.HandleEnvironmentReadinessApplied();
     }
 
     partial void ApplyAudioProcessingLanguageState()
     {
-        var workflow = SelectedAudioWorkflow?.Value ?? AudioProcessingMode.Ddp;
-        var eac3ToOutputFormat = SelectedAudioEac3ToOutputFormat?.Value ?? AudioEac3ToOutputFormat.Flac;
-        var opusBitrate = SelectedAudioOpusBitrate?.Value;
-        var useOpusMappingFamily1 = AudioOpusUseMappingFamily1;
-
-        ReplaceItems(AudioWorkflowOptions, BuildAudioWorkflowOptions());
-        ReplaceItems(AudioEac3ToOutputFormatOptions, BuildAudioEac3ToOutputFormatOptions());
-        ReplaceItems(AudioOpusBitrateOptions, BuildAudioOpusBitrateOptions());
-        _selectedAudioWorkflow = AudioWorkflowOptions.FirstOrDefault(option => option.Value == workflow) ?? AudioWorkflowOptions.FirstOrDefault();
-        _selectedAudioEac3ToOutputFormat = AudioEac3ToOutputFormatOptions.FirstOrDefault(option => option.Value == eac3ToOutputFormat) ?? AudioEac3ToOutputFormatOptions.FirstOrDefault();
-        _selectedAudioOpusBitrate = opusBitrate.HasValue
-            ? AudioOpusBitrateOptions.FirstOrDefault(option => option.Value == opusBitrate.Value)
-            : null;
-        _audioOpusUseMappingFamily1 = useOpusMappingFamily1;
-
-        OnPropertyChanged(nameof(SelectedAudioWorkflow));
-        OnPropertyChanged(nameof(SelectedAudioEac3ToOutputFormat));
-        OnPropertyChanged(nameof(SelectedAudioOpusBitrate));
-        OnPropertyChanged(nameof(AudioOpusUseMappingFamily1));
-        OnPropertyChanged(nameof(AudioEac3ToOptionsVisibility));
-        OnPropertyChanged(nameof(AudioOpusOptionsVisibility));
-
-        if (!_isAudioProcessingRunning)
-        {
-            SetAudioProcessingDisplayState(null);
-            AudioProcessingStatusText = Texts.AudioProcessingIdleStatus;
-        }
-
-        RaiseAudioProcessingEnvironmentPropertyChanges();
-        RaiseAudioProcessingInputPropertyChanges();
-        OnPropertyChanged(nameof(AudioSourceInfoText));
-        OnPropertyChanged(nameof(AudioWorkflowRecommendation));
-        OnPropertyChanged(nameof(CanCancelAudioProcessing));
-        OnPropertyChanged(nameof(AudioProcessingProgressLabel));
-        OnPropertyChanged(nameof(AudioProcessingProgressHint));
-        OnPropertyChanged(nameof(AudioProcessingProgressHintVisibility));
-
-        RefreshAudioProcessingCommandPreview();
-    }
-
-    private IEnumerable<AudioWorkflowOption> BuildAudioWorkflowOptions()
-    {
-        return
-        [
-            new AudioWorkflowOption(AudioProcessingMode.Ddp, Texts.AudioWorkflowLabel(AudioProcessingMode.Ddp)),
-            new AudioWorkflowOption(AudioProcessingMode.Opus, Texts.AudioWorkflowLabel(AudioProcessingMode.Opus)),
-            new AudioWorkflowOption(AudioProcessingMode.Eac3To, Texts.AudioWorkflowLabel(AudioProcessingMode.Eac3To))
-        ];
-    }
-
-    private IEnumerable<AudioEac3ToOutputFormatOption> BuildAudioEac3ToOutputFormatOptions()
-    {
-        return
-        [
-            new AudioEac3ToOutputFormatOption(AudioEac3ToOutputFormat.Flac, Texts.AudioEac3ToOutputFormatLabel(AudioEac3ToOutputFormat.Flac)),
-            new AudioEac3ToOutputFormatOption(AudioEac3ToOutputFormat.Ac3, Texts.AudioEac3ToOutputFormatLabel(AudioEac3ToOutputFormat.Ac3))
-        ];
-    }
-
-    private IEnumerable<AudioOpusBitrateOption> BuildAudioOpusBitrateOptions()
-    {
-        return
-        [
-            new AudioOpusBitrateOption(510, Texts.AudioOpusBitrateLabel(510)),
-            new AudioOpusBitrateOption(384, Texts.AudioOpusBitrateLabel(384)),
-            new AudioOpusBitrateOption(192, Texts.AudioOpusBitrateLabel(192)),
-            new AudioOpusBitrateOption(96, Texts.AudioOpusBitrateLabel(96))
-        ];
+        AudioProcessingModule.ApplyLanguageState();
     }
 
     private string? ValidateAudioProcessingConfiguration(bool requireSourceExists, out string? existingOutputPath)
@@ -1362,7 +1287,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    private void RefreshAudioProcessingCommandPreview()
+    internal void RefreshAudioProcessingCommandPreview()
     {
         if (_isAudioProcessingRunning)
         {
@@ -1622,7 +1547,7 @@ public partial class MainWindowViewModel
         _audioProcessingLogPhaseMarker = string.Empty;
     }
 
-    private void SetAudioProcessingDisplayState(EncodingJobState? state)
+    internal void SetAudioProcessingDisplayState(EncodingJobState? state)
     {
         if (_audioProcessingDisplayState == state)
         {
@@ -1749,7 +1674,7 @@ public partial class MainWindowViewModel
         _audioProcessingInputRefreshCancellationTokenSource = null;
     }
 
-    private void RaiseAudioProcessingInputPropertyChanges()
+    internal void RaiseAudioProcessingInputPropertyChanges()
     {
         OnPropertyChanged(nameof(CanStartAudioProcessing));
         OnPropertyChanged(nameof(CanClearAudioProcessingTask));
@@ -1763,10 +1688,28 @@ public partial class MainWindowViewModel
         OnPropertyChanged(nameof(AudioCapabilitySummary));
     }
 
-    private void RaiseAudioProcessingEnvironmentPropertyChanges()
+    internal void RaiseAudioProcessingEnvironmentPropertyChanges()
     {
         OnPropertyChanged(nameof(CanStartAudioProcessing));
         OnPropertyChanged(nameof(CanClearAudioProcessingTask));
         OnPropertyChanged(nameof(AudioCapabilitySummary));
+    }
+
+    internal void RaiseAudioProcessingLanguagePropertyChanges()
+    {
+        OnPropertyChanged(nameof(SelectedAudioWorkflow));
+        OnPropertyChanged(nameof(SelectedAudioEac3ToOutputFormat));
+        OnPropertyChanged(nameof(SelectedAudioOpusBitrate));
+        OnPropertyChanged(nameof(AudioOpusUseMappingFamily1));
+        OnPropertyChanged(nameof(AudioEac3ToOptionsVisibility));
+        OnPropertyChanged(nameof(AudioOpusOptionsVisibility));
+        RaiseAudioProcessingEnvironmentPropertyChanges();
+        RaiseAudioProcessingInputPropertyChanges();
+        OnPropertyChanged(nameof(AudioSourceInfoText));
+        OnPropertyChanged(nameof(AudioWorkflowRecommendation));
+        OnPropertyChanged(nameof(CanCancelAudioProcessing));
+        OnPropertyChanged(nameof(AudioProcessingProgressLabel));
+        OnPropertyChanged(nameof(AudioProcessingProgressHint));
+        OnPropertyChanged(nameof(AudioProcessingProgressHintVisibility));
     }
 }

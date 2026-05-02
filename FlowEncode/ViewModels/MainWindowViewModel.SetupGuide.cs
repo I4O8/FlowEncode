@@ -20,9 +20,9 @@ public partial class MainWindowViewModel
     private bool _isSetupGuideOpen;
     private int _selectedSetupGuideCardIndex;
 
-    public ObservableCollection<SetupGuideCardViewModel> SetupGuideCards { get; } = [];
+    internal ObservableCollection<SetupGuideCardViewModel> SetupGuideCards { get; } = [];
 
-    public bool IsSetupGuideOpen
+    internal bool IsSetupGuideOpen
     {
         get => _isSetupGuideOpen;
         private set
@@ -35,7 +35,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public int SelectedSetupGuideCardIndex
+    internal int SelectedSetupGuideCardIndex
     {
         get => _selectedSetupGuideCardIndex;
         set
@@ -51,43 +51,43 @@ public partial class MainWindowViewModel
         }
     }
 
-    public bool CanMoveSetupGuidePrevious => SelectedSetupGuideCardIndex > 0;
+    internal bool CanMoveSetupGuidePrevious => SelectedSetupGuideCardIndex > 0;
 
-    public bool CanMoveSetupGuideNext => SelectedSetupGuideCardIndex < SetupGuideCards.Count - 1;
+    internal bool CanMoveSetupGuideNext => SelectedSetupGuideCardIndex < SetupGuideCards.Count - 1;
 
-    public bool IsOnLastSetupGuideCard => SetupGuideCards.Count == 0 || SelectedSetupGuideCardIndex >= SetupGuideCards.Count - 1;
+    internal bool IsOnLastSetupGuideCard => SetupGuideCards.Count == 0 || SelectedSetupGuideCardIndex >= SetupGuideCards.Count - 1;
 
-    public bool CanAdvanceOrDismissSetupGuide => IsSetupGuideOpen;
+    internal bool CanAdvanceOrDismissSetupGuide => IsSetupGuideOpen;
 
-    public string SetupGuideForwardButtonText => IsOnLastSetupGuideCard
+    internal string SetupGuideForwardButtonText => IsOnLastSetupGuideCard
         ? Texts.SetupGuideCloseButton
         : Texts.SetupGuideNextButton;
 
-    public string SetupGuidePositionText => SetupGuideCards.Count == 0
+    internal string SetupGuidePositionText => SetupGuideCards.Count == 0
         ? string.Empty
         : $"{SelectedSetupGuideCardIndex + 1} / {SetupGuideCards.Count}";
 
-    public Visibility SetupGuidePositionVisibility => SetupGuideCards.Count == 0
+    internal Visibility SetupGuidePositionVisibility => SetupGuideCards.Count == 0
         ? Visibility.Collapsed
         : Visibility.Visible;
 
-    public Visibility SetupGuideVisibility => IsSetupGuideOpen ? Visibility.Visible : Visibility.Collapsed;
+    internal Visibility SetupGuideVisibility => IsSetupGuideOpen ? Visibility.Visible : Visibility.Collapsed;
 
-    public string AppRootPath => _appPaths.RootPath;
+    internal string AppRootPath => _appPaths.RootPath;
 
-    public string EncodersRootPath => _appPaths.ToolsetRootPath;
+    internal string EncodersRootPath => _appPaths.ToolsetRootPath;
 
-    public string ToolsRootPath => _appPaths.ToolsRootPath;
+    internal string ToolsRootPath => _appPaths.ToolsRootPath;
 
-    public string SettingsRootPath => _appPaths.SettingsRootPath;
+    internal string SettingsRootPath => _appPaths.SettingsRootPath;
 
-    public string TemplatesRootPath => _appPaths.WorkspaceTemplatesRootPath;
+    internal string TemplatesRootPath => _appPaths.WorkspaceTemplatesRootPath;
 
-    public string LocalizationRootPath => _appPaths.LocalizationRootPath;
+    internal string LocalizationRootPath => _appPaths.LocalizationRootPath;
 
-    public string DownloadsRootPath => _appPaths.DownloadsRootPath;
+    internal string DownloadsRootPath => _appPaths.DownloadsRootPath;
 
-    public string SetupGuideSummary
+    internal string SetupGuideSummary
     {
         get
         {
@@ -109,12 +109,12 @@ public partial class MainWindowViewModel
         }
     }
 
-    public void OpenSetupGuide()
+    internal void OpenSetupGuide()
     {
         IsSetupGuideOpen = true;
     }
 
-    public async Task OpenSetupGuideAsync()
+    internal async Task OpenSetupGuideAsync()
     {
         if (SetupGuideCards.Count == 0 || _setupGuideStatusReport is null)
         {
@@ -131,7 +131,7 @@ public partial class MainWindowViewModel
         IsSetupGuideOpen = true;
     }
 
-    public async Task EnsureSetupGuideCardsAsync()
+    internal async Task EnsureSetupGuideCardsAsync()
     {
         if (SetupGuideCards.Count > 0 && _setupGuideStatusReport is not null)
         {
@@ -166,7 +166,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public void MoveSetupGuidePrevious()
+    internal void MoveSetupGuidePrevious()
     {
         if (CanMoveSetupGuidePrevious)
         {
@@ -174,7 +174,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public void MoveSetupGuideNext()
+    internal void MoveSetupGuideNext()
     {
         if (CanMoveSetupGuideNext)
         {
@@ -182,7 +182,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    public string? AdvanceOrDismissSetupGuide()
+    internal string? AdvanceOrDismissSetupGuide()
     {
         if (CanMoveSetupGuideNext)
         {
@@ -193,7 +193,7 @@ public partial class MainWindowViewModel
         return DismissSetupGuide();
     }
 
-    public string? DismissSetupGuide()
+    internal string? DismissSetupGuide()
     {
         IsSetupGuideOpen = false;
 
@@ -206,7 +206,7 @@ public partial class MainWindowViewModel
         return SaveSettings(updateStatusText: false);
     }
 
-    public async Task RefreshSetupGuideAsync(bool openWhenFinished = false)
+    internal async Task RefreshSetupGuideAsync(bool openWhenFinished = false)
     {
         await RefreshSetupGuideStatusAsync(
             includeRemoteMetadata: false,
@@ -216,7 +216,7 @@ public partial class MainWindowViewModel
             preferCachedSnapshot: false);
     }
 
-    public async Task CheckSetupDependencyUpdatesAsync(bool openWhenFinished = false)
+    internal async Task CheckSetupDependencyUpdatesAsync(bool openWhenFinished = false)
     {
         await RefreshSetupGuideStatusAsync(
             includeRemoteMetadata: true,
@@ -226,7 +226,7 @@ public partial class MainWindowViewModel
             preferCachedSnapshot: true);
     }
 
-    public async Task<string?> InstallSetupDependencyAsync(SetupDependencyKind kind)
+    internal async Task<string?> InstallSetupDependencyAsync(SetupDependencyKind kind)
     {
         var selectedCardIndex = SelectedSetupGuideCardIndex;
         var item = FindSetupGuideDependency(kind);
@@ -273,7 +273,7 @@ public partial class MainWindowViewModel
         return errorMessage;
     }
 
-    public bool RequiresSetupDependencyManualImport(SetupDependencyKind kind)
+    internal bool RequiresSetupDependencyManualImport(SetupDependencyKind kind)
     {
         return kind is SetupDependencyKind.Avs2PipeMod
             or SetupDependencyKind.DgDemux
@@ -288,17 +288,17 @@ public partial class MainWindowViewModel
         return GetManualPathKeys(kind).Count > 0;
     }
 
-    public bool HasManualPinnedSetupDependency(SetupDependencyKind kind)
+    internal bool HasManualPinnedSetupDependency(SetupDependencyKind kind)
     {
         return GetManualPathKeys(kind).Any(key => _manualToolPaths.ContainsKey(key));
     }
 
-    public string GetSetupDependencyDisplayName(SetupDependencyKind kind)
+    internal string GetSetupDependencyDisplayName(SetupDependencyKind kind)
     {
         return GetSetupDependencyTitle(kind);
     }
 
-    public async Task<string?> PinSetupDependencyBinaryAsync(SetupDependencyKind kind, string sourcePath)
+    internal async Task<string?> PinSetupDependencyBinaryAsync(SetupDependencyKind kind, string sourcePath)
     {
         var selectedCardIndex = SelectedSetupGuideCardIndex;
         if (!CanManuallySelectSetupDependency(kind))
@@ -345,7 +345,7 @@ public partial class MainWindowViewModel
         return null;
     }
 
-    public async Task<string?> ClearManualPinnedSetupDependencyAsync(SetupDependencyKind kind, bool refreshAfterClear = true)
+    internal async Task<string?> ClearManualPinnedSetupDependencyAsync(SetupDependencyKind kind, bool refreshAfterClear = true)
     {
         var selectedCardIndex = SelectedSetupGuideCardIndex;
         var keys = GetManualPathKeys(kind);
@@ -384,7 +384,7 @@ public partial class MainWindowViewModel
         return null;
     }
 
-    public async Task<string?> ImportSetupDependencyBinaryAsync(SetupDependencyKind kind, string sourcePath)
+    internal async Task<string?> ImportSetupDependencyBinaryAsync(SetupDependencyKind kind, string sourcePath)
     {
         var selectedCardIndex = SelectedSetupGuideCardIndex;
         if (!RequiresSetupDependencyManualImport(kind))
@@ -438,7 +438,7 @@ public partial class MainWindowViewModel
         return errorMessage;
     }
 
-    public async Task<string?> UninstallSetupDependencyAsync(SetupDependencyKind kind)
+    internal async Task<string?> UninstallSetupDependencyAsync(SetupDependencyKind kind)
     {
         var selectedCardIndex = SelectedSetupGuideCardIndex;
         var item = FindSetupGuideDependency(kind);

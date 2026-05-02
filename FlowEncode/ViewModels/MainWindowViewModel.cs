@@ -110,40 +110,13 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     private bool _queueCompletionActionBatchHadNonSuccessfulCompletion;
     private bool _isExecutingQueueCompletionAction;
     private CancellationTokenSource? _queueCompletionActionWaitCancellationTokenSource;
-    private string _autoCompressionSourcePath = string.Empty;
-    private string _autoCompressionOutputPath = string.Empty;
-    private string _autoCompressionVideoParameters = string.Empty;
-    private double _autoCompressionTargetVmaf = 95.0;
-    private double _autoCompressionProbes = 4;
-    private double _autoCompressionWorkers;
-    private EncoderOption? _selectedAutoEncoder;
-    private string _autoCompressionStatusText = string.Empty;
-    private string _autoCompressionCommandLine = string.Empty;
-    private string _autoCompressionLog = string.Empty;
-    private double _autoCompressionProgressPercent;
-    private bool _autoCompressionProgressIsIndeterminate;
-    private bool _isAutoCompressionRunning;
-    private string? _lastAutoCompressionOutputPath;
-    private bool _isUpdatingAutoCompressionOutputPath;
-    private CancellationTokenSource? _autoCompressionCancellationTokenSource;
-    private Guid? _activeAutoCompressionJobId;
-    private EncodingJobState? _autoCompressionDisplayState;
-    private readonly StringBuilder _autoCompressionLogBuilder = new();
-    private readonly List<string> _autoCompressionLogStageLines = [];
-    private string _autoCompressionLiveLogLine = string.Empty;
     private bool _isDisposed;
     private CancellationTokenSource? _previewRefreshCancellationTokenSource;
     private CancellationTokenSource? _draftInputRefreshCancellationTokenSource;
-    private CancellationTokenSource? _autoCompressionInputRefreshCancellationTokenSource;
     private int _previewRefreshVersion;
     private int _draftInputRefreshVersion;
-    private int _autoCompressionInputRefreshVersion;
     private bool _isApplyingDeferredDraftInputRefresh;
-    private bool _isApplyingDeferredAutoCompressionInputRefresh;
     private bool _isDraftInputRefreshPending;
-    private bool _isAutoCompressionInputRefreshPending;
-    private const int AutoCompressionLogLimit = 120_000;
-    private const int AutoCompressionStageLogLimit = 240;
 
     public MainWindowViewModel(
         IEncoderToolchainService toolchainService,
@@ -210,60 +183,61 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         _selectedConcurrentEncodingJobOption = ConcurrentEncodingJobOptions[0];
         _selectedQueueCompletionActionOption = QueueCompletionActionOptions[0];
         _autoCompressionStatusText = _texts.AutoCompressionIdleStatus;
+        InitializeModuleViewModels();
         InitializeAudioProcessingState();
         InitializeBluRayDemuxState();
     }
 
-    public ObservableCollection<EncoderCatalogItem> Encoders { get; } = [];
+    internal ObservableCollection<EncoderCatalogItem> Encoders { get; } = [];
 
-    public ObservableCollection<SavedTemplate> UserTemplates { get; } = [];
+    internal ObservableCollection<SavedTemplate> UserTemplates { get; } = [];
 
-    public ObservableCollection<TemplateLibraryItemViewModel> TemplateLibraryItems { get; } = [];
+    internal ObservableCollection<TemplateLibraryItemViewModel> TemplateLibraryItems { get; } = [];
 
-    public ObservableCollection<EncodingJobItemViewModel> Jobs { get; } = [];
+    internal ObservableCollection<EncodingJobItemViewModel> Jobs { get; } = [];
 
-    public ObservableCollection<DiscoveredEncoderBinary> DetectedSystemBinaries { get; } = [];
+    internal ObservableCollection<DiscoveredEncoderBinary> DetectedSystemBinaries { get; } = [];
 
-    public ObservableCollection<ThemeOption> ThemeOptions { get; } = [];
+    internal ObservableCollection<ThemeOption> ThemeOptions { get; } = [];
 
-    public ObservableCollection<LanguageOption> LanguageOptions { get; } = [];
+    internal ObservableCollection<LanguageOption> LanguageOptions { get; } = [];
 
-    public ObservableCollection<EncoderOption> EncoderOptions { get; } = [];
+    internal ObservableCollection<EncoderOption> EncoderOptions { get; } = [];
 
-    public ObservableCollection<RateControlOption> AvailableRateControlModes { get; } = [];
+    internal ObservableCollection<RateControlOption> AvailableRateControlModes { get; } = [];
 
-    public ObservableCollection<StringChoiceOption> AvailablePresets { get; } = [];
+    internal ObservableCollection<StringChoiceOption> AvailablePresets { get; } = [];
 
-    public ObservableCollection<StringChoiceOption> AvailableTunes { get; } = [];
+    internal ObservableCollection<StringChoiceOption> AvailableTunes { get; } = [];
 
-    public ObservableCollection<StringChoiceOption> AvailableProfiles { get; } = [];
+    internal ObservableCollection<StringChoiceOption> AvailableProfiles { get; } = [];
 
-    public ObservableCollection<StringChoiceOption> AvailableOutputFormats { get; } = [];
+    internal ObservableCollection<StringChoiceOption> AvailableOutputFormats { get; } = [];
 
-    public ObservableCollection<StringChoiceOption> ConcurrentEncodingJobOptions { get; } = [];
+    internal ObservableCollection<StringChoiceOption> ConcurrentEncodingJobOptions { get; } = [];
 
-    public ObservableCollection<StringChoiceOption> QueueCompletionActionOptions { get; } = [];
+    internal ObservableCollection<StringChoiceOption> QueueCompletionActionOptions { get; } = [];
 
-    public bool IsBusy => _isRefreshingCatalog
+    internal bool IsBusy => _isRefreshingCatalog
         || _isCheckingUpdates
         || _isDownloadingAppUpdateInstaller
         || _isSetupGuideInstallRunning
         || _isRefreshingSetupGuide
         || _isCheckingSetupDependencyUpdates;
 
-    public bool IsCheckingAppUpdates => _isCheckingUpdates;
+    internal bool IsCheckingAppUpdates => _isCheckingUpdates;
 
-    public bool IsDownloadingAppUpdateInstaller => _isDownloadingAppUpdateInstaller;
+    internal bool IsDownloadingAppUpdateInstaller => _isDownloadingAppUpdateInstaller;
 
-    public bool IsAppUpdateActionInProgress => _isCheckingUpdates || _isDownloadingAppUpdateInstaller;
+    internal bool IsAppUpdateActionInProgress => _isCheckingUpdates || _isDownloadingAppUpdateInstaller;
 
-    public bool IsAppUpdateAvailable => _lastAppUpdateResult?.UpdateAvailable == true;
+    internal bool IsAppUpdateAvailable => _lastAppUpdateResult?.UpdateAvailable == true;
 
-    public bool CanDownloadAppUpdateInstaller => _lastAppUpdateResult?.CanDownloadInstaller == true;
+    internal bool CanDownloadAppUpdateInstaller => _lastAppUpdateResult?.CanDownloadInstaller == true;
 
-    public bool HasAppUpdateError => !string.IsNullOrWhiteSpace(_lastAppUpdateErrorMessage);
+    internal bool HasAppUpdateError => !string.IsNullOrWhiteSpace(_lastAppUpdateErrorMessage);
 
-    public string AppUpdateActionText => IsCheckingAppUpdates
+    internal string AppUpdateActionText => IsCheckingAppUpdates
         ? Texts.CheckingUpdatesButton
         : IsDownloadingAppUpdateInstaller
             ? _appUpdateDownloadProgressPercent.HasValue
@@ -275,7 +249,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 : Texts.ReleasePageButton
             : Texts.CheckUpdatesButton;
 
-    public Symbol AppUpdateActionIcon => IsCheckingAppUpdates
+    internal Symbol AppUpdateActionIcon => IsCheckingAppUpdates
         ? Symbol.Refresh
         : IsDownloadingAppUpdateInstaller
             ? Symbol.Download
@@ -285,99 +259,99 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                     : Symbol.Link
                 : Symbol.Refresh;
 
-    public bool CanExecuteAppUpdateAction => !IsCheckingAppUpdates && !IsDownloadingAppUpdateInstaller;
+    internal bool CanExecuteAppUpdateAction => !IsCheckingAppUpdates && !IsDownloadingAppUpdateInstaller;
 
-    public Visibility AppUpdateProgressVisibility => IsAppUpdateActionInProgress
+    internal Visibility AppUpdateProgressVisibility => IsAppUpdateActionInProgress
         ? Visibility.Visible
         : Visibility.Collapsed;
 
-    public string AppUpdateReleaseUrl => string.IsNullOrWhiteSpace(_lastAppUpdateResult?.ReleaseUrl)
+    internal string AppUpdateReleaseUrl => string.IsNullOrWhiteSpace(_lastAppUpdateResult?.ReleaseUrl)
         ? AppReleasePageUrl
         : _lastAppUpdateResult.ReleaseUrl;
 
-    public string AppCurrentVersionText => Texts.AppCurrentVersionLabel(GetKnownCurrentAppVersion());
+    internal string AppCurrentVersionText => Texts.AppCurrentVersionLabel(GetKnownCurrentAppVersion());
 
-    public string AppLatestVersionText => string.IsNullOrWhiteSpace(_lastAppUpdateResult?.LatestVersion)
+    internal string AppLatestVersionText => string.IsNullOrWhiteSpace(_lastAppUpdateResult?.LatestVersion)
         ? string.Empty
         : Texts.AppLatestVersionLabel(_lastAppUpdateResult.LatestVersion);
 
-    public Visibility AppLatestVersionVisibility => string.IsNullOrWhiteSpace(_lastAppUpdateResult?.LatestVersion)
+    internal Visibility AppLatestVersionVisibility => string.IsNullOrWhiteSpace(_lastAppUpdateResult?.LatestVersion)
         ? Visibility.Collapsed
         : Visibility.Visible;
 
-    public string AppUpdateStatusText => GetAppUpdateStatusText();
+    internal string AppUpdateStatusText => GetAppUpdateStatusText();
 
-    public string EnvironmentCheckedAtText => GetSetupGuideLocalCheckedAtText();
+    internal string EnvironmentCheckedAtText => GetSetupGuideLocalCheckedAtText();
 
-    public string SetupGuideRemoteCheckedAtText => GetSetupGuideRemoteCheckedAtText();
+    internal string SetupGuideRemoteCheckedAtText => GetSetupGuideRemoteCheckedAtText();
 
-    public Visibility SetupGuideRemoteCheckedAtVisibility => string.IsNullOrWhiteSpace(SetupGuideRemoteCheckedAtText)
+    internal Visibility SetupGuideRemoteCheckedAtVisibility => string.IsNullOrWhiteSpace(SetupGuideRemoteCheckedAtText)
         ? Visibility.Collapsed
         : Visibility.Visible;
 
-    public bool IsRefreshingSetupGuide => _isRefreshingSetupGuide;
+    internal bool IsRefreshingSetupGuide => _isRefreshingSetupGuide;
 
-    public bool IsCheckingSetupDependencyUpdates => _isCheckingSetupDependencyUpdates;
+    internal bool IsCheckingSetupDependencyUpdates => _isCheckingSetupDependencyUpdates;
 
-    public Visibility SetupGuideActionProgressVisibility => _isRefreshingSetupGuide || _isCheckingSetupDependencyUpdates
+    internal Visibility SetupGuideActionProgressVisibility => _isRefreshingSetupGuide || _isCheckingSetupDependencyUpdates
         ? Visibility.Visible
         : Visibility.Collapsed;
 
-    public string SetupGuideRefreshActionText => _isRefreshingSetupGuide
+    internal string SetupGuideRefreshActionText => _isRefreshingSetupGuide
         ? Texts.SetupGuideRefreshingButton
         : Texts.SetupGuideRefreshButton;
 
-    public string SetupGuideUpdateCheckActionText => _isCheckingSetupDependencyUpdates
+    internal string SetupGuideUpdateCheckActionText => _isCheckingSetupDependencyUpdates
         ? Texts.CheckingUpdatesButton
         : Texts.SetupGuideCheckUpdatesButton;
 
-    public bool CanExecuteSetupGuideRefreshAction => !_isSetupGuideInstallRunning
+    internal bool CanExecuteSetupGuideRefreshAction => !_isSetupGuideInstallRunning
         && !_isRefreshingSetupGuide
         && !_isCheckingSetupDependencyUpdates;
 
-    public bool CanExecuteSetupGuideUpdateCheckAction => !_isSetupGuideInstallRunning
+    internal bool CanExecuteSetupGuideUpdateCheckAction => !_isSetupGuideInstallRunning
         && !_isRefreshingSetupGuide
         && !_isCheckingSetupDependencyUpdates;
 
-    public AppText Texts
+    internal AppText Texts
     {
         get => _texts;
         private set => SetProperty(ref _texts, value);
     }
 
-    public string StatusText
+    internal string StatusText
     {
         get => _statusText;
         private set => SetProperty(ref _statusText, value);
     }
 
-    public bool HasRunningJobs => Jobs.Any(static job => job.State == EncodingJobState.Running);
+    internal bool HasRunningJobs => Jobs.Any(static job => job.State == EncodingJobState.Running);
 
-    public string PreviewTitle
+    internal string PreviewTitle
     {
         get => _previewTitle;
         private set => SetProperty(ref _previewTitle, value);
     }
 
-    public string PreviewCommandLine
+    internal string PreviewCommandLine
     {
         get => _previewCommandLine;
         private set => SetProperty(ref _previewCommandLine, value);
     }
 
-    public string PreviewNotes
+    internal string PreviewNotes
     {
         get => _previewNotes;
         private set => SetProperty(ref _previewNotes, value);
     }
 
-    public string SelectedProfileCaption
+    internal string SelectedProfileCaption
     {
         get => _selectedProfileCaption;
         private set => SetProperty(ref _selectedProfileCaption, value);
     }
 
-    public string DraftTemplateName
+    internal string DraftTemplateName
     {
         get => _draftTemplateName;
         set
@@ -389,7 +363,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string DraftTemplateNotes
+    internal string DraftTemplateNotes
     {
         get => _draftTemplateNotes;
         set
@@ -401,7 +375,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string TemplateSearchText
+    internal string TemplateSearchText
     {
         get => _templateSearchText;
         set
@@ -413,7 +387,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string SourcePath
+    internal string SourcePath
     {
         get => _sourcePath;
         set
@@ -425,7 +399,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string OutputPath
+    internal string OutputPath
     {
         get => _outputPath;
         set
@@ -447,110 +421,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string AutoCompressionSourcePath
-    {
-        get => _autoCompressionSourcePath;
-        set
-        {
-            if (SetProperty(ref _autoCompressionSourcePath, value))
-            {
-                ScheduleAutoCompressionInputRefresh();
-            }
-        }
-    }
-
-    public string AutoCompressionOutputPath
-    {
-        get => _autoCompressionOutputPath;
-        set
-        {
-            if (SetProperty(ref _autoCompressionOutputPath, value))
-            {
-                if (!_isUpdatingAutoCompressionOutputPath)
-                {
-                    _lastAutoCompressionOutputPath = null;
-                }
-
-                if (_isApplyingDeferredAutoCompressionInputRefresh)
-                {
-                    return;
-                }
-
-                ScheduleAutoCompressionInputRefresh();
-            }
-        }
-    }
-
-    public EncoderOption? SelectedAutoEncoder
-    {
-        get => _selectedAutoEncoder;
-        set
-        {
-            if (SetProperty(ref _selectedAutoEncoder, value))
-            {
-                ScheduleAutoCompressionInputRefresh();
-            }
-        }
-    }
-
-    public string AutoCompressionVideoParameters
-    {
-        get => _autoCompressionVideoParameters;
-        set
-        {
-            if (SetProperty(ref _autoCompressionVideoParameters, value))
-            {
-                OnPropertyChanged(nameof(CanStartAutoCompression));
-                RefreshAutoCompressionCommandPreview();
-            }
-        }
-    }
-
-    public double AutoCompressionTargetVmaf
-    {
-        get => _autoCompressionTargetVmaf;
-        set
-        {
-            var normalized = Math.Clamp(value, 1, 100);
-            if (SetProperty(ref _autoCompressionTargetVmaf, normalized))
-            {
-                OnPropertyChanged(nameof(CanStartAutoCompression));
-                OnPropertyChanged(nameof(AutoCompressionSuggestedOutputFileName));
-                OnPropertyChanged(nameof(AutoCompressionOutputPreviewText));
-                RefreshAutoCompressionCommandPreview();
-            }
-        }
-    }
-
-    public double AutoCompressionProbes
-    {
-        get => _autoCompressionProbes;
-        set
-        {
-            var normalized = Math.Max(1, value);
-            if (SetProperty(ref _autoCompressionProbes, normalized))
-            {
-                OnPropertyChanged(nameof(CanStartAutoCompression));
-                RefreshAutoCompressionCommandPreview();
-            }
-        }
-    }
-
-    public double AutoCompressionWorkers
-    {
-        get => _autoCompressionWorkers;
-        set
-        {
-            var normalized = Math.Max(0, value);
-            if (SetProperty(ref _autoCompressionWorkers, normalized))
-            {
-                OnPropertyChanged(nameof(CanStartAutoCompression));
-                RefreshAutoCompressionCommandPreview();
-            }
-        }
-    }
-
-    public ThemeOption? SelectedTheme
+    internal ThemeOption? SelectedTheme
     {
         get => _selectedTheme;
         set
@@ -559,7 +430,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public LanguageOption? SelectedLanguage
+    internal LanguageOption? SelectedLanguage
     {
         get => _selectedLanguage;
         set
@@ -571,7 +442,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public EncoderOption? SelectedEncoder
+    internal EncoderOption? SelectedEncoder
     {
         get => _selectedEncoder;
         set
@@ -584,7 +455,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public RateControlOption? SelectedRateControl
+    internal RateControlOption? SelectedRateControl
     {
         get => _selectedRateControl;
         set
@@ -602,7 +473,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public StringChoiceOption? SelectedPreset
+    internal StringChoiceOption? SelectedPreset
     {
         get => _selectedPreset;
         set
@@ -614,7 +485,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public StringChoiceOption? SelectedTune
+    internal StringChoiceOption? SelectedTune
     {
         get => _selectedTune;
         set
@@ -626,7 +497,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public StringChoiceOption? SelectedProfileOption
+    internal StringChoiceOption? SelectedProfileOption
     {
         get => _selectedProfileOption;
         set
@@ -638,7 +509,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public StringChoiceOption? SelectedOutputFormat
+    internal StringChoiceOption? SelectedOutputFormat
     {
         get => _selectedOutputFormat;
         set
@@ -650,7 +521,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public StringChoiceOption? SelectedConcurrentEncodingJobOption
+    internal StringChoiceOption? SelectedConcurrentEncodingJobOption
     {
         get => _selectedConcurrentEncodingJobOption;
         set
@@ -667,7 +538,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public StringChoiceOption? SelectedQueueCompletionActionOption
+    internal StringChoiceOption? SelectedQueueCompletionActionOption
     {
         get => _selectedQueueCompletionActionOption;
         set
@@ -684,7 +555,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public double DraftQuality
+    internal double DraftQuality
     {
         get => _draftQuality;
         set
@@ -697,7 +568,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public double DraftBitrate
+    internal double DraftBitrate
     {
         get => _draftBitrate;
         set
@@ -710,7 +581,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string DraftAdditionalArguments
+    internal string DraftAdditionalArguments
     {
         get => _draftAdditionalArguments;
         set
@@ -723,7 +594,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string DraftUhdParameters
+    internal string DraftUhdParameters
     {
         get => _draftUhdParameters;
         set
@@ -735,7 +606,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public bool PreferSystemEncoders
+    internal bool PreferSystemEncoders
     {
         get => _preferSystemEncoders;
         set
@@ -747,7 +618,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public bool AutoCheckUpdatesOnStartup
+    internal bool AutoCheckUpdatesOnStartup
     {
         get => _autoCheckUpdatesOnStartup;
         set
@@ -756,7 +627,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public double MaxConcurrentEncodingJobs
+    internal double MaxConcurrentEncodingJobs
     {
         get => _maxConcurrentEncodingJobs;
         set
@@ -798,15 +669,15 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string WorkspaceRootPath
+    internal string WorkspaceRootPath
     {
         get => _workspaceRootPath;
         set => SetProperty(ref _workspaceRootPath, value);
     }
 
-    public string TemplateFilesRootPath => _appPaths.WorkspaceTemplatesRootPath;
+    internal string TemplateFilesRootPath => _appPaths.WorkspaceTemplatesRootPath;
 
-    public EncodingJobItemViewModel? SelectedJob
+    internal EncodingJobItemViewModel? SelectedJob
     {
         get => _selectedJob;
         private set
@@ -833,83 +704,39 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string AutoCompressionStatusText
-    {
-        get => _autoCompressionStatusText;
-        private set => SetProperty(ref _autoCompressionStatusText, value);
-    }
+    internal string ToolsetRootPath => _toolchainService.GetToolsetRootPath();
 
-    public string AutoCompressionCommandLine
-    {
-        get => _autoCompressionCommandLine;
-        private set => SetProperty(ref _autoCompressionCommandLine, value);
-    }
+    internal string SuggestedOutputExtension => _activeProfile?.OutputContainer ?? "264";
 
-    public string AutoCompressionLog
-    {
-        get => _autoCompressionLog;
-        private set => SetProperty(ref _autoCompressionLog, value);
-    }
-
-    public double AutoCompressionProgressPercent
-    {
-        get => _autoCompressionProgressPercent;
-        private set
-        {
-            var normalized = Math.Clamp(value, 0, 100);
-            if (SetProperty(ref _autoCompressionProgressPercent, normalized))
-            {
-                OnPropertyChanged(nameof(AutoCompressionProgressLabel));
-            }
-        }
-    }
-
-    public bool AutoCompressionProgressIsIndeterminate
-    {
-        get => _autoCompressionProgressIsIndeterminate;
-        private set
-        {
-            if (SetProperty(ref _autoCompressionProgressIsIndeterminate, value))
-            {
-                OnPropertyChanged(nameof(AutoCompressionProgressLabel));
-                OnPropertyChanged(nameof(AutoCompressionProgressHintVisibility));
-            }
-        }
-    }
-
-    public string ToolsetRootPath => _toolchainService.GetToolsetRootPath();
-
-    public string SuggestedOutputExtension => _activeProfile?.OutputContainer ?? "264";
-
-    public string QualityInputLabel => SelectedRateControl?.Value switch
+    internal string QualityInputLabel => SelectedRateControl?.Value switch
     {
         RateControlMode.Cq => "CQ",
         RateControlMode.Qp => "QP",
         _ => "CRF"
     };
 
-    public string BitrateInputLabel => SelectedRateControl?.Value == RateControlMode.TwoPass
+    internal string BitrateInputLabel => SelectedRateControl?.Value == RateControlMode.TwoPass
         ? Texts.Pick("目标码率 (2-Pass)", "Target Bitrate (2-Pass)")
         : Texts.Pick("目标码率", "Target Bitrate");
 
-    public bool IsQualityControlVisible => SelectedRateControl?.Value is RateControlMode.Crf or RateControlMode.Cq or RateControlMode.Qp;
+    internal bool IsQualityControlVisible => SelectedRateControl?.Value is RateControlMode.Crf or RateControlMode.Cq or RateControlMode.Qp;
 
-    public bool IsBitrateControlVisible => SelectedRateControl?.Value is RateControlMode.Abr or RateControlMode.Vbr or RateControlMode.TwoPass;
+    internal bool IsBitrateControlVisible => SelectedRateControl?.Value is RateControlMode.Abr or RateControlMode.Vbr or RateControlMode.TwoPass;
 
-    public bool IsX265Selected => SelectedEncoder?.Value == EncoderKind.X265;
+    internal bool IsX265Selected => SelectedEncoder?.Value == EncoderKind.X265;
 
-    public Visibility DraftQualityVisibility => IsQualityControlVisible ? Visibility.Visible : Visibility.Collapsed;
+    internal Visibility DraftQualityVisibility => IsQualityControlVisible ? Visibility.Visible : Visibility.Collapsed;
 
-    public Visibility DraftBitrateVisibility => IsBitrateControlVisible ? Visibility.Visible : Visibility.Collapsed;
+    internal Visibility DraftBitrateVisibility => IsBitrateControlVisible ? Visibility.Visible : Visibility.Collapsed;
 
-    public Visibility X265UhdVisibility => IsX265Selected ? Visibility.Visible : Visibility.Collapsed;
+    internal Visibility X265UhdVisibility => IsX265Selected ? Visibility.Visible : Visibility.Collapsed;
 
-    public string DraftConstraintWarningText => GetProfileConstraintError(_activeProfile) ?? string.Empty;
+    internal string DraftConstraintWarningText => GetProfileConstraintError(_activeProfile) ?? string.Empty;
 
-    public Visibility DraftConstraintWarningVisibility =>
+    internal Visibility DraftConstraintWarningVisibility =>
         string.IsNullOrWhiteSpace(DraftConstraintWarningText) ? Visibility.Collapsed : Visibility.Visible;
 
-    public string SuggestedOutputFileName
+    internal string SuggestedOutputFileName
     {
         get
         {
@@ -923,57 +750,16 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string DraftOutputPreviewText => _isDraftInputRefreshPending
+    internal string DraftOutputPreviewText => _isDraftInputRefreshPending
         ? Texts.OutputPreviewUpdating
         : BuildDraftOutputPreviewText();
 
-    public bool CanQueueJob =>
+    internal bool CanQueueJob =>
         _activeProfile is not null
         && !string.IsNullOrWhiteSpace(SourcePath)
         && !string.IsNullOrWhiteSpace(OutputPath);
 
-    public bool IsAutoCompressionRunning => _isAutoCompressionRunning;
-
-    public bool CanStartAutoCompression =>
-        !_isAutoCompressionRunning
-        && SelectedAutoEncoder is not null
-        && !string.IsNullOrWhiteSpace(AutoCompressionSourcePath)
-        && !string.IsNullOrWhiteSpace(AutoCompressionOutputPath);
-
-    public bool CanCancelAutoCompression => _isAutoCompressionRunning;
-
-    public string AutoCompressionProgressLabel =>
-        AutoCompressionProgressIsIndeterminate && _isAutoCompressionRunning
-            ? Texts.AutoCompressionProgressActiveLabel
-            : $"{AutoCompressionProgressPercent:0.#}%";
-
-    public Visibility AutoCompressionProgressHintVisibility =>
-        _isAutoCompressionRunning && AutoCompressionProgressIsIndeterminate
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-
-    public string AutoCompressionProgressHint => Texts.AutoCompressionProgressIndeterminateHint;
-
-    public Brush AutoCompressionStatusPanelBorderBrush => ResolveTaskStatusPanelBorderBrush(_autoCompressionDisplayState);
-
-    public string AutoCompressionSuggestedOutputExtension => "mkv";
-
-    public string AutoCompressionSuggestedOutputFileName
-    {
-        get
-        {
-            var outputPath = TryResolveAutoCompressionOutputPreviewPath();
-            return string.IsNullOrWhiteSpace(outputPath)
-                ? Texts.SuggestedOutputName
-                : Path.GetFileNameWithoutExtension(outputPath);
-        }
-    }
-
-    public string AutoCompressionOutputPreviewText => _isAutoCompressionInputRefreshPending
-        ? Texts.OutputPreviewUpdating
-        : BuildOutputPreviewText(TryResolveAutoCompressionOutputPreviewPath());
-
-    public string QueueSummary
+    internal string QueueSummary
     {
         get
         {
@@ -992,41 +778,41 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public bool HasJobs => Jobs.Count > 0;
+    internal bool HasJobs => Jobs.Count > 0;
 
-    public Visibility EmptyQueueVisibility => HasJobs ? Visibility.Collapsed : Visibility.Visible;
+    internal Visibility EmptyQueueVisibility => HasJobs ? Visibility.Collapsed : Visibility.Visible;
 
-    public Visibility QueueSelectionCommandBarVisibility => HasJobs ? Visibility.Visible : Visibility.Collapsed;
+    internal Visibility QueueSelectionCommandBarVisibility => HasJobs ? Visibility.Visible : Visibility.Collapsed;
 
-    public int SelectedQueueJobCount => _selectedQueueJobs.Count;
+    internal int SelectedQueueJobCount => _selectedQueueJobs.Count;
 
-    public int SelectedQueuedJobCount => _selectedQueueJobs.Count(static job => job.State == EncodingJobState.Queued);
+    internal int SelectedQueuedJobCount => _selectedQueueJobs.Count(static job => job.State == EncodingJobState.Queued);
 
-    public int SelectedRunningJobCount => _selectedQueueJobs.Count(static job => job.State == EncodingJobState.Running);
+    internal int SelectedRunningJobCount => _selectedQueueJobs.Count(static job => job.State == EncodingJobState.Running);
 
-    public int SelectedCancelableQueueJobCount => _selectedQueueJobs.Count(static job => job.CanCancel);
+    internal int SelectedCancelableQueueJobCount => _selectedQueueJobs.Count(static job => job.CanCancel);
 
-    public int SelectedRemovableQueueJobCount => _selectedQueueJobs.Count(static job => job.CanRemove);
+    internal int SelectedRemovableQueueJobCount => _selectedQueueJobs.Count(static job => job.CanRemove);
 
-    public string QueueSelectionStatusText => Texts.QueueSelectionStatus(SelectedQueueJobCount, Jobs.Count);
+    internal string QueueSelectionStatusText => Texts.QueueSelectionStatus(SelectedQueueJobCount, Jobs.Count);
 
-    public bool CanSelectAllQueueJobs => Jobs.Count > 0 && SelectedQueueJobCount < Jobs.Count;
+    internal bool CanSelectAllQueueJobs => Jobs.Count > 0 && SelectedQueueJobCount < Jobs.Count;
 
-    public bool CanInvertQueueSelection => Jobs.Count > 0;
+    internal bool CanInvertQueueSelection => Jobs.Count > 0;
 
-    public bool CanClearQueueSelection => SelectedQueueJobCount > 0;
+    internal bool CanClearQueueSelection => SelectedQueueJobCount > 0;
 
-    public bool CanStartSelectedJobs => _selectedQueueJobs.Any(static job => job.CanStart);
+    internal bool CanStartSelectedJobs => _selectedQueueJobs.Any(static job => job.CanStart);
 
-    public bool CanCancelSelectedJobs => _selectedQueueJobs.Any(static job => job.CanCancel);
+    internal bool CanCancelSelectedJobs => _selectedQueueJobs.Any(static job => job.CanCancel);
 
-    public bool CanDeleteSelectedJobs => _selectedQueueJobs.Any(static job => job.CanRemove);
+    internal bool CanDeleteSelectedJobs => _selectedQueueJobs.Any(static job => job.CanRemove);
 
     private bool IsQueueBatchSelectionActive => SelectedQueueJobCount > 1;
 
-    public double SelectedJobProgressValue => IsQueueBatchSelectionActive ? 0.0 : SelectedJob?.ProgressValue ?? 0.0;
+    internal double SelectedJobProgressValue => IsQueueBatchSelectionActive ? 0.0 : SelectedJob?.ProgressValue ?? 0.0;
 
-    public string SelectedJobProgressPrimaryText => IsQueueBatchSelectionActive
+    internal string SelectedJobProgressPrimaryText => IsQueueBatchSelectionActive
         ? Texts.QueueBatchSelectionSummary(
             SelectedQueueJobCount,
             SelectedRunningJobCount,
@@ -1036,51 +822,51 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             GetSelectedQueueJobStateCount(EncodingJobState.Cancelled))
         : SelectedJob?.ProgressTelemetryPrimaryLine ?? Texts.DefaultProgressPrimary;
 
-    public string SelectedJobProgressSecondaryText => IsQueueBatchSelectionActive
+    internal string SelectedJobProgressSecondaryText => IsQueueBatchSelectionActive
         ? Texts.QueueSelectionStatus(SelectedQueueJobCount, Jobs.Count)
         : SelectedJob?.ProgressTelemetrySecondaryLine ?? Texts.DefaultProgressSecondary;
 
-    public string SelectedJobProgressPercentText => IsQueueBatchSelectionActive
+    internal string SelectedJobProgressPercentText => IsQueueBatchSelectionActive
         ? Texts.QueueBatchSelectionProgressLabel(SelectedQueueJobCount)
         : SelectedJob?.ProgressPercentLabel ?? "0%";
 
-    public Visibility SelectedJobSourcePreparationVisibility => !IsQueueBatchSelectionActive && SelectedJob?.HasSourcePreparationText == true
+    internal Visibility SelectedJobSourcePreparationVisibility => !IsQueueBatchSelectionActive && SelectedJob?.HasSourcePreparationText == true
         ? Visibility.Visible
         : Visibility.Collapsed;
 
-    public string SelectedJobSourcePreparationText => IsQueueBatchSelectionActive
+    internal string SelectedJobSourcePreparationText => IsQueueBatchSelectionActive
         ? string.Empty
         : SelectedJob?.SourcePreparationText ?? string.Empty;
 
-    public string SelectedJobFramesText => IsQueueBatchSelectionActive
+    internal string SelectedJobFramesText => IsQueueBatchSelectionActive
         ? Texts.QueueBatchSelectionQueuedMetric(SelectedQueuedJobCount)
         : BuildSelectedJobFramesText();
 
-    public string SelectedJobFpsText => IsQueueBatchSelectionActive
+    internal string SelectedJobFpsText => IsQueueBatchSelectionActive
         ? Texts.QueueBatchSelectionRunningMetric(SelectedRunningJobCount)
         : SelectedJob?.FramesPerSecond is > 0
             ? $"{SelectedJob.FramesPerSecond.Value:0.00} fps"
             : "--.-- fps";
 
-    public string SelectedJobBitrateText => IsQueueBatchSelectionActive
+    internal string SelectedJobBitrateText => IsQueueBatchSelectionActive
         ? Texts.QueueBatchSelectionCancelableMetric(SelectedCancelableQueueJobCount)
         : SelectedJob?.BitrateKbps is > 0
             ? $"{SelectedJob.BitrateKbps.Value:0.00} kb/s"
             : "--.-- kb/s";
 
-    public string SelectedJobEtaText => IsQueueBatchSelectionActive
+    internal string SelectedJobEtaText => IsQueueBatchSelectionActive
         ? Texts.QueueBatchSelectionRemovableMetric(SelectedRemovableQueueJobCount)
         : $"{Texts.EtaPrefix} {FormatSelectedJobEta(SelectedJob?.Eta)}";
 
-    public string SelectedJobEstimatedSizeText => IsQueueBatchSelectionActive
+    internal string SelectedJobEstimatedSizeText => IsQueueBatchSelectionActive
         ? Texts.QueueSelectionStatus(SelectedQueueJobCount, Jobs.Count)
         : $"{Texts.EstimatedSizePrefix} {FormatSelectedJobSize(SelectedJob?.EstimatedFileSizeBytes)}";
 
-    public string SelectedJobCommandText => IsQueueBatchSelectionActive
+    internal string SelectedJobCommandText => IsQueueBatchSelectionActive
         ? Texts.QueueBatchSelectionCommandText
         : SelectedJob?.DisplayCommand ?? Texts.SelectJobForCommandText;
 
-    public string SelectedJobLogText => IsQueueBatchSelectionActive
+    internal string SelectedJobLogText => IsQueueBatchSelectionActive
         ? Texts.QueueBatchSelectionLogText
         : SelectedJob is null
             ? Texts.SelectJobForLogText
@@ -1088,21 +874,21 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 ? Texts.NoSelectedJobLogText
                 : SelectedJob.Log;
 
-    public Visibility TemplateLibraryEmptyVisibility => TemplateLibraryItems.Count == 0
+    internal Visibility TemplateLibraryEmptyVisibility => TemplateLibraryItems.Count == 0
         ? Visibility.Visible
         : Visibility.Collapsed;
 
-    public string? EditingUserTemplateId => _editingTemplateId;
+    internal string? EditingUserTemplateId => _editingTemplateId;
 
-    public string? CurrentTemplateSelectionKey => _currentTemplateSelectionKey;
+    internal string? CurrentTemplateSelectionKey => _currentTemplateSelectionKey;
 
-    public bool IsEditingPinnedTemplate => GetEditingUserTemplate()?.IsPinned == true;
+    private bool IsEditingPinnedTemplate => GetEditingUserTemplate()?.IsPinned == true;
 
-    public bool CanEditTemplateDraft => !IsEditingPinnedTemplate;
+    internal bool CanEditTemplateDraft => !IsEditingPinnedTemplate;
 
-    public bool HasUnsavedTemplateChanges => !MatchesTemplateEditingBaseline();
+    internal bool HasUnsavedTemplateChanges => !MatchesTemplateEditingBaseline();
 
-    public string SelectedJobSummary => IsQueueBatchSelectionActive
+    internal string SelectedJobSummary => IsQueueBatchSelectionActive
         ? Texts.QueueBatchSelectionSummary(
             SelectedQueueJobCount,
             SelectedRunningJobCount,
@@ -1114,9 +900,9 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             ? Texts.SelectedJobSummaryPlaceholder
             : Texts.QueueSelectionSummary(SelectedJob.StateLabel, SelectedJob.Summary);
 
-    public AppThemePreference CurrentThemePreference => SelectedTheme?.Value ?? AppThemePreference.Default;
+    internal AppThemePreference CurrentThemePreference => SelectedTheme?.Value ?? AppThemePreference.Default;
 
-    public AppLanguage CurrentLanguagePreference => SelectedLanguage?.Value ?? AppLanguage.Chinese;
+    internal AppLanguage CurrentLanguagePreference => SelectedLanguage?.Value ?? AppLanguage.Chinese;
 
     public async Task InitializeAsync()
     {
@@ -1157,6 +943,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         DisposeAutoCompressionCancellation();
         DisposeAudioProcessingState();
         DisposeBluRayDemuxState();
+        DisposeModuleViewModels();
 
         if (_selectedJob is not null)
         {
@@ -1244,7 +1031,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public async Task<AppUpdateCheckResult?> RefreshAvailableUpdatesAsync(bool reportStatus = true)
+    internal async Task<AppUpdateCheckResult?> RefreshAvailableUpdatesAsync(bool reportStatus = true)
     {
         if (_isCheckingUpdates)
         {
@@ -1288,7 +1075,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public async Task<string?> DownloadLatestAppInstallerAsync(bool reportStatus = true)
+    internal async Task<string?> DownloadLatestAppInstallerAsync(bool reportStatus = true)
     {
         if (_isCheckingUpdates || _isDownloadingAppUpdateInstaller)
         {
@@ -1360,7 +1147,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string? SaveSettings(bool updateStatusText = true)
+    internal string? SaveSettings(bool updateStatusText = true)
     {
         try
         {
@@ -1397,12 +1184,12 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public void SelectJob(EncodingJobItemViewModel? job)
+    internal void SelectJob(EncodingJobItemViewModel? job)
     {
         SelectedJob = job;
     }
 
-    public void UpdateSelectedQueueJobs(IEnumerable<EncodingJobItemViewModel> selectedJobs)
+    internal void UpdateSelectedQueueJobs(IEnumerable<EncodingJobItemViewModel> selectedJobs)
     {
         var normalizedSelection = NormalizeSelectedQueueJobs(selectedJobs).ToList();
         if (_selectedQueueJobs.Count == normalizedSelection.Count
@@ -1416,7 +1203,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         RaiseQueueSelectionPropertyChanges();
     }
 
-    public async Task SelectUserTemplateAsync(SavedTemplate? template)
+    internal async Task SelectUserTemplateAsync(SavedTemplate? template)
     {
         if (template is null)
         {
@@ -1442,7 +1229,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             _activeProfile);
     }
 
-    public async Task ApplyUserTemplateToEncodingDraftAsync(SavedTemplate? template)
+    internal async Task ApplyUserTemplateToEncodingDraftAsync(SavedTemplate? template)
     {
         if (template is null)
         {
@@ -1468,12 +1255,12 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             _activeProfile);
     }
 
-    public Task<SavedTemplate> ReadTemplateAsync(string filePath)
+    internal Task<SavedTemplate> ReadTemplateAsync(string filePath)
     {
         return _profileLibraryService.ReadTemplateAsync(filePath);
     }
 
-    public async Task<SavedTemplate?> SaveCurrentTemplateAsync()
+    internal async Task<SavedTemplate?> SaveCurrentTemplateAsync()
     {
         if (_activeProfile is null || string.IsNullOrWhiteSpace(DraftTemplateName))
         {
@@ -1504,7 +1291,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             Texts.TemplateSavedStatus(normalizedTemplateName));
     }
 
-    public async Task<SavedTemplate> ImportTemplateAsync(SavedTemplate template, string? overwriteTemplateId = null)
+    internal async Task<SavedTemplate> ImportTemplateAsync(SavedTemplate template, string? overwriteTemplateId = null)
     {
         ArgumentNullException.ThrowIfNull(template);
 
@@ -1530,7 +1317,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             Texts.TemplateImportedStatus(normalizedTemplateName));
     }
 
-    public async Task ExportCurrentTemplateAsync(string filePath)
+    internal async Task ExportCurrentTemplateAsync(string filePath)
     {
         var exportTemplate = BuildDraftTemplateForExchange();
         if (exportTemplate is null)
@@ -1542,7 +1329,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         StatusText = Texts.TemplateExportedStatus(filePath);
     }
 
-    public SavedTemplate? FindUserTemplateByName(string? templateName)
+    internal SavedTemplate? FindUserTemplateByName(string? templateName)
     {
         if (string.IsNullOrWhiteSpace(templateName))
         {
@@ -1554,7 +1341,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             string.Equals(template.Name, normalizedTemplateName, StringComparison.OrdinalIgnoreCase));
     }
 
-    public SavedTemplate? FindUserTemplateById(string? templateId)
+    internal SavedTemplate? FindUserTemplateById(string? templateId)
     {
         if (string.IsNullOrWhiteSpace(templateId))
         {
@@ -1565,7 +1352,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             string.Equals(template.Id, templateId, StringComparison.OrdinalIgnoreCase));
     }
 
-    public async Task DeleteTemplateAsync(string templateId)
+    internal async Task DeleteTemplateAsync(string templateId)
     {
         if (string.IsNullOrWhiteSpace(templateId))
         {
@@ -1591,7 +1378,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         StatusText = Texts.UserTemplateDeletedStatus;
     }
 
-    public async Task<SavedTemplate> SetTemplatePinnedAsync(string templateId, bool isPinned)
+    internal async Task<SavedTemplate> SetTemplatePinnedAsync(string templateId, bool isPinned)
     {
         var template = FindUserTemplateById(templateId);
         if (template is null)
@@ -1617,7 +1404,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return updatedTemplate;
     }
 
-    public void RefreshTemplateLibraryView()
+    internal void RefreshTemplateLibraryView()
     {
         RefreshTemplateLibraryItems();
     }
@@ -1651,130 +1438,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             _activeProfile);
     }
 
-    public string? ValidateAutoCompressionForStart(out string? existingOutputPath)
-    {
-        existingOutputPath = null;
-
-        try
-        {
-            var request = CreateAutoCompressionRequest(requireSourceExists: true);
-            existingOutputPath = File.Exists(request.OutputPath) ? request.OutputPath : null;
-            return null;
-        }
-        catch (Exception ex)
-        {
-            return ex.Message;
-        }
-    }
-
-    public async Task<string?> StartAutoCompressionAsync()
-    {
-        if (_isAutoCompressionRunning)
-        {
-            return Texts.AutoCompressionAlreadyRunningError;
-        }
-
-        AutoCompressionResult result;
-        string sourceFileName;
-
-        try
-        {
-            var request = CreateAutoCompressionRequest(requireSourceExists: true);
-            sourceFileName = Path.GetFileName(request.SourcePath);
-
-            ResetAutoCompressionLogState();
-            AutoCompressionLog = string.Empty;
-            AutoCompressionProgressPercent = 0;
-            AutoCompressionProgressIsIndeterminate = true;
-            SetAutoCompressionDisplayState(EncodingJobState.Running);
-            AutoCompressionCommandLine = _autoCompressionRunner.BuildDisplayCommand(request);
-            AutoCompressionStatusText = Texts.AutoCompressionStartingStatus(sourceFileName);
-            StatusText = Texts.AutoCompressionStartingStatus(sourceFileName);
-
-            SetAutoCompressionRunningState(true, request.JobId);
-
-            _autoCompressionCancellationTokenSource = new CancellationTokenSource();
-
-            var progress = new Progress<AutoCompressionProgress>(ApplyAutoCompressionProgress);
-            result = await _autoCompressionRunner.RunAsync(
-                request,
-                progress,
-                _autoCompressionCancellationTokenSource.Token);
-        }
-        catch (OperationCanceledException) when (_autoCompressionCancellationTokenSource?.IsCancellationRequested == true)
-        {
-            SetAutoCompressionRunningState(false, null);
-            DisposeAutoCompressionCancellation();
-            SetAutoCompressionDisplayState(EncodingJobState.Cancelled);
-            ClampAutoCompressionProgressForTerminalState(EncodingJobState.Cancelled);
-            AutoCompressionStatusText = Texts.AutoCompressionCancelledStatus;
-            StatusText = Texts.AutoCompressionCancelledStatus;
-            return null;
-        }
-        catch (Exception ex)
-        {
-            SetAutoCompressionRunningState(false, null);
-            DisposeAutoCompressionCancellation();
-            ClampAutoCompressionProgressForTerminalState(EncodingJobState.Failed);
-            SetAutoCompressionDisplayState(EncodingJobState.Failed);
-            AppendAutoCompressionLogLine(ex.Message);
-            AutoCompressionStatusText = Texts.AutoCompressionFailedStatus(ex.Message);
-            StatusText = Texts.AutoCompressionFailedStatus(ex.Message);
-            return ex.Message;
-        }
-
-        DisposeAutoCompressionCancellation();
-        SetAutoCompressionRunningState(false, null);
-
-        if (string.IsNullOrWhiteSpace(AutoCompressionLog))
-        {
-            AutoCompressionLog = result.Log;
-        }
-
-        switch (result.State)
-        {
-            case EncodingJobState.Completed:
-                SetAutoCompressionDisplayState(EncodingJobState.Completed);
-                ClampAutoCompressionProgressForTerminalState(EncodingJobState.Completed);
-                AutoCompressionStatusText = Texts.AutoCompressionCompletedStatus;
-                StatusText = Texts.AutoCompressionCompletedStatus;
-                return null;
-
-            case EncodingJobState.Cancelled:
-                SetAutoCompressionDisplayState(EncodingJobState.Cancelled);
-                ClampAutoCompressionProgressForTerminalState(EncodingJobState.Cancelled);
-                AutoCompressionStatusText = Texts.AutoCompressionCancelledStatus;
-                StatusText = Texts.AutoCompressionCancelledStatus;
-                return null;
-
-            default:
-                SetAutoCompressionDisplayState(EncodingJobState.Failed);
-                ClampAutoCompressionProgressForTerminalState(EncodingJobState.Failed);
-                AppendAutoCompressionLogLine(result.Summary);
-                AutoCompressionStatusText = Texts.AutoCompressionFailedStatus(result.Summary);
-                StatusText = Texts.AutoCompressionFailedStatus(result.Summary);
-                return result.Summary;
-        }
-    }
-
-    public void CancelAutoCompression()
-    {
-        if (!_isAutoCompressionRunning)
-        {
-            return;
-        }
-
-        AutoCompressionStatusText = Texts.AutoCompressionCancellingStatus;
-        StatusText = Texts.AutoCompressionCancellingStatus;
-
-        _autoCompressionCancellationTokenSource?.Cancel();
-        if (_activeAutoCompressionJobId is { } jobId)
-        {
-            _autoCompressionRunner.Abort(jobId);
-        }
-    }
-
-    public Task<string?> QueueCurrentJobAsync(bool startImmediately = false, QueueJobPreflightResult? preflight = null)
+    internal Task<string?> QueueCurrentJobAsync(bool startImmediately = false, QueueJobPreflightResult? preflight = null)
     {
         try
         {
@@ -1850,7 +1514,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public QueueJobPreflightResult AnalyzeCurrentJobForQueue(bool requireSourceExists = true)
+    internal QueueJobPreflightResult AnalyzeCurrentJobForQueue(bool requireSourceExists = true)
     {
         try
         {
@@ -1887,7 +1551,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public Task CancelJobAsync(EncodingJobItemViewModel? job)
+    internal Task CancelJobAsync(EncodingJobItemViewModel? job)
     {
         if (job is null)
         {
@@ -1912,7 +1576,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return Task.CompletedTask;
     }
 
-    public string? StartSelectedJobsNow()
+    internal string? StartSelectedJobsNow()
     {
         var selectedJobs = NormalizeSelectedQueueJobs(_selectedQueueJobs).ToList();
         if (selectedJobs.Count == 0)
@@ -1959,7 +1623,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return null;
     }
 
-    public string? CancelSelectedJobs()
+    internal string? CancelSelectedJobs()
     {
         var selectedJobs = NormalizeSelectedQueueJobs(_selectedQueueJobs).ToList();
         if (selectedJobs.Count == 0)
@@ -1996,7 +1660,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return null;
     }
 
-    public string? RemoveSelectedJobs()
+    internal string? RemoveSelectedJobs()
     {
         var selectedJobs = NormalizeSelectedQueueJobs(_selectedQueueJobs).ToList();
         if (selectedJobs.Count == 0)
@@ -2034,7 +1698,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return null;
     }
 
-    public Task<string?> RestartJobAsync(EncodingJobItemViewModel? job)
+    internal Task<string?> RestartJobAsync(EncodingJobItemViewModel? job)
     {
         if (job is null)
         {
@@ -2070,7 +1734,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    public string? RemoveJob(EncodingJobItemViewModel? job)
+    internal string? RemoveJob(EncodingJobItemViewModel? job)
     {
         if (job is null)
         {
@@ -2098,7 +1762,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return null;
     }
 
-    public string? PrioritizeJob(EncodingJobItemViewModel? job)
+    internal string? PrioritizeJob(EncodingJobItemViewModel? job)
     {
         var error = MoveQueuedJob(job, MoveQueuedJobMode.Next);
         if (string.IsNullOrWhiteSpace(error))
@@ -2109,7 +1773,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return error;
     }
 
-    public string? StartJobNow(EncodingJobItemViewModel? job)
+    internal string? StartJobNow(EncodingJobItemViewModel? job)
     {
         if (job is null)
         {
@@ -2132,22 +1796,22 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return null;
     }
 
-    public string? MoveJobUp(EncodingJobItemViewModel? job)
+    internal string? MoveJobUp(EncodingJobItemViewModel? job)
     {
         return MoveQueuedJob(job, MoveQueuedJobMode.Up);
     }
 
-    public string? MoveJobDown(EncodingJobItemViewModel? job)
+    internal string? MoveJobDown(EncodingJobItemViewModel? job)
     {
         return MoveQueuedJob(job, MoveQueuedJobMode.Down);
     }
 
-    public string? MoveJobToTop(EncodingJobItemViewModel? job)
+    internal string? MoveJobToTop(EncodingJobItemViewModel? job)
     {
         return MoveQueuedJob(job, MoveQueuedJobMode.Top);
     }
 
-    public string? MoveJobToBottom(EncodingJobItemViewModel? job)
+    internal string? MoveJobToBottom(EncodingJobItemViewModel? job)
     {
         return MoveQueuedJob(job, MoveQueuedJobMode.Bottom);
     }
@@ -2601,93 +2265,6 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         return runningIndex.HasValue ? runningIndex.Value + 1 : 0;
     }
 
-    private AutoCompressionRequest CreateAutoCompressionRequest(bool requireSourceExists)
-    {
-        if (SelectedAutoEncoder is null)
-        {
-            throw new InvalidOperationException(Texts.AutoCompressionMissingEncoderError);
-        }
-
-        if (string.IsNullOrWhiteSpace(AutoCompressionSourcePath))
-        {
-            throw new InvalidOperationException(Texts.AutoCompressionMissingSourceError);
-        }
-
-        if (string.IsNullOrWhiteSpace(AutoCompressionOutputPath))
-        {
-            throw new InvalidOperationException(Texts.AutoCompressionMissingOutputError);
-        }
-
-        var normalizedSource = Path.GetFullPath(AutoCompressionSourcePath.Trim());
-        var normalizedOutputDirectory = Path.GetFullPath(AutoCompressionOutputPath.Trim());
-
-        if (requireSourceExists && !File.Exists(normalizedSource))
-        {
-            throw new FileNotFoundException(Texts.AutoCompressionSourceFileMissingError, normalizedSource);
-        }
-
-        if (requireSourceExists && File.Exists(normalizedOutputDirectory))
-        {
-            throw new InvalidOperationException(Texts.AutoCompressionOutputDirectoryInvalidError);
-        }
-
-        var normalizedOutput = ResolveAutoCompressionOutputPath(
-            normalizedSource,
-            normalizedOutputDirectory,
-            SelectedAutoEncoder.Value,
-            AutoCompressionTargetVmaf);
-
-        if (string.Equals(normalizedSource, normalizedOutput, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(Texts.AutoCompressionSourceOutputPathConflictError);
-        }
-
-        var probes = Math.Max(1, (int)Math.Round(AutoCompressionProbes, MidpointRounding.AwayFromZero));
-        var workers = AutoCompressionWorkers > 0
-            ? (int?)Math.Round(AutoCompressionWorkers, MidpointRounding.AwayFromZero)
-            : null;
-        return new AutoCompressionRequest(
-            Guid.NewGuid(),
-            normalizedSource,
-            normalizedOutput,
-            SelectedAutoEncoder.Value,
-            AutoCompressionTargetVmaf,
-            probes,
-            AutoCompressionVideoParameters.Trim(),
-            workers);
-    }
-
-    private bool TryCreateAutoCompressionRequest(
-        bool requireSourceExists,
-        out AutoCompressionRequest? request,
-        out string? error)
-    {
-        try
-        {
-            request = CreateAutoCompressionRequest(requireSourceExists);
-            error = null;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            request = null;
-            error = ex.Message;
-            return false;
-        }
-    }
-
-    private void RefreshAutoCompressionCommandPreview()
-    {
-        if (_isAutoCompressionRunning)
-        {
-            return;
-        }
-
-        AutoCompressionCommandLine = TryCreateAutoCompressionRequest(requireSourceExists: false, out var request, out _)
-            ? _autoCompressionRunner.BuildDisplayCommand(request!)
-            : string.Empty;
-    }
-
     private EncodingJobRequest CreateDraftRequest(
         bool requireSourceExists = true,
         bool uniquifyOutputPath = true,
@@ -2882,23 +2459,6 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    private static string ResolveAutoCompressionOutputPath(
-        string sourcePath,
-        string outputDirectory,
-        EncoderKind encoderKind,
-        double targetVmaf)
-    {
-        var fileName = Path.GetFileNameWithoutExtension(sourcePath);
-        if (string.IsNullOrWhiteSpace(fileName))
-        {
-            fileName = "encode";
-        }
-
-        return Path.Combine(
-            outputDirectory,
-            $"{fileName}.{GetAutoCompressionEncoderToken(encoderKind)}.vmaf{FormatAutoCompressionVmafToken(targetVmaf)}.mkv");
-    }
-
     private string BuildDraftOutputPreviewText()
     {
         var preview = TryResolveDraftOutputPreview();
@@ -2951,53 +2511,11 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         }
     }
 
-    private string? TryResolveAutoCompressionOutputPreviewPath()
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(AutoCompressionSourcePath) || SelectedAutoEncoder is null)
-            {
-                return null;
-            }
-
-            var normalizedSource = Path.GetFullPath(AutoCompressionSourcePath.Trim());
-            var outputDirectory = !string.IsNullOrWhiteSpace(AutoCompressionOutputPath)
-                ? Path.GetFullPath(AutoCompressionOutputPath.Trim())
-                : Path.GetDirectoryName(normalizedSource) ?? Environment.CurrentDirectory;
-            return ResolveAutoCompressionOutputPath(
-                normalizedSource,
-                outputDirectory,
-                SelectedAutoEncoder.Value,
-                AutoCompressionTargetVmaf);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
     private string BuildOutputPreviewText(string? outputPath)
     {
         return string.IsNullOrWhiteSpace(outputPath)
             ? Texts.OutputPreviewPlaceholder
             : Texts.OutputPreviewText(outputPath);
-    }
-
-    private static string GetAutoCompressionEncoderToken(EncoderKind encoderKind)
-    {
-        return encoderKind switch
-        {
-            EncoderKind.X264 => "x264",
-            EncoderKind.X265 => "x265",
-            EncoderKind.SvtAv1 => "av1",
-            _ => "encode"
-        };
-    }
-
-    private static string FormatAutoCompressionVmafToken(double targetVmaf)
-    {
-        var token = Math.Clamp(targetVmaf, 0, 100).ToString("0.###", CultureInfo.InvariantCulture);
-        return token.Replace(".", "p", StringComparison.Ordinal);
     }
 
     private string? GetProfileConstraintError(EncodingProfile? profile)
@@ -3646,7 +3164,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         AppDiagnosticsLog.Write(_appPaths, nameof(MainWindowViewModel), message);
     }
 
-    public async Task<string?> PrepareWorkspaceRootChangeAsync(string proposedWorkspaceRootPath)
+    internal async Task<string?> PrepareWorkspaceRootChangeAsync(string proposedWorkspaceRootPath)
     {
         if (HasRunningJobs
             || IsAutoCompressionRunning
@@ -3791,84 +3309,6 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         OnPropertyChanged(nameof(DraftOutputPreviewText));
     }
 
-    private void ScheduleAutoCompressionInputRefresh()
-    {
-        CancelPendingAutoCompressionInputRefresh();
-        var requestVersion = Interlocked.Increment(ref _autoCompressionInputRefreshVersion);
-        var cancellationTokenSource = new CancellationTokenSource();
-        _autoCompressionInputRefreshCancellationTokenSource = cancellationTokenSource;
-
-        _ = RefreshAutoCompressionInputDeferredAsync(requestVersion, cancellationTokenSource.Token);
-    }
-
-    private async Task RefreshAutoCompressionInputDeferredAsync(int requestVersion, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await Task.Delay(InputPathRefreshDelay, cancellationToken);
-            if (!IsAutoCompressionInputRefreshCurrent(requestVersion, cancellationToken))
-            {
-                return;
-            }
-
-            var hasPathState = !string.IsNullOrWhiteSpace(AutoCompressionSourcePath) || !string.IsNullOrWhiteSpace(AutoCompressionOutputPath);
-            SetAutoCompressionInputRefreshPending(hasPathState);
-
-            if (hasPathState && !_isAutoCompressionRunning)
-            {
-                AutoCompressionStatusText = Texts.AutoCompressionInputPreparingStatus;
-                await Task.Yield();
-                if (!IsAutoCompressionInputRefreshCurrent(requestVersion, cancellationToken))
-                {
-                    return;
-                }
-            }
-
-            _isApplyingDeferredAutoCompressionInputRefresh = true;
-            try
-            {
-                TryPopulateAutoCompressionOutputPathIfEmpty();
-                RaiseAutoCompressionInputPropertyChanges();
-                RefreshAutoCompressionCommandPreview();
-            }
-            finally
-            {
-                _isApplyingDeferredAutoCompressionInputRefresh = false;
-            }
-
-            if (!IsAutoCompressionInputRefreshCurrent(requestVersion, cancellationToken))
-            {
-                return;
-            }
-
-            SetAutoCompressionInputRefreshPending(false);
-            if (!_isAutoCompressionRunning && string.Equals(AutoCompressionStatusText, Texts.AutoCompressionInputPreparingStatus, StringComparison.Ordinal))
-            {
-                AutoCompressionStatusText = Texts.AutoCompressionIdleStatus;
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-    }
-
-    private bool IsAutoCompressionInputRefreshCurrent(int requestVersion, CancellationToken cancellationToken)
-    {
-        return !cancellationToken.IsCancellationRequested
-            && requestVersion == Volatile.Read(ref _autoCompressionInputRefreshVersion);
-    }
-
-    private void SetAutoCompressionInputRefreshPending(bool isPending)
-    {
-        if (_isAutoCompressionInputRefreshPending == isPending)
-        {
-            return;
-        }
-
-        _isAutoCompressionInputRefreshPending = isPending;
-        OnPropertyChanged(nameof(AutoCompressionOutputPreviewText));
-    }
-
     private async Task RefreshPreviewDeferredAsync(
         EncodingProfile profile,
         int requestVersion,
@@ -3903,13 +3343,6 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         _draftInputRefreshCancellationTokenSource?.Cancel();
         _draftInputRefreshCancellationTokenSource?.Dispose();
         _draftInputRefreshCancellationTokenSource = null;
-    }
-
-    private void CancelPendingAutoCompressionInputRefresh()
-    {
-        _autoCompressionInputRefreshCancellationTokenSource?.Cancel();
-        _autoCompressionInputRefreshCancellationTokenSource?.Dispose();
-        _autoCompressionInputRefreshCancellationTokenSource = null;
     }
 
     private bool IsPreviewRequestCurrent(int requestVersion, CancellationToken cancellationToken)
@@ -3949,195 +3382,6 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         {
             _isUpdatingOutputPath = false;
         }
-    }
-
-    private void TryPopulateAutoCompressionOutputPathIfEmpty()
-    {
-        if (string.IsNullOrWhiteSpace(AutoCompressionSourcePath))
-        {
-            return;
-        }
-
-        var sourceDirectory = Path.GetDirectoryName(AutoCompressionSourcePath);
-        var suggestedPath = sourceDirectory ?? Environment.CurrentDirectory;
-
-        if (!string.IsNullOrWhiteSpace(AutoCompressionOutputPath)
-            && !string.Equals(AutoCompressionOutputPath, _lastAutoCompressionOutputPath, StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        SetAutoCompressionOutputPath(suggestedPath);
-    }
-
-    private void SetAutoCompressionOutputPath(string path)
-    {
-        _isUpdatingAutoCompressionOutputPath = true;
-
-        try
-        {
-            AutoCompressionOutputPath = path;
-            _lastAutoCompressionOutputPath = path;
-        }
-        finally
-        {
-            _isUpdatingAutoCompressionOutputPath = false;
-        }
-    }
-
-    private void ApplyAutoCompressionProgress(AutoCompressionProgress progress)
-    {
-        if (_activeAutoCompressionJobId != progress.JobId)
-        {
-            return;
-        }
-
-        SetAutoCompressionDisplayState(progress.State);
-
-        if (progress.State == EncodingJobState.Completed)
-        {
-            ClampAutoCompressionProgressForTerminalState(EncodingJobState.Completed);
-        }
-        else if (progress.ProgressFraction.HasValue)
-        {
-            AutoCompressionProgressIsIndeterminate = false;
-            AutoCompressionProgressPercent = progress.ProgressFraction.Value * 100;
-        }
-        else if (progress.State is EncodingJobState.Failed or EncodingJobState.Cancelled)
-        {
-            ClampAutoCompressionProgressForTerminalState(progress.State);
-        }
-        else if (_isAutoCompressionRunning)
-        {
-            AutoCompressionProgressIsIndeterminate = true;
-        }
-
-        if (!string.IsNullOrWhiteSpace(progress.Summary))
-        {
-            AutoCompressionStatusText = progress.Summary;
-        }
-
-        AppendAutoCompressionLogLine(progress.DetailLine);
-    }
-
-    private void AppendAutoCompressionLogLine(string line)
-    {
-        var normalized = ConsoleOutputLineNormalizer.Normalize(line);
-        if (string.IsNullOrWhiteSpace(normalized))
-        {
-            return;
-        }
-
-        if (ToolLogLineClassifier.IsAutoCompressionTransientLine(normalized))
-        {
-            if (!string.Equals(_autoCompressionLiveLogLine, normalized, StringComparison.Ordinal))
-            {
-                _autoCompressionLiveLogLine = normalized;
-                RefreshAutoCompressionLogText();
-            }
-
-            return;
-        }
-
-        _autoCompressionLiveLogLine = string.Empty;
-        AppendAutoCompressionStageLogLine(normalized);
-    }
-
-    private void AppendAutoCompressionStageLogLine(string line)
-    {
-        if (string.IsNullOrWhiteSpace(line))
-        {
-            return;
-        }
-
-        if (_autoCompressionLogStageLines.Count > 0
-            && string.Equals(_autoCompressionLogStageLines[^1], line, StringComparison.Ordinal))
-        {
-            RefreshAutoCompressionLogText();
-            return;
-        }
-
-        _autoCompressionLogStageLines.Add(line);
-        if (_autoCompressionLogStageLines.Count > AutoCompressionStageLogLimit)
-        {
-            _autoCompressionLogStageLines.RemoveAt(0);
-        }
-
-        RefreshAutoCompressionLogText();
-    }
-
-    private void RefreshAutoCompressionLogText()
-    {
-        var lines = new List<string>(_autoCompressionLogStageLines);
-        if (!string.IsNullOrWhiteSpace(_autoCompressionLiveLogLine))
-        {
-            lines.Add(_autoCompressionLiveLogLine);
-        }
-
-        var joined = string.Join(Environment.NewLine, lines);
-        if (joined.Length > AutoCompressionLogLimit)
-        {
-            joined = joined[^AutoCompressionLogLimit..];
-        }
-
-        AutoCompressionLog = joined;
-    }
-
-    private void ResetAutoCompressionLogState()
-    {
-        _autoCompressionLogBuilder.Clear();
-        _autoCompressionLogStageLines.Clear();
-        _autoCompressionLiveLogLine = string.Empty;
-    }
-
-    private void SetAutoCompressionRunningState(bool isRunning, Guid? activeJobId)
-    {
-        if (_isAutoCompressionRunning == isRunning && _activeAutoCompressionJobId == activeJobId)
-        {
-            return;
-        }
-
-        _isAutoCompressionRunning = isRunning;
-        _activeAutoCompressionJobId = activeJobId;
-        OnPropertyChanged(nameof(IsAutoCompressionRunning));
-        OnPropertyChanged(nameof(CanStartAutoCompression));
-        OnPropertyChanged(nameof(CanCancelAutoCompression));
-        OnPropertyChanged(nameof(AutoCompressionProgressLabel));
-        OnPropertyChanged(nameof(AutoCompressionProgressHintVisibility));
-
-        if (isRunning)
-        {
-            CancelPendingQueueCompletionActionWait();
-        }
-        else
-        {
-            TryScheduleQueueCompletionActionAfterSuccessfulQueueDrain();
-        }
-    }
-
-    private void SetAutoCompressionDisplayState(EncodingJobState? state)
-    {
-        if (_autoCompressionDisplayState == state)
-        {
-            return;
-        }
-
-        _autoCompressionDisplayState = state;
-        OnPropertyChanged(nameof(AutoCompressionStatusPanelBorderBrush));
-    }
-
-    private void ClampAutoCompressionProgressForTerminalState(EncodingJobState state)
-    {
-        AutoCompressionProgressIsIndeterminate = false;
-        AutoCompressionProgressPercent = state == EncodingJobState.Completed
-            ? 100
-            : Math.Min(AutoCompressionProgressPercent, 99.9);
-    }
-
-    private void DisposeAutoCompressionCancellation()
-    {
-        _autoCompressionCancellationTokenSource?.Dispose();
-        _autoCompressionCancellationTokenSource = null;
     }
 
     private void RaiseJobStatePropertyChanges()
@@ -4290,13 +3534,6 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         OnPropertyChanged(nameof(DraftOutputPreviewText));
     }
 
-    private void RaiseAutoCompressionInputPropertyChanges()
-    {
-        OnPropertyChanged(nameof(CanStartAutoCompression));
-        OnPropertyChanged(nameof(AutoCompressionSuggestedOutputFileName));
-        OnPropertyChanged(nameof(AutoCompressionOutputPreviewText));
-    }
-
     private void RaiseJobSummaryPropertyChanges()
     {
         OnPropertyChanged(nameof(HasJobs));
@@ -4443,19 +3680,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
         OnPropertyChanged(nameof(DraftOutputPreviewText));
         RaiseAppUpdatePropertyChanges();
 
-        if (!_isAutoCompressionRunning)
-        {
-            SetAutoCompressionDisplayState(null);
-            AutoCompressionStatusText = Texts.AutoCompressionIdleStatus;
-        }
-
-        OnPropertyChanged(nameof(AutoCompressionSuggestedOutputFileName));
-        OnPropertyChanged(nameof(AutoCompressionOutputPreviewText));
-        OnPropertyChanged(nameof(CanStartAutoCompression));
-        OnPropertyChanged(nameof(CanCancelAutoCompression));
-        OnPropertyChanged(nameof(AutoCompressionProgressLabel));
-        OnPropertyChanged(nameof(AutoCompressionProgressHint));
-        OnPropertyChanged(nameof(AutoCompressionProgressHintVisibility));
+        ApplyAutoCompressionLanguageState();
         ApplyAudioProcessingLanguageState();
         ApplyBluRayDemuxLanguageState();
         RaiseSetupGuidePropertyChanges();

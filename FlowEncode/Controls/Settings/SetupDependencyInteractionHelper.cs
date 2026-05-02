@@ -1,0 +1,233 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Threading.Tasks;
+using FlowEncode.Domain;
+using FlowEncode.Infrastructure;
+using FlowEncode.ViewModels;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Windows.Storage.Pickers;
+using WinRT.Interop;
+
+namespace FlowEncode.Controls.Settings;
+
+internal static class SetupDependencyInteractionHelper
+{
+    public static async Task RunGuardedAsync(
+        ISetupDependencyModuleViewModel viewModel,
+        FrameworkElement owner,
+        string diagnosticSource,
+        string diagnosticAction,
+        string errorTitle,
+        Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            TryWriteDiagnostic(diagnosticSource, $"{diagnosticAction}. {ex.GetType().Name}: {ex.Message}");
+            await ShowMessageAsync(viewModel, owner, errorTitle, ex.Message);
+        }
+    }
+
+    public static async Task InstallSetupDependencyAsync(
+        ISetupDependencyModuleViewModel viewModel,
+        FrameworkElement owner,
+        SetupDependencyKind kind,
+        string diagnosticSource)
+    {
+        try
+        {
+            string? error;
+            if (viewModel.RequiresSetupDependencyManualImport(kind))
+            {
+                var filePath = await PickExecutableFileAsync(PickerLocationId.Downloads);
+                if (string.IsNullOrWhiteSpace(filePath))
+                {
+                    return;
+                }
+
+                error = await viewModel.ImportSetupDependencyBinaryAsync(kind, filePath);
+            }
+            else
+            {
+                if (viewModel.HasManualPinnedSetupDependency(kind))
+                {
+                    var dependencyLabel = viewModel.GetSetupDependencyDisplayName(kind);
+                    var confirmed = await ShowConfirmationAsync(
+                        viewModel,
+                        owner,
+                        viewModel.Texts.ManualToolUpdateOverrideTitle,
+                        viewModel.Texts.ManualToolUpdateOverrideMessage(dependencyLabel),
+                        viewModel.Texts.UpdateButton,
+                        viewModel.Texts.CancelButton,
+                        ContentDialogButton.Close);
+                    if (!confirmed)
+                    {
+                        return;
+                    }
+
+                    error = await viewModel.ClearManualPinnedSetupDependencyAsync(kind, refreshAfterClear: false);
+                    if (!string.IsNullOrWhiteSpace(error))
+                    {
+                        await ShowMessageAsync(viewModel, owner, viewModel.Texts.ErrorInstallFailedTitle, error);
+                        return;
+                    }
+                }
+
+                error = await viewModel.InstallSetupDependencyAsync(kind);
+            }
+
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                await ShowMessageAsync(viewModel, owner, viewModel.Texts.ErrorInstallFailedTitle, error);
+            }
+        }
+        catch (Exception ex)
+        {
+            TryWriteDiagnostic(diagnosticSource, $"Failed to install setup dependency '{kind}'. {ex.GetType().Name}: {ex.Message}");
+            await ShowMessageAsync(viewModel, owner, viewModel.Texts.ErrorInstallFailedTitle, ex.Message);
+        }
+    }
+
+    public static async Task ManualSelectSetupDependencyAsync(
+        ISetupDependencyModuleViewModel viewModel,
+        FrameworkElement owner,
+        SetupDependencyKind kind,
+        string diagnosticSource)
+    {
+        try
+        {
+            var filePath = await PickExecutableFileAsync(PickerLocationId.ComputerFolder);
+            if (string.IsNullOrWhiteSpace(filePath))
+            {
+                return;
+            }
+
+            var error = await viewModel.PinSetupDependencyBinaryAsync(kind, filePath);
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                await ShowMessageAsync(viewModel, owner, viewModel.Texts.ErrorSaveSettingsFailedTitle, error);
+            }
+        }
+        catch (Exception ex)
+        {
+            TryWriteDiagnostic(diagnosticSource, $"Failed to manually pin setup dependency '{kind}'. {ex.GetType().Name}: {ex.Message}");
+            await ShowMessageAsync(viewModel, owner, viewModel.Texts.ErrorSaveSettingsFailedTitle, ex.Message);
+        }
+    }
+
+    public static async Task ClearManualPinnedSetupDependencyAsync(
+        ISetupDependencyModuleViewModel viewModel,
+        FrameworkElement owner,
+        SetupDependencyKind kind)
+    {
+        var error = await viewModel.ClearManualPinnedSetupDependencyAsync(kind);
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            await ShowMessageAsync(viewModel, owner, viewModel.Texts.ErrorSaveSettingsFailedTitle, error);
+        }
+    }
+
+    public static async Task UninstallSetupDependencyAsync(
+        ISetupDependencyModuleViewModel viewModel,
+        FrameworkElement owner,
+        SetupDependencyKind kind)
+    {
+        var error = await viewModel.UninstallSetupDependencyAsync(kind);
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            await ShowMessageAsync(viewModel, owner, viewModel.Texts.ErrorUninstallFailedTitle, error);
+        }
+    }
+
+    public static Task<bool> ShowConfirmationAsync(
+        ISetupDependencyModuleViewModel viewModel,
+        FrameworkElement owner,
+        string title,
+        string message,
+        string primaryButtonText,
+        string closeButtonText,
+        ContentDialogButton defaultButton = ContentDialogButton.Primary)
+    {
+        return WindowInteractionHelper.ShowConfirmationAsync(
+            owner.XamlRoot,
+            owner.ActualTheme,
+            title,
+            message,
+            primaryButtonText,
+            closeButtonText,
+            defaultButton);
+    }
+
+    public static Task ShowMessageAsync(
+        ISetupDependencyModuleViewModel viewModel,
+        FrameworkElement owner,
+        string title,
+        string message)
+    {
+        return WindowInteractionHelper.ShowMessageAsync(
+            owner.XamlRoot,
+            owner.ActualTheme,
+            viewModel.Texts.OkButton,
+            title,
+            message);
+    }
+
+    public static void OpenPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(path);
+        Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+    }
+
+    public static void OpenUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+    }
+
+    public static void TryWriteDiagnostic(string source, string message)
+    {
+        try
+        {
+            var paths = App.GetService<LocalAppPaths>();
+            AppDiagnosticsLog.Write(paths, source, message);
+        }
+        catch
+        {
+        }
+    }
+
+    private static async Task<string?> PickExecutableFileAsync(PickerLocationId startLocation)
+    {
+        var picker = new FileOpenPicker
+        {
+            SuggestedStartLocation = startLocation
+        };
+
+        picker.FileTypeFilter.Add(".exe");
+        try
+        {
+            InitializeWithWindow.Initialize(picker, WindowInteractionHelper.GetMainWindowHandle());
+            var file = await picker.PickSingleFileAsync();
+            return file?.Path;
+        }
+        catch (Exception ex)
+        {
+            TryWriteDiagnostic(nameof(SetupDependencyInteractionHelper), $"Failed to pick executable file. {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+    }
+}

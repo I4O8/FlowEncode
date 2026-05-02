@@ -468,8 +468,8 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
         var mainWindowViewModel = App.GetService<MainWindow>().ViewModel;
         var opened = await _previewWindow.OpenOrRefreshAsync(
             request,
-            mainWindowViewModel.CurrentLanguagePreference,
-            mainWindowViewModel.CurrentThemePreference);
+            mainWindowViewModel.SettingsModule.CurrentLanguagePreference,
+            mainWindowViewModel.SettingsModule.CurrentThemePreference);
 
         if (opened)
         {

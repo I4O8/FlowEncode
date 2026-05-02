@@ -1,0 +1,452 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<UserControl
+    x:Class="FlowEncode.Controls.Overview.OverviewView"
+    x:Name="RootView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+    <ScrollViewer x:Name="OverviewScrollViewer" VerticalScrollBarVisibility="Auto">
+        <StackPanel x:Name="OverviewContentStack" Padding="28,16,28,28" Spacing="0">
+            <Grid x:Name="OverviewWorkspaceGrid" ColumnSpacing="20" RowSpacing="20">
+                <Grid.RowDefinitions>
+                    <RowDefinition x:Name="OverviewWorkspacePrimaryRow" Height="Auto" />
+                    <RowDefinition x:Name="OverviewWorkspaceSecondaryRow" Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="OverviewPrimaryColumn" Width="0.85*" />
+                    <ColumnDefinition x:Name="OverviewSecondaryColumn" Width="1.15*" />
+                </Grid.ColumnDefinitions>
+
+                <Border x:Name="OverviewComposerPanel" Grid.Row="0" Grid.Column="0" Padding="20" Background="{ThemeResource CardBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppLargeCornerRadius}" VerticalAlignment="Stretch" DataContext="{Binding Composer}">
+                    <Grid RowSpacing="14">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="24" FontWeight="SemiBold" Text="{Binding Texts.ComposerTitle}" />
+
+                        <Grid x:Name="SourcePathGrid" Grid.Row="1" ColumnSpacing="12" RowSpacing="12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="SourcePathInputColumn" Width="*" />
+                                <ColumnDefinition x:Name="SourcePathActionColumn" Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="SourcePathTextBox" Header="{Binding Texts.SourceHeader}" PlaceholderText="{Binding Texts.SourcePlaceholder}" Text="{Binding SourcePath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button
+                                x:Name="SourcePathBrowseButton"
+                                Grid.Column="1"
+                                AutomationProperties.Name="{Binding Texts.BrowseButton}"
+                                Click="BrowseSourceButton_Click"
+                                HorizontalAlignment="Right"
+                                ToolTipService.ToolTip="{Binding Texts.BrowseButton}"
+                                VerticalAlignment="Bottom">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <SymbolIcon Symbol="OpenFile" />
+                                    <TextBlock Text="{Binding Texts.BrowseButton}" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <Grid x:Name="OutputPathGrid" Grid.Row="2" ColumnSpacing="12" RowSpacing="12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="OutputPathInputColumn" Width="*" />
+                                <ColumnDefinition x:Name="OutputPathActionColumn" Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="OutputPathTextBox" Header="{Binding Texts.OutputDirectoryHeader}" Text="{Binding OutputPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button
+                                x:Name="OutputPathBrowseButton"
+                                Grid.Column="1"
+                                AutomationProperties.Name="{Binding Texts.ChooseFolderButton}"
+                                Click="BrowseOutputButton_Click"
+                                HorizontalAlignment="Right"
+                                ToolTipService.ToolTip="{Binding Texts.ChooseFolderButton}"
+                                VerticalAlignment="Bottom">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <SymbolIcon Symbol="Folder" />
+                                    <TextBlock Text="{Binding Texts.ChooseFolderButton}" />
+                                </StackPanel>
+                            </Button>
+                            <TextBlock Grid.Row="1" Grid.ColumnSpan="2" FontFamily="{StaticResource AppMonoFont}" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding DraftOutputPreviewText}" TextWrapping="Wrap" />
+                        </Grid>
+
+                        <Grid x:Name="QueueActionGrid" Grid.Row="3" ColumnSpacing="12" RowSpacing="12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="QueueActionPrimaryColumn" Width="*" />
+                                <ColumnDefinition x:Name="QueueActionSecondaryColumn" Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="QueueOnlyButton" MinHeight="44" FontWeight="SemiBold" HorizontalAlignment="Stretch" AutomationProperties.Name="{Binding Texts.QueueButton}" Click="QueueOnlyButton_Click" IsEnabled="{Binding CanQueueJob}" ToolTipService.ToolTip="{Binding Texts.QueueButton}">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <SymbolIcon Symbol="Add" />
+                                    <TextBlock Text="{Binding Texts.QueueButton}" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="QueueAndStartButton" Grid.Column="1" MinHeight="44" FontWeight="SemiBold" HorizontalAlignment="Stretch" AutomationProperties.Name="{Binding Texts.QueueAndStartButton}" Click="QueueJobButton_Click" IsEnabled="{Binding CanQueueJob}" Style="{StaticResource AccentButtonStyle}" ToolTipService.ToolTip="{Binding Texts.QueueAndStartButton}">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <SymbolIcon Symbol="Play" />
+                                    <TextBlock Text="{Binding Texts.QueueAndStartButton}" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <Grid x:Name="DraftEncoderRatePresetGrid" Grid.Row="4" ColumnSpacing="12" RowSpacing="12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="DraftEncoderColumn" Width="*" />
+                                <ColumnDefinition x:Name="DraftRateColumn" Width="*" />
+                                <ColumnDefinition x:Name="DraftPresetColumn" Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="DraftEncoderComboBox" Header="{Binding Texts.EncoderHeader}" DisplayMemberPath="Label" ItemsSource="{Binding EncoderOptions}" SelectedItem="{Binding SelectedEncoder, Mode=TwoWay}" />
+                            <ComboBox x:Name="DraftRateControlComboBox" Grid.Column="1" Header="{Binding Texts.RateControlHeader}" DisplayMemberPath="Label" ItemsSource="{Binding AvailableRateControlModes}" SelectedItem="{Binding SelectedRateControl, Mode=TwoWay}" />
+                            <ComboBox x:Name="DraftPresetComboBox" Grid.Column="2" Header="Preset" DisplayMemberPath="Label" ItemsSource="{Binding AvailablePresets}" SelectedItem="{Binding SelectedPreset, Mode=TwoWay}" />
+                        </Grid>
+
+                        <Grid x:Name="DraftTuneProfileFormatValueGrid" Grid.Row="5" ColumnSpacing="12" RowSpacing="12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition x:Name="DraftTuneColumn" Width="*" />
+                                <ColumnDefinition x:Name="DraftProfileColumn" Width="*" />
+                                <ColumnDefinition x:Name="DraftOutputFormatColumn" Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="DraftTuneComboBox" Header="Tune" DisplayMemberPath="Label" ItemsSource="{Binding AvailableTunes}" SelectedItem="{Binding SelectedTune, Mode=TwoWay}" />
+                            <ComboBox x:Name="DraftProfileComboBox" Grid.Column="1" Header="Profile" DisplayMemberPath="Label" ItemsSource="{Binding AvailableProfiles}" SelectedItem="{Binding SelectedProfileOption, Mode=TwoWay}" />
+                            <ComboBox x:Name="DraftOutputFormatComboBox" Grid.Column="2" Header="{Binding Texts.OutputFormatHeader}" DisplayMemberPath="Label" ItemsSource="{Binding AvailableOutputFormats}" SelectedItem="{Binding SelectedOutputFormat, Mode=TwoWay}" />
+                        </Grid>
+
+                        <Border x:Name="DraftRateValuePanel" Grid.Row="6" Padding="16" Background="{ThemeResource CardAltBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppCardCornerRadius}">
+                            <Grid x:Name="DraftRateValueGrid" ColumnSpacing="16" RowSpacing="12" VerticalAlignment="Center">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition x:Name="DraftRateValueInputColumn" Width="240" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Spacing="2" VerticalAlignment="Center">
+                                    <TextBlock FontSize="20" FontWeight="SemiBold" Text="{Binding QualityInputLabel}" Visibility="{Binding DraftQualityVisibility}" />
+                                    <TextBlock FontSize="20" FontWeight="SemiBold" Text="{Binding BitrateInputLabel}" Visibility="{Binding DraftBitrateVisibility}" />
+                                </StackPanel>
+
+                                <Grid x:Name="DraftRateValueEditorHost" Grid.Column="1" HorizontalAlignment="Stretch">
+                                    <Grid x:Name="DraftQualityContainer" Visibility="{Binding DraftQualityVisibility}">
+                                        <NumberBox Minimum="0" MinWidth="184" SmallChange="0.5" SpinButtonPlacementMode="Inline" Value="{Binding DraftQuality, Mode=TwoWay}" />
+                                    </Grid>
+                                    <Grid x:Name="DraftBitrateContainer" Visibility="{Binding DraftBitrateVisibility}">
+                                        <NumberBox Minimum="1" MinWidth="184" SmallChange="100" SpinButtonPlacementMode="Inline" Value="{Binding DraftBitrate, Mode=TwoWay}" />
+                                    </Grid>
+                                </Grid>
+                            </Grid>
+                        </Border>
+
+                        <Grid x:Name="OverviewAdvancedSectionGrid" Grid.Row="7" ColumnSpacing="16" RowSpacing="10" VerticalAlignment="Stretch">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition x:Name="OverviewAdvancedSecondaryColumn" Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <Grid x:Name="OverviewTemplateActionGrid" Grid.ColumnSpan="2" ColumnSpacing="8" RowSpacing="8" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition x:Name="OverviewTemplateActionPrimaryColumn" Width="*" />
+                                    <ColumnDefinition x:Name="OverviewTemplateActionSecondaryColumn" Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <ComboBox
+                                    x:Name="OverviewTemplatePicker"
+                                    Width="160"
+                                    MinHeight="40"
+                                    DisplayMemberPath="Name"
+                                    ItemsSource="{Binding TemplateLibraryItems}"
+                                    PlaceholderText="{Binding Texts.LoadTemplateButton}"
+                                    SelectionChanged="OverviewTemplatePicker_SelectionChanged" />
+                                <Button x:Name="SaveCurrentConfigurationButton" Grid.Column="1" MinHeight="40" Padding="16,0" FontWeight="SemiBold" HorizontalAlignment="Right" AutomationProperties.Name="{Binding Texts.SaveCurrentConfigurationButton}" Click="SaveCurrentConfigurationButton_Click" Style="{StaticResource AccentButtonStyle}" ToolTipService.ToolTip="{Binding Texts.SaveCurrentConfigurationButton}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <SymbolIcon Symbol="Save" />
+                                        <TextBlock Text="{Binding Texts.SaveCurrentConfigurationButton}" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+
+                            <TextBox
+                                x:Name="DraftAdditionalArgumentsTextBox"
+                                Grid.Row="1"
+                                Grid.ColumnSpan="2"
+                                AcceptsReturn="True"
+                                Header="{Binding Texts.AdditionalArgumentsHeader}"
+                                MinHeight="180"
+                                VerticalAlignment="Stretch"
+                                Text="{Binding DraftAdditionalArguments, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                TextWrapping="Wrap" />
+
+                            <StackPanel x:Name="OverviewAdvancedOptionsPanel" Grid.Row="2" Grid.ColumnSpan="2" Spacing="12">
+                                <TextBlock Foreground="{ThemeResource AppWarningBrush}" Text="{Binding DraftConstraintWarningText}" TextWrapping="WrapWholeWords" Visibility="{Binding DraftConstraintWarningVisibility}" />
+
+                                <TextBox
+                                    Header="{Binding Texts.UhdArgumentsHeader}"
+                                    AcceptsReturn="True"
+                                    MinHeight="72"
+                                    PlaceholderText="{Binding Texts.UhdArgumentsPlaceholder}"
+                                    Text="{Binding DraftUhdParameters, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    TextWrapping="Wrap"
+                                    Visibility="{Binding X265UhdVisibility}" />
+                            </StackPanel>
+                        </Grid>
+
+                        <ComboBox x:Name="SavedTemplatesQuickSelect" Grid.Row="8" Visibility="Collapsed" DisplayMemberPath="Name" ItemsSource="{Binding UserTemplates}" SelectionChanged="SavedTemplatesQuickSelect_SelectionChanged" />
+                    </Grid>
+                </Border>
+
+                <Border x:Name="OverviewQueuePanel" Grid.Row="0" Grid.Column="1" Padding="20" Background="{ThemeResource CardBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppLargeCornerRadius}" VerticalAlignment="Stretch" DataContext="{Binding Queue}">
+                    <Grid RowSpacing="14">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Spacing="6">
+                                <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="24" FontWeight="SemiBold" Text="{Binding Texts.QueueTitle}" />
+                                <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding QueueSummary}" TextWrapping="WrapWholeWords" />
+                            </StackPanel>
+
+                            <Grid Grid.Column="1" ColumnSpacing="14" HorizontalAlignment="Right" VerticalAlignment="Top">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Width="132" HorizontalAlignment="Right" Spacing="6">
+                                    <TextBlock HorizontalAlignment="Right" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.MaxConcurrentEncodingJobsHeader}" TextAlignment="Right" TextWrapping="WrapWholeWords" />
+                                    <ComboBox
+                                        x:Name="QueueConcurrentEncodingJobsComboBox"
+                                        Width="88"
+                                        HorizontalAlignment="Right"
+                                        DisplayMemberPath="Label"
+                                        ItemsSource="{Binding ConcurrentEncodingJobOptions}"
+                                        SelectedItem="{Binding SelectedConcurrentEncodingJobOption, Mode=TwoWay}"
+                                        SelectionChanged="QueueHeaderComboBox_SelectionChanged" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="1" Width="156" HorizontalAlignment="Right" Spacing="6">
+                                    <TextBlock HorizontalAlignment="Right" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.QueueCompletionActionHeader}" TextAlignment="Right" TextWrapping="WrapWholeWords" />
+                                    <ComboBox
+                                        x:Name="QueueCompletionActionComboBox"
+                                        Width="140"
+                                        HorizontalAlignment="Right"
+                                        DisplayMemberPath="Label"
+                                        ItemsSource="{Binding QueueCompletionActionOptions}"
+                                        SelectedItem="{Binding SelectedQueueCompletionActionOption, Mode=TwoWay}"
+                                        SelectionChanged="QueueHeaderComboBox_SelectionChanged" />
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+
+                        <Border Grid.Row="1" Padding="0" Background="{ThemeResource CardAltBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppCardCornerRadius}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <Grid Padding="14,10" Background="{ThemeResource HeroSecondaryBrush}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="112" />
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="96" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock FontWeight="SemiBold" Text="{Binding Texts.QueueTaskColumn}" />
+                                    <TextBlock Grid.Column="1" FontWeight="SemiBold" HorizontalAlignment="Center" Text="{Binding Texts.QueueCodecCrfColumn}" />
+                                    <TextBlock Grid.Column="2" FontWeight="SemiBold" HorizontalAlignment="Center" Text="{Binding Texts.QueueStatusColumn}" />
+                                    <TextBlock Grid.Column="3" FontWeight="SemiBold" HorizontalAlignment="Center" Text="{Binding Texts.QueueProgressColumn}" />
+                                </Grid>
+
+                                <CommandBar x:Name="QueueSelectionCommandBar" Grid.Row="1" Padding="6,0" Background="Transparent" DefaultLabelPosition="Right" IsDynamicOverflowEnabled="False" OverflowButtonVisibility="Collapsed" Visibility="{Binding QueueSelectionCommandBarVisibility}">
+                                    <AppBarButton Icon="SelectAll" Label="{Binding Texts.QueueSelectAllButton}" Click="SelectAllQueueJobsButton_Click" IsEnabled="{Binding CanSelectAllQueueJobs}" />
+                                    <AppBarButton Icon="Switch" Label="{Binding Texts.QueueInvertSelectionButton}" Click="InvertQueueSelectionButton_Click" IsEnabled="{Binding CanInvertQueueSelection}" />
+                                    <AppBarSeparator />
+                                    <AppBarButton Icon="Play" Label="{Binding Texts.QueueBatchStartButton}" Click="StartSelectedJobsButton_Click" IsEnabled="{Binding CanStartSelectedJobs}" />
+                                    <AppBarButton Icon="Cancel" Label="{Binding Texts.QueueBatchCancelButton}" Click="CancelSelectedJobsButton_Click" IsEnabled="{Binding CanCancelSelectedJobs}" />
+                                    <AppBarButton Icon="Delete" Label="{Binding Texts.QueueBatchDeleteButton}" Click="DeleteSelectedJobsButton_Click" IsEnabled="{Binding CanDeleteSelectedJobs}" />
+                                    <CommandBar.Content>
+                                        <TextBlock VerticalAlignment="Center" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding QueueSelectionStatusText}" TextTrimming="CharacterEllipsis" />
+                                    </CommandBar.Content>
+                                </CommandBar>
+
+                                <Grid Grid.Row="2">
+                                    <ListView x:Name="JobsList" ItemsSource="{Binding Jobs}" MinHeight="320" SelectionMode="Multiple" SelectionChanged="JobsList_SelectionChanged">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Padding="14,12">
+                                                    <Grid.ContextFlyout>
+                                                        <MenuFlyout>
+                                                            <MenuFlyoutItem Text="{Binding DataContext.Texts.JobMenuStart, ElementName=RootView}" Click="StartQueuedJobMenuItem_Click" CommandParameter="{Binding}" IsEnabled="{Binding CanStart}">
+                                                                <MenuFlyoutItem.Icon>
+                                                                    <SymbolIcon Symbol="Play" />
+                                                                </MenuFlyoutItem.Icon>
+                                                            </MenuFlyoutItem>
+                                                            <MenuFlyoutItem Text="{Binding DataContext.Texts.JobMenuPrioritize, ElementName=RootView}" Click="StartJobMenuItem_Click" CommandParameter="{Binding}" IsEnabled="{Binding CanStart}">
+                                                                <MenuFlyoutItem.Icon>
+                                                                    <SymbolIcon Symbol="Play" />
+                                                                </MenuFlyoutItem.Icon>
+                                                            </MenuFlyoutItem>
+                                                            <MenuFlyoutItem Text="{Binding DataContext.Texts.JobMenuMoveTop, ElementName=RootView}" Click="MoveJobToTopMenuItem_Click" CommandParameter="{Binding}">
+                                                                <MenuFlyoutItem.Icon>
+                                                                    <SymbolIcon Symbol="Upload" />
+                                                                </MenuFlyoutItem.Icon>
+                                                            </MenuFlyoutItem>
+                                                            <MenuFlyoutItem Text="{Binding DataContext.Texts.JobMenuMoveUp, ElementName=RootView}" Click="MoveJobUpMenuItem_Click" CommandParameter="{Binding}" />
+                                                            <MenuFlyoutItem Text="{Binding DataContext.Texts.JobMenuMoveDown, ElementName=RootView}" Click="MoveJobDownMenuItem_Click" CommandParameter="{Binding}" />
+                                                            <MenuFlyoutItem Text="{Binding DataContext.Texts.JobMenuMoveBottom, ElementName=RootView}" Click="MoveJobToBottomMenuItem_Click" CommandParameter="{Binding}">
+                                                                <MenuFlyoutItem.Icon>
+                                                                    <SymbolIcon Symbol="Download" />
+                                                                </MenuFlyoutItem.Icon>
+                                                            </MenuFlyoutItem>
+                                                            <MenuFlyoutSeparator />
+                                                            <MenuFlyoutItem Text="{Binding DataContext.Texts.JobMenuCancel, ElementName=RootView}" Click="AbortJobMenuItem_Click" CommandParameter="{Binding}">
+                                                                <MenuFlyoutItem.Icon>
+                                                                    <SymbolIcon Symbol="Cancel" />
+                                                                </MenuFlyoutItem.Icon>
+                                                            </MenuFlyoutItem>
+                                                            <MenuFlyoutSeparator />
+                                                            <MenuFlyoutItem Text="{Binding DataContext.Texts.JobMenuRestart, ElementName=RootView}" Click="RestartJobMenuItem_Click" CommandParameter="{Binding}">
+                                                                <MenuFlyoutItem.Icon>
+                                                                    <SymbolIcon Symbol="Refresh" />
+                                                                </MenuFlyoutItem.Icon>
+                                                            </MenuFlyoutItem>
+                                                            <MenuFlyoutItem Text="{Binding DataContext.Texts.JobMenuDelete, ElementName=RootView}" Click="DeleteJobMenuItem_Click" CommandParameter="{Binding}">
+                                                                <MenuFlyoutItem.Icon>
+                                                                    <SymbolIcon Symbol="Delete" />
+                                                                </MenuFlyoutItem.Icon>
+                                                            </MenuFlyoutItem>
+                                                        </MenuFlyout>
+                                                    </Grid.ContextFlyout>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="112" />
+                                                        <ColumnDefinition Width="120" />
+                                                        <ColumnDefinition Width="96" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Spacing="4">
+                                                        <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="16" FontWeight="SemiBold" Text="{Binding Title}" />
+                                                        <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding EncoderLabel}" />
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Text="{Binding CodecAndCrfLabel}" TextAlignment="Center" TextWrapping="WrapWholeWords" />
+                                                    <TextBlock Grid.Column="2" HorizontalAlignment="Center" VerticalAlignment="Center" Text="{Binding StateLabel}" />
+                                                    <StackPanel Grid.Column="3" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="4">
+                                                        <TextBlock HorizontalAlignment="Center" Text="{Binding ProgressPercentLabel}" />
+                                                        <ProgressBar Width="76" Height="6" Maximum="1" Foreground="{ThemeResource QueueAccentBrush}" IsIndeterminate="{Binding IsProgressIndeterminate}" Value="{Binding ProgressValue}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+
+                                    <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="22" FontWeight="SemiBold" Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding Texts.EmptyQueue}" TextAlignment="Center" TextWrapping="Wrap" Visibility="{Binding EmptyQueueVisibility}" />
+                                </Grid>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Row="2" Padding="16" Background="{ThemeResource CardAltBrush}" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppCardCornerRadius}">
+                            <Grid RowSpacing="12">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <StackPanel Spacing="4">
+                                    <TextBlock FontFamily="{StaticResource AppDisplayFont}" FontSize="20" FontWeight="SemiBold" Text="{Binding Texts.JobDetailsTitle}" />
+                                    <TextBlock Text="{Binding SelectedJobSummary}" />
+                                    <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding SelectedJobSourcePreparationText}" TextWrapping="Wrap" Visibility="{Binding SelectedJobSourcePreparationVisibility}" />
+                                </StackPanel>
+
+                                <Border Grid.Row="1" Padding="0" Background="{ThemeResource QueueProgressSoftBrush}" BorderBrush="{ThemeResource QueueProgressFillBrush}" BorderThickness="{StaticResource AppCardBorderThickness}" CornerRadius="{StaticResource AppCardCornerRadius}">
+                                    <Grid Height="72">
+                                        <Rectangle RadiusX="8" RadiusY="8" Fill="{ThemeResource QueueProgressAreaBrush}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" RenderTransformOrigin="0,0.5">
+                                            <Rectangle.RenderTransform>
+                                                <ScaleTransform ScaleX="{Binding SelectedJobProgressValue}" />
+                                            </Rectangle.RenderTransform>
+                                        </Rectangle>
+                                        <Border Margin="1" Background="{ThemeResource AppProgressOverlayBrush}" CornerRadius="{StaticResource AppCardCornerRadius}" />
+                                        <StackPanel Margin="16,8" HorizontalAlignment="Stretch" VerticalAlignment="Center" Spacing="6">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="0.72*" />
+                                                    <ColumnDefinition Width="1.38*" />
+                                                    <ColumnDefinition Width="0.9*" />
+                                                    <ColumnDefinition Width="1*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock FontFamily="{StaticResource AppMonoFont}" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Text="{Binding SelectedJobProgressPercentText}" TextAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="1" FontFamily="{StaticResource AppMonoFont}" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Text="{Binding SelectedJobFramesText}" TextAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="2" FontFamily="{StaticResource AppMonoFont}" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Text="{Binding SelectedJobFpsText}" TextAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="3" FontFamily="{StaticResource AppMonoFont}" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Text="{Binding SelectedJobBitrateText}" TextAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                            <Grid ColumnSpacing="18">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock FontFamily="{StaticResource AppMonoFont}" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Text="{Binding SelectedJobEtaText}" TextAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="1" FontFamily="{StaticResource AppMonoFont}" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" Foreground="{ThemeResource TextFillColorPrimaryBrush}" Text="{Binding SelectedJobEstimatedSizeText}" TextAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <TextBox Grid.Row="2" Height="72" FontFamily="{StaticResource AppMonoFont}" IsReadOnly="True" ScrollViewer.VerticalScrollBarVisibility="Auto" Text="{Binding SelectedJobCommandText}" TextWrapping="Wrap" />
+
+                                <TextBox Grid.Row="3" Height="180" FontFamily="{StaticResource AppMonoFont}" IsReadOnly="True" ScrollViewer.VerticalScrollBarVisibility="Auto" Text="{Binding SelectedJobLogText}" TextWrapping="Wrap" />
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Border>
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
