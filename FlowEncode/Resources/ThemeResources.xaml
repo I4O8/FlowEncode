@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        Theme tokens are the source of truth. Legacy keys remain for a staged migration so
+        existing views and view-model helpers keep working while HighContrast support lands.
+    -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <Color x:Key="ThemeColorTextPrimary">#FF202020</Color>
+            <Color x:Key="ThemeColorTextSecondary">#FF5F5F5F</Color>
+            <Color x:Key="ThemeColorSurfaceWindow">#FFF7F7F7</Color>
+            <Color x:Key="ThemeColorSurfaceLayer">#FFF3F3F3</Color>
+            <Color x:Key="ThemeColorSurfaceLayerAlt">#FFF9F9F9</Color>
+            <Color x:Key="ThemeColorBorderSubtle">#14000000</Color>
+            <Color x:Key="ThemeColorDividerSubtle">#0F000000</Color>
+            <Color x:Key="ThemeColorAccent">#FF2563EB</Color>
+            <Color x:Key="ThemeColorAccentSoft">#1F2563EB</Color>
+            <Color x:Key="ThemeColorSuccess">#FF107C10</Color>
+            <Color x:Key="ThemeColorSuccessSoft">#1F107C10</Color>
+            <Color x:Key="ThemeColorWarning">#FF9D5D00</Color>
+            <Color x:Key="ThemeColorWarningSoft">#24F7630C</Color>
+            <Color x:Key="ThemeColorError">#FFC42B1C</Color>
+            <Color x:Key="ThemeColorErrorSoft">#20C42B1C</Color>
+            <Color x:Key="ThemeColorNeutral">#FF6B7280</Color>
+            <Color x:Key="ThemeColorNeutralSoft">#186B7280</Color>
+            <Color x:Key="ThemeColorOverlayProgress">#12FFFFFF</Color>
+            <Color x:Key="ThemeColorOverlayModal">#66000000</Color>
+            <Color x:Key="ThemeColorCard">#F2FFFFFF</Color>
+            <Color x:Key="ThemeColorCardAlt">#FFF9F9F9</Color>
+            <Color x:Key="ThemeColorHero">#FFFFFFFF</Color>
+            <Color x:Key="ThemeColorHeroSecondary">#FFF3F3F3</Color>
+            <Color x:Key="ThemeColorTemplateUserCard">#FFFFF7ED</Color>
+            <Color x:Key="ThemeColorTemplateUserBorder">#33C66A00</Color>
+            <Color x:Key="ThemeColorTemplateUserBadge">#FFFFEDD5</Color>
+            <Color x:Key="ThemeColorTemplateUserBadgeForeground">#FF7C2D12</Color>
+            <Color x:Key="ThemeColorFocusStroke">#FF2563EB</Color>
+            <Color x:Key="ThemeColorQueueProgressEdge">#CC16A34A</Color>
+            <Color x:Key="ThemeColorQueueProgressCenter">#FF107C10</Color>
+
+            <SolidColorBrush x:Key="ThemeTextPrimaryBrush" Color="{StaticResource ThemeColorTextPrimary}" />
+            <SolidColorBrush x:Key="ThemeTextSecondaryBrush" Color="{StaticResource ThemeColorTextSecondary}" />
+            <SolidColorBrush x:Key="ThemeSurfaceWindowBrush" Color="{StaticResource ThemeColorSurfaceWindow}" />
+            <SolidColorBrush x:Key="ThemeSurfaceLayerBrush" Color="{StaticResource ThemeColorSurfaceLayer}" />
+            <SolidColorBrush x:Key="ThemeSurfaceLayerAltBrush" Color="{StaticResource ThemeColorSurfaceLayerAlt}" />
+            <SolidColorBrush x:Key="ThemeBorderSubtleBrush" Color="{StaticResource ThemeColorBorderSubtle}" />
+            <SolidColorBrush x:Key="ThemeDividerSubtleBrush" Color="{StaticResource ThemeColorDividerSubtle}" />
+            <SolidColorBrush x:Key="ThemeAccentBrush" Color="{StaticResource ThemeColorAccent}" />
+            <SolidColorBrush x:Key="ThemeAccentSoftBrush" Color="{StaticResource ThemeColorAccentSoft}" />
+            <SolidColorBrush x:Key="ThemeStatusSuccessBrush" Color="{StaticResource ThemeColorSuccess}" />
+            <SolidColorBrush x:Key="ThemeStatusSuccessSoftBrush" Color="{StaticResource ThemeColorSuccessSoft}" />
+            <SolidColorBrush x:Key="ThemeStatusWarningBrush" Color="{StaticResource ThemeColorWarning}" />
+            <SolidColorBrush x:Key="ThemeStatusWarningSoftBrush" Color="{StaticResource ThemeColorWarningSoft}" />
+            <SolidColorBrush x:Key="ThemeStatusErrorBrush" Color="{StaticResource ThemeColorError}" />
+            <SolidColorBrush x:Key="ThemeStatusErrorSoftBrush" Color="{StaticResource ThemeColorErrorSoft}" />
+            <SolidColorBrush x:Key="ThemeStatusNeutralBrush" Color="{StaticResource ThemeColorNeutral}" />
+            <SolidColorBrush x:Key="ThemeStatusNeutralSoftBrush" Color="{StaticResource ThemeColorNeutralSoft}" />
+            <SolidColorBrush x:Key="ThemeOverlayProgressBrush" Color="{StaticResource ThemeColorOverlayProgress}" />
+            <SolidColorBrush x:Key="ThemeOverlayModalBrush" Color="{StaticResource ThemeColorOverlayModal}" />
+            <SolidColorBrush x:Key="ThemeSurfaceCardBrush" Color="{StaticResource ThemeColorCard}" />
+            <SolidColorBrush x:Key="ThemeSurfaceCardAltBrush" Color="{StaticResource ThemeColorCardAlt}" />
+            <SolidColorBrush x:Key="ThemeSurfaceHeroBrush" Color="{StaticResource ThemeColorHero}" />
+            <SolidColorBrush x:Key="ThemeSurfaceHeroSecondaryBrush" Color="{StaticResource ThemeColorHeroSecondary}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserCardBrush" Color="{StaticResource ThemeColorTemplateUserCard}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserBorderBrush" Color="{StaticResource ThemeColorTemplateUserBorder}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserBadgeBrush" Color="{StaticResource ThemeColorTemplateUserBadge}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserBadgeForegroundBrush" Color="{StaticResource ThemeColorTemplateUserBadgeForeground}" />
+            <SolidColorBrush x:Key="ThemeFocusStrokeBrush" Color="{StaticResource ThemeColorFocusStroke}" />
+            <SolidColorBrush x:Key="ThemeQueueAccentBrush" Color="{StaticResource ThemeColorAccent}" />
+            <SolidColorBrush x:Key="ThemeQueueAccentSoftBrush" Color="{StaticResource ThemeColorAccentSoft}" />
+            <SolidColorBrush x:Key="ThemeQueueProgressFillBrush" Color="{StaticResource ThemeColorSuccess}" />
+            <SolidColorBrush x:Key="ThemeQueueProgressSoftBrush" Color="{StaticResource ThemeColorSuccessSoft}" />
+            <LinearGradientBrush x:Key="ThemeQueueProgressAreaBrush" StartPoint="0,0" EndPoint="0,1">
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressEdge}" Offset="0" />
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressCenter}" Offset="0.5" />
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressEdge}" Offset="1" />
+            </LinearGradientBrush>
+
+            <SolidColorBrush x:Key="TitleBarButtonForegroundBrush" Color="{StaticResource ThemeColorTextPrimary}" />
+            <SolidColorBrush x:Key="TitleBarButtonInactiveForegroundBrush" Color="#99000000" />
+
+            <SolidColorBrush x:Key="WindowBackgroundBrush" Color="{StaticResource ThemeColorSurfaceWindow}" />
+            <SolidColorBrush x:Key="AppLayerBrush" Color="{StaticResource ThemeColorSurfaceLayer}" />
+            <SolidColorBrush x:Key="AppLayerAltBrush" Color="{StaticResource ThemeColorSurfaceLayerAlt}" />
+            <SolidColorBrush x:Key="AppDividerBrush" Color="{StaticResource ThemeColorDividerSubtle}" />
+            <SolidColorBrush x:Key="AppAccentBrush" Color="{StaticResource ThemeColorAccent}" />
+            <SolidColorBrush x:Key="AppAccentSoftBrush" Color="{StaticResource ThemeColorAccentSoft}" />
+            <SolidColorBrush x:Key="AppSuccessBrush" Color="{StaticResource ThemeColorSuccess}" />
+            <SolidColorBrush x:Key="AppSuccessSoftBrush" Color="{StaticResource ThemeColorSuccessSoft}" />
+            <SolidColorBrush x:Key="AppWarningBrush" Color="{StaticResource ThemeColorWarning}" />
+            <SolidColorBrush x:Key="AppWarningSoftBrush" Color="{StaticResource ThemeColorWarningSoft}" />
+            <SolidColorBrush x:Key="AppErrorBrush" Color="{StaticResource ThemeColorError}" />
+            <SolidColorBrush x:Key="AppErrorSoftBrush" Color="{StaticResource ThemeColorErrorSoft}" />
+            <SolidColorBrush x:Key="AppNeutralBrush" Color="{StaticResource ThemeColorNeutral}" />
+            <SolidColorBrush x:Key="AppNeutralSoftBrush" Color="{StaticResource ThemeColorNeutralSoft}" />
+            <SolidColorBrush x:Key="AppProgressOverlayBrush" Color="{StaticResource ThemeColorOverlayProgress}" />
+            <SolidColorBrush x:Key="AppModalSmokeBrush" Color="{StaticResource ThemeColorOverlayModal}" />
+            <SolidColorBrush x:Key="CardBrush" Color="{StaticResource ThemeColorCard}" />
+            <SolidColorBrush x:Key="CardAltBrush" Color="{StaticResource ThemeColorCardAlt}" />
+            <SolidColorBrush x:Key="CardBorderBrush" Color="{StaticResource ThemeColorBorderSubtle}" />
+            <SolidColorBrush x:Key="HeroBrush" Color="{StaticResource ThemeColorHero}" />
+            <SolidColorBrush x:Key="HeroSecondaryBrush" Color="{StaticResource ThemeColorHeroSecondary}" />
+            <SolidColorBrush x:Key="AccentChipBrush" Color="{StaticResource ThemeColorAccentSoft}" />
+            <SolidColorBrush x:Key="QueueAccentBrush" Color="{StaticResource ThemeColorAccent}" />
+            <SolidColorBrush x:Key="QueueAccentSoftBrush" Color="{StaticResource ThemeColorAccentSoft}" />
+            <SolidColorBrush x:Key="QueueProgressFillBrush" Color="{StaticResource ThemeColorSuccess}" />
+            <SolidColorBrush x:Key="QueueProgressSoftBrush" Color="{StaticResource ThemeColorSuccessSoft}" />
+            <LinearGradientBrush x:Key="QueueProgressAreaBrush" StartPoint="0,0" EndPoint="0,1">
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressEdge}" Offset="0" />
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressCenter}" Offset="0.5" />
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressEdge}" Offset="1" />
+            </LinearGradientBrush>
+            <SolidColorBrush x:Key="TemplateUserCardBrush" Color="{StaticResource ThemeColorTemplateUserCard}" />
+            <SolidColorBrush x:Key="TemplateUserBorderBrush" Color="{StaticResource ThemeColorTemplateUserBorder}" />
+            <SolidColorBrush x:Key="TemplateUserBadgeBrush" Color="{StaticResource ThemeColorTemplateUserBadge}" />
+            <SolidColorBrush x:Key="TemplateUserBadgeForegroundBrush" Color="{StaticResource ThemeColorTemplateUserBadgeForeground}" />
+            <SolidColorBrush x:Key="SubtleTextBrush" Color="{StaticResource ThemeColorTextSecondary}" />
+
+            <Style x:Key="SelectableSecondaryTextBlockStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{ThemeResource ThemeTextSecondaryBrush}" />
+            </Style>
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Dark">
+            <Color x:Key="ThemeColorTextPrimary">#FFF3F3F3</Color>
+            <Color x:Key="ThemeColorTextSecondary">#FFC7C7C7</Color>
+            <Color x:Key="ThemeColorSurfaceWindow">#FF202020</Color>
+            <Color x:Key="ThemeColorSurfaceLayer">#FF1B1B1B</Color>
+            <Color x:Key="ThemeColorSurfaceLayerAlt">#FF2B2B2B</Color>
+            <Color x:Key="ThemeColorBorderSubtle">#21FFFFFF</Color>
+            <Color x:Key="ThemeColorDividerSubtle">#1FFFFFFF</Color>
+            <Color x:Key="ThemeColorAccent">#FF60CDFF</Color>
+            <Color x:Key="ThemeColorAccentSoft">#2460CDFF</Color>
+            <Color x:Key="ThemeColorSuccess">#FF6CCB5F</Color>
+            <Color x:Key="ThemeColorSuccessSoft">#246CCB5F</Color>
+            <Color x:Key="ThemeColorWarning">#FFFCE100</Color>
+            <Color x:Key="ThemeColorWarningSoft">#24FCE100</Color>
+            <Color x:Key="ThemeColorError">#FFFF99A4</Color>
+            <Color x:Key="ThemeColorErrorSoft">#24FF99A4</Color>
+            <Color x:Key="ThemeColorNeutral">#FF9CA3AF</Color>
+            <Color x:Key="ThemeColorNeutralSoft">#249CA3AF</Color>
+            <Color x:Key="ThemeColorOverlayProgress">#12FFFFFF</Color>
+            <Color x:Key="ThemeColorOverlayModal">#99000000</Color>
+            <Color x:Key="ThemeColorCard">#E61F1F1F</Color>
+            <Color x:Key="ThemeColorCardAlt">#FF2B2B2B</Color>
+            <Color x:Key="ThemeColorHero">#FF252525</Color>
+            <Color x:Key="ThemeColorHeroSecondary">#FF2B2B2B</Color>
+            <Color x:Key="ThemeColorTemplateUserCard">#FF31281F</Color>
+            <Color x:Key="ThemeColorTemplateUserBorder">#66F59E0B</Color>
+            <Color x:Key="ThemeColorTemplateUserBadge">#FF5C3B14</Color>
+            <Color x:Key="ThemeColorTemplateUserBadgeForeground">#FFFFDDB2</Color>
+            <Color x:Key="ThemeColorFocusStroke">#FF60CDFF</Color>
+            <Color x:Key="ThemeColorQueueProgressEdge">#CC6CCB5F</Color>
+            <Color x:Key="ThemeColorQueueProgressCenter">#FF6CCB5F</Color>
+
+            <SolidColorBrush x:Key="ThemeTextPrimaryBrush" Color="{StaticResource ThemeColorTextPrimary}" />
+            <SolidColorBrush x:Key="ThemeTextSecondaryBrush" Color="{StaticResource ThemeColorTextSecondary}" />
+            <SolidColorBrush x:Key="ThemeSurfaceWindowBrush" Color="{StaticResource ThemeColorSurfaceWindow}" />
+            <SolidColorBrush x:Key="ThemeSurfaceLayerBrush" Color="{StaticResource ThemeColorSurfaceLayer}" />
+            <SolidColorBrush x:Key="ThemeSurfaceLayerAltBrush" Color="{StaticResource ThemeColorSurfaceLayerAlt}" />
+            <SolidColorBrush x:Key="ThemeBorderSubtleBrush" Color="{StaticResource ThemeColorBorderSubtle}" />
+            <SolidColorBrush x:Key="ThemeDividerSubtleBrush" Color="{StaticResource ThemeColorDividerSubtle}" />
+            <SolidColorBrush x:Key="ThemeAccentBrush" Color="{StaticResource ThemeColorAccent}" />
+            <SolidColorBrush x:Key="ThemeAccentSoftBrush" Color="{StaticResource ThemeColorAccentSoft}" />
+            <SolidColorBrush x:Key="ThemeStatusSuccessBrush" Color="{StaticResource ThemeColorSuccess}" />
+            <SolidColorBrush x:Key="ThemeStatusSuccessSoftBrush" Color="{StaticResource ThemeColorSuccessSoft}" />
+            <SolidColorBrush x:Key="ThemeStatusWarningBrush" Color="{StaticResource ThemeColorWarning}" />
+            <SolidColorBrush x:Key="ThemeStatusWarningSoftBrush" Color="{StaticResource ThemeColorWarningSoft}" />
+            <SolidColorBrush x:Key="ThemeStatusErrorBrush" Color="{StaticResource ThemeColorError}" />
+            <SolidColorBrush x:Key="ThemeStatusErrorSoftBrush" Color="{StaticResource ThemeColorErrorSoft}" />
+            <SolidColorBrush x:Key="ThemeStatusNeutralBrush" Color="{StaticResource ThemeColorNeutral}" />
+            <SolidColorBrush x:Key="ThemeStatusNeutralSoftBrush" Color="{StaticResource ThemeColorNeutralSoft}" />
+            <SolidColorBrush x:Key="ThemeOverlayProgressBrush" Color="{StaticResource ThemeColorOverlayProgress}" />
+            <SolidColorBrush x:Key="ThemeOverlayModalBrush" Color="{StaticResource ThemeColorOverlayModal}" />
+            <SolidColorBrush x:Key="ThemeSurfaceCardBrush" Color="{StaticResource ThemeColorCard}" />
+            <SolidColorBrush x:Key="ThemeSurfaceCardAltBrush" Color="{StaticResource ThemeColorCardAlt}" />
+            <SolidColorBrush x:Key="ThemeSurfaceHeroBrush" Color="{StaticResource ThemeColorHero}" />
+            <SolidColorBrush x:Key="ThemeSurfaceHeroSecondaryBrush" Color="{StaticResource ThemeColorHeroSecondary}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserCardBrush" Color="{StaticResource ThemeColorTemplateUserCard}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserBorderBrush" Color="{StaticResource ThemeColorTemplateUserBorder}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserBadgeBrush" Color="{StaticResource ThemeColorTemplateUserBadge}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserBadgeForegroundBrush" Color="{StaticResource ThemeColorTemplateUserBadgeForeground}" />
+            <SolidColorBrush x:Key="ThemeFocusStrokeBrush" Color="{StaticResource ThemeColorFocusStroke}" />
+            <SolidColorBrush x:Key="ThemeQueueAccentBrush" Color="{StaticResource ThemeColorAccent}" />
+            <SolidColorBrush x:Key="ThemeQueueAccentSoftBrush" Color="{StaticResource ThemeColorAccentSoft}" />
+            <SolidColorBrush x:Key="ThemeQueueProgressFillBrush" Color="{StaticResource ThemeColorSuccess}" />
+            <SolidColorBrush x:Key="ThemeQueueProgressSoftBrush" Color="{StaticResource ThemeColorSuccessSoft}" />
+            <LinearGradientBrush x:Key="ThemeQueueProgressAreaBrush" StartPoint="0,0" EndPoint="0,1">
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressEdge}" Offset="0" />
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressCenter}" Offset="0.5" />
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressEdge}" Offset="1" />
+            </LinearGradientBrush>
+
+            <SolidColorBrush x:Key="TitleBarButtonForegroundBrush" Color="{StaticResource ThemeColorTextPrimary}" />
+            <SolidColorBrush x:Key="TitleBarButtonInactiveForegroundBrush" Color="#99FFFFFF" />
+
+            <SolidColorBrush x:Key="WindowBackgroundBrush" Color="{StaticResource ThemeColorSurfaceWindow}" />
+            <SolidColorBrush x:Key="AppLayerBrush" Color="{StaticResource ThemeColorSurfaceLayer}" />
+            <SolidColorBrush x:Key="AppLayerAltBrush" Color="{StaticResource ThemeColorSurfaceLayerAlt}" />
+            <SolidColorBrush x:Key="AppDividerBrush" Color="{StaticResource ThemeColorDividerSubtle}" />
+            <SolidColorBrush x:Key="AppAccentBrush" Color="{StaticResource ThemeColorAccent}" />
+            <SolidColorBrush x:Key="AppAccentSoftBrush" Color="{StaticResource ThemeColorAccentSoft}" />
+            <SolidColorBrush x:Key="AppSuccessBrush" Color="{StaticResource ThemeColorSuccess}" />
+            <SolidColorBrush x:Key="AppSuccessSoftBrush" Color="{StaticResource ThemeColorSuccessSoft}" />
+            <SolidColorBrush x:Key="AppWarningBrush" Color="{StaticResource ThemeColorWarning}" />
+            <SolidColorBrush x:Key="AppWarningSoftBrush" Color="{StaticResource ThemeColorWarningSoft}" />
+            <SolidColorBrush x:Key="AppErrorBrush" Color="{StaticResource ThemeColorError}" />
+            <SolidColorBrush x:Key="AppErrorSoftBrush" Color="{StaticResource ThemeColorErrorSoft}" />
+            <SolidColorBrush x:Key="AppNeutralBrush" Color="{StaticResource ThemeColorNeutral}" />
+            <SolidColorBrush x:Key="AppNeutralSoftBrush" Color="{StaticResource ThemeColorNeutralSoft}" />
+            <SolidColorBrush x:Key="AppProgressOverlayBrush" Color="{StaticResource ThemeColorOverlayProgress}" />
+            <SolidColorBrush x:Key="AppModalSmokeBrush" Color="{StaticResource ThemeColorOverlayModal}" />
+            <SolidColorBrush x:Key="CardBrush" Color="{StaticResource ThemeColorCard}" />
+            <SolidColorBrush x:Key="CardAltBrush" Color="{StaticResource ThemeColorCardAlt}" />
+            <SolidColorBrush x:Key="CardBorderBrush" Color="{StaticResource ThemeColorBorderSubtle}" />
+            <SolidColorBrush x:Key="HeroBrush" Color="{StaticResource ThemeColorHero}" />
+            <SolidColorBrush x:Key="HeroSecondaryBrush" Color="{StaticResource ThemeColorHeroSecondary}" />
+            <SolidColorBrush x:Key="AccentChipBrush" Color="{StaticResource ThemeColorAccentSoft}" />
+            <SolidColorBrush x:Key="QueueAccentBrush" Color="{StaticResource ThemeColorAccent}" />
+            <SolidColorBrush x:Key="QueueAccentSoftBrush" Color="{StaticResource ThemeColorAccentSoft}" />
+            <SolidColorBrush x:Key="QueueProgressFillBrush" Color="{StaticResource ThemeColorSuccess}" />
+            <SolidColorBrush x:Key="QueueProgressSoftBrush" Color="{StaticResource ThemeColorSuccessSoft}" />
+            <LinearGradientBrush x:Key="QueueProgressAreaBrush" StartPoint="0,0" EndPoint="0,1">
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressEdge}" Offset="0" />
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressCenter}" Offset="0.5" />
+                <GradientStop Color="{StaticResource ThemeColorQueueProgressEdge}" Offset="1" />
+            </LinearGradientBrush>
+            <SolidColorBrush x:Key="TemplateUserCardBrush" Color="{StaticResource ThemeColorTemplateUserCard}" />
+            <SolidColorBrush x:Key="TemplateUserBorderBrush" Color="{StaticResource ThemeColorTemplateUserBorder}" />
+            <SolidColorBrush x:Key="TemplateUserBadgeBrush" Color="{StaticResource ThemeColorTemplateUserBadge}" />
+            <SolidColorBrush x:Key="TemplateUserBadgeForegroundBrush" Color="{StaticResource ThemeColorTemplateUserBadgeForeground}" />
+            <SolidColorBrush x:Key="SubtleTextBrush" Color="{StaticResource ThemeColorTextSecondary}" />
+
+            <Style x:Key="SelectableSecondaryTextBlockStyle" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{ThemeResource ThemeTextSecondaryBrush}" />
+            </Style>
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="ThemeTextPrimaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ThemeTextSecondaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ThemeSurfaceWindowBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="ThemeSurfaceLayerBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="ThemeSurfaceLayerAltBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeBorderSubtleBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ThemeDividerSubtleBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ThemeAccentBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ThemeAccentSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeStatusSuccessBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ThemeStatusSuccessSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeStatusWarningBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ThemeStatusWarningSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeStatusErrorBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ThemeStatusErrorSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeStatusNeutralBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ThemeStatusNeutralSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeOverlayProgressBrush" Color="{ThemeResource SystemColorWindowTextColor}" Opacity="0.18" />
+            <SolidColorBrush x:Key="ThemeOverlayModalBrush" Color="{ThemeResource SystemColorWindowColor}" Opacity="0.92" />
+            <SolidColorBrush x:Key="ThemeSurfaceCardBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeSurfaceCardAltBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeSurfaceHeroBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeSurfaceHeroSecondaryBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserCardBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserBadgeBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ThemeTemplateUserBadgeForegroundBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="ThemeFocusStrokeBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ThemeQueueAccentBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ThemeQueueAccentSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeQueueProgressFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ThemeQueueProgressSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="ThemeQueueProgressAreaBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+
+            <SolidColorBrush x:Key="TitleBarButtonForegroundBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="TitleBarButtonInactiveForegroundBrush" Color="{ThemeResource SystemColorGrayTextColor}" />
+
+            <SolidColorBrush x:Key="WindowBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="AppLayerBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="AppLayerAltBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="AppDividerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="AppAccentBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="AppAccentSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="AppSuccessBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="AppSuccessSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="AppWarningBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="AppWarningSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="AppErrorBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="AppErrorSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="AppNeutralBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="AppNeutralSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="AppProgressOverlayBrush" Color="{ThemeResource SystemColorWindowTextColor}" Opacity="0.18" />
+            <SolidColorBrush x:Key="AppModalSmokeBrush" Color="{ThemeResource SystemColorWindowColor}" Opacity="0.92" />
+            <SolidColorBrush x:Key="CardBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="CardAltBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="CardBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="HeroBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="HeroSecondaryBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="AccentChipBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="QueueAccentBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="QueueAccentSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="QueueProgressFillBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="QueueProgressSoftBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="QueueProgressAreaBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="TemplateUserCardBrush" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="TemplateUserBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="TemplateUserBadgeBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="TemplateUserBadgeForegroundBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="SubtleTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+
+            <!-- Let selectable text inherit the list item's high-contrast foreground and selection colors. -->
+            <Style x:Key="SelectableSecondaryTextBlockStyle" TargetType="TextBlock" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

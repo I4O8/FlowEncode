@@ -25,6 +25,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
+using Windows.UI.ViewManagement;
 using WinRT.Interop;
 
 namespace FlowEncode;
@@ -43,6 +44,7 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
     private readonly Dictionary<string, UserControl> _shellSectionControls = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCompletionSource<bool>> _shellSectionLoadedCompletionSources = new(StringComparer.Ordinal);
     private readonly HashSet<string> _materializedShellSections = new(StringComparer.Ordinal);
+    private readonly UISettings _uiSettings = new();
     private DataPackageView? _activeDragDataView;
     private bool? _activeDragContainsSupportedScript;
     private bool _isWindowReady;
@@ -85,6 +87,7 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
         RootLayout.ActualThemeChanged += RootLayout_ActualThemeChanged;
         RootLayout.SizeChanged += RootLayout_SizeChanged;
         InitializeShellSections();
+        _uiSettings.ColorValuesChanged += UiSettings_ColorValuesChanged;
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -765,8 +768,8 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
     private void ApplyTitleBarColors(ElementTheme actualTheme)
     {
         var titleBar = AppWindow.TitleBar;
-        var foregroundColor = ResolveThemeColor(actualTheme, "TitleBarButtonForegroundColor");
-        var inactiveForegroundColor = ResolveThemeColor(actualTheme, "TitleBarButtonInactiveForegroundColor");
+        var foregroundColor = ResolveThemeColor(actualTheme, "TitleBarButtonForegroundBrush");
+        var inactiveForegroundColor = ResolveThemeColor(actualTheme, "TitleBarButtonInactiveForegroundBrush");
 
         titleBar.BackgroundColor = Colors.Transparent;
         titleBar.InactiveBackgroundColor = Colors.Transparent;
@@ -782,10 +785,19 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
 
     private static Windows.UI.Color ResolveThemeColor(ElementTheme actualTheme, string resourceKey)
     {
-        var themeKey = actualTheme == ElementTheme.Light ? "Light" : "Dark";
-
         try
         {
+            if (Microsoft.UI.Xaml.Application.Current.Resources.TryGetValue(resourceKey, out var activeResource))
+            {
+                return activeResource switch
+                {
+                    Windows.UI.Color color => color,
+                    SolidColorBrush brush => brush.Color,
+                    _ => actualTheme == ElementTheme.Light ? Colors.Black : Colors.White
+                };
+            }
+
+            var themeKey = ResolveThemeDictionaryKey(actualTheme);
             if (Microsoft.UI.Xaml.Application.Current.Resources.ThemeDictionaries[themeKey] is ResourceDictionary themeDictionary)
             {
                 var resource = themeDictionary[resourceKey];
@@ -799,10 +811,37 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
         }
         catch (Exception ex)
         {
-            TryWriteWindowDiagnostic($"Failed to resolve theme resource '{resourceKey}' from '{themeKey}'. {ex.GetType().Name}: {ex.Message}");
+            TryWriteWindowDiagnostic($"Failed to resolve theme resource '{resourceKey}'. {ex.GetType().Name}: {ex.Message}");
         }
 
         return actualTheme == ElementTheme.Light ? Colors.Black : Colors.White;
+    }
+
+    private static string ResolveThemeDictionaryKey(ElementTheme actualTheme)
+    {
+        try
+        {
+            if (new AccessibilitySettings().HighContrast)
+            {
+                return "HighContrast";
+            }
+        }
+        catch (Exception ex)
+        {
+            TryWriteWindowDiagnostic($"Failed to inspect HighContrast state. {ex.GetType().Name}: {ex.Message}");
+        }
+
+        return actualTheme == ElementTheme.Light ? "Light" : "Dark";
+    }
+
+    private void UiSettings_ColorValuesChanged(UISettings sender, object args)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            ApplyTitleBarColors(RootLayout.ActualTheme);
+            ViewModel.RefreshTemplateLibraryView();
+            ApplyVapourSynthWorkspacePresentationIfLoaded();
+        });
     }
 
     private void ApplyTheme(AppThemePreference preference)
@@ -1107,6 +1146,7 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
         Activated -= MainWindow_Activated;
         RootLayout.ActualThemeChanged -= RootLayout_ActualThemeChanged;
         RootLayout.SizeChanged -= RootLayout_SizeChanged;
+        _uiSettings.ColorValuesChanged -= UiSettings_ColorValuesChanged;
         AppWindow.Closing -= AppWindow_Closing;
         ReleaseWindowIcons();
         if (VapourSynthWorkspacePanel is not null)

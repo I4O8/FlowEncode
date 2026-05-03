@@ -45,7 +45,7 @@
                                                         </Border>
                                                     </Grid>
                                                     <TextBlock Text="{Binding EncoderAndQualityText}" TextWrapping="WrapWholeWords" />
-                                                    <TextBlock Foreground="{ThemeResource SubtleTextBrush}" Text="{Binding MetaText}" TextWrapping="WrapWholeWords" Visibility="{Binding MetaVisibility}" />
+                                                    <TextBlock Style="{ThemeResource SelectableSecondaryTextBlockStyle}" Text="{Binding MetaText}" TextWrapping="WrapWholeWords" Visibility="{Binding MetaVisibility}" />
                                                 </StackPanel>
                                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Top">
                                                     <Button MinWidth="40" Padding="10" VerticalAlignment="Top" AutomationProperties.Name="{Binding PinActionLabel}" CommandParameter="{Binding}" Tag="{Binding TemplateId}" Click="PinTemplateButton_Click" Visibility="{Binding PinVisibility}" ToolTipService.ToolTip="{Binding PinActionLabel}">
@@ -148,7 +148,7 @@
                         </Grid>
 
                         <TextBox Header="{Binding Texts.AdditionalArgumentsHeader}" AcceptsReturn="True" IsEnabled="{Binding CanEditTemplateDraft}" MinHeight="120" Text="{Binding DraftAdditionalArguments, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
-                        <TextBlock Foreground="{ThemeResource AppWarningBrush}" Text="{Binding DraftConstraintWarningText}" TextWrapping="WrapWholeWords" Visibility="{Binding DraftConstraintWarningVisibility}" />
+                        <InfoBar HorizontalAlignment="Stretch" IsClosable="False" IsOpen="True" Message="{Binding DraftConstraintWarningText}" Severity="Warning" Visibility="{Binding DraftConstraintWarningVisibility}" />
 
                         <TextBox Header="{Binding Texts.UhdArgumentsHeader}" AcceptsReturn="True" IsEnabled="{Binding CanEditTemplateDraft}" MinHeight="88" Text="{Binding DraftUhdParameters, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" Visibility="{Binding X265UhdVisibility}" />
 

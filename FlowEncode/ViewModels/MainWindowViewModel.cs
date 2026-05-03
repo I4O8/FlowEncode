@@ -1407,6 +1407,7 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
     internal void RefreshTemplateLibraryView()
     {
         RefreshTemplateLibraryItems();
+        OnPropertyChanged(nameof(TemplateLibraryItems));
     }
 
     public void BeginNewTemplateDraft()
