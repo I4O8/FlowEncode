@@ -42,12 +42,23 @@
                     <Grid
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center">
-                        <Image
-                            x:Name="PreviewImage"
+                        <Canvas
+                            Width="1"
+                            Height="1"
+                            IsHitTestVisible="False">
+                            <Image
+                                x:Name="PreviewSourceImage"
+                                Canvas.Left="-100000"
+                                Canvas.Top="-100000"
+                                HorizontalAlignment="Left"
+                                Source="{Binding CurrentFrameBitmap}"
+                                Stretch="None"
+                                VerticalAlignment="Top" />
+                        </Canvas>
+                        <Grid
+                            x:Name="PreviewImageHost"
                             Height="{Binding PreviewImageHeight}"
                             HorizontalAlignment="Center"
-                            Source="{Binding CurrentFrameBitmap}"
-                            Stretch="Fill"
                             VerticalAlignment="Center"
                             Width="{Binding PreviewImageWidth}" />
                     </Grid>

@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -13,10 +14,12 @@ using FlowEncode.Application;
 using FlowEncode.Domain;
 using FlowEncode.Infrastructure;
 using FlowEncode.ViewModels;
+using Microsoft.UI.Composition;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -41,6 +44,9 @@ public sealed partial class VapourSynthPreviewWindow : Window
     private readonly PreviewFrameComposer _frameComposer = new();
     private readonly PreviewRenderDiagnostics _renderDiagnostics;
     private readonly IVapourSynthPreviewService _previewService;
+    private CompositionSurfaceBrush? _previewImageBrush;
+    private CompositionVisualSurface? _previewImageSurface;
+    private SpriteVisual? _previewImageVisual;
     private bool _isClosed;
     private bool _isFullScreenActive;
     private bool _isInternalControlUpdate;
@@ -97,6 +103,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         RootLayout.Loaded += RootLayout_Loaded;
         RootLayout.Unloaded += RootLayout_Unloaded;
         RootLayout.ActualThemeChanged += RootLayout_ActualThemeChanged;
+        PreviewImageHost.SizeChanged += PreviewImageHost_SizeChanged;
         RootLayout.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(RootLayout_KeyDown), true);
         RootLayout.AddHandler(UIElement.KeyUpEvent, new KeyEventHandler(RootLayout_KeyUp), true);
         Title = ViewModel.WindowTitle;
@@ -462,6 +469,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
             displayPayload.Width,
             displayPayload.Height,
             displayPayload.ResolutionText);
+        UpdatePreviewImageSurface();
         SaveCurrentOutputState();
     }
 
@@ -1404,7 +1412,9 @@ public sealed partial class VapourSynthPreviewWindow : Window
         RootLayout.Loaded -= RootLayout_Loaded;
         RootLayout.Unloaded -= RootLayout_Unloaded;
         RootLayout.ActualThemeChanged -= RootLayout_ActualThemeChanged;
+        PreviewImageHost.SizeChanged -= PreviewImageHost_SizeChanged;
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        DetachPreviewImageVisual();
         await ClosePreviewSessionIfNeededAsync();
         PreviewWindowClosed?.Invoke(this, EventArgs.Empty);
     }
@@ -1420,6 +1430,19 @@ public sealed partial class VapourSynthPreviewWindow : Window
         if (string.Equals(e.PropertyName, nameof(ViewModel.WindowTitle), StringComparison.Ordinal))
         {
             Title = ViewModel.WindowTitle;
+            return;
+        }
+
+        if (string.Equals(e.PropertyName, nameof(ViewModel.CurrentFrameBitmap), StringComparison.Ordinal))
+        {
+            UpdatePreviewImageSurface();
+            return;
+        }
+
+        if (string.Equals(e.PropertyName, nameof(ViewModel.PreviewImageWidth), StringComparison.Ordinal)
+            || string.Equals(e.PropertyName, nameof(ViewModel.PreviewImageHeight), StringComparison.Ordinal))
+        {
+            UpdatePreviewImageVisualSize();
         }
     }
 
@@ -2852,11 +2875,13 @@ public sealed partial class VapourSynthPreviewWindow : Window
     {
         AttachXamlRoot();
         RefreshDisplayScale();
+        EnsurePreviewImageVisual();
         QueueAttachPreviewNumberBoxEditorHandlers();
     }
 
     private void RootLayout_Unloaded(object sender, RoutedEventArgs e)
     {
+        DetachPreviewImageVisual();
         DetachXamlRoot();
         DetachPreviewNumberBoxEditorHandlers();
     }
@@ -2901,6 +2926,81 @@ public sealed partial class VapourSynthPreviewWindow : Window
     {
         AttachXamlRoot();
         ViewModel.UpdateDisplayScale(RootLayout.XamlRoot?.RasterizationScale ?? 1.0);
+    }
+
+    private void PreviewImageHost_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        UpdatePreviewImageVisualSize();
+    }
+
+    private void EnsurePreviewImageVisual()
+    {
+        if (_previewImageVisual is not null || PreviewImageHost.XamlRoot is null)
+        {
+            return;
+        }
+
+        var compositor = ElementCompositionPreview.GetElementVisual(PreviewImageHost).Compositor;
+        _previewImageBrush = compositor.CreateSurfaceBrush();
+        _previewImageBrush.BitmapInterpolationMode = CompositionBitmapInterpolationMode.NearestNeighbor;
+        _previewImageBrush.Stretch = CompositionStretch.Fill;
+        _previewImageBrush.SnapToPixels = true;
+
+        _previewImageSurface = compositor.CreateVisualSurface();
+        _previewImageVisual = compositor.CreateSpriteVisual();
+        _previewImageVisual.Brush = _previewImageBrush;
+        ElementCompositionPreview.SetElementChildVisual(PreviewImageHost, _previewImageVisual);
+
+        UpdatePreviewImageSurface();
+        UpdatePreviewImageVisualSize();
+    }
+
+    private void DetachPreviewImageVisual()
+    {
+        if (_previewImageVisual is null && _previewImageBrush is null && _previewImageSurface is null)
+        {
+            return;
+        }
+
+        ElementCompositionPreview.SetElementChildVisual(PreviewImageHost, null);
+        _previewImageVisual = null;
+        _previewImageBrush = null;
+        _previewImageSurface = null;
+    }
+
+    private void UpdatePreviewImageSurface()
+    {
+        EnsurePreviewImageVisual();
+        if (_previewImageBrush is null || _previewImageSurface is null)
+        {
+            return;
+        }
+
+        PreviewSourceImage.Source = ViewModel.CurrentFrameBitmap;
+        if (ViewModel.CurrentFrameBitmap is null)
+        {
+            _previewImageSurface.SourceVisual = null;
+            _previewImageBrush.Surface = null;
+            return;
+        }
+
+        _previewImageSurface.SourceVisual = ElementCompositionPreview.GetElementVisual(PreviewSourceImage);
+        _previewImageSurface.SourceSize = new Vector2(
+            Math.Max(1f, (float)_displayedFrameWidth),
+            Math.Max(1f, (float)_displayedFrameHeight));
+        _previewImageBrush.Surface = _previewImageSurface;
+    }
+
+    private void UpdatePreviewImageVisualSize()
+    {
+        if (_previewImageVisual is null)
+        {
+            return;
+        }
+
+        _previewImageVisual.Size = new Vector2(
+            (float)Math.Max(0, ViewModel.PreviewImageWidth),
+            (float)Math.Max(0, ViewModel.PreviewImageHeight));
     }
 
     private async void RootLayout_KeyDown(object sender, KeyRoutedEventArgs e)
