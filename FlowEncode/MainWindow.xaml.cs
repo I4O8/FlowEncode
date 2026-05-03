@@ -41,12 +41,12 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
     private readonly LocalAppSettingsService _localAppSettingsService;
     private readonly SemaphoreSlim _externalVapourSynthOpenLock = new(1, 1);
     private readonly TaskCompletionSource<bool> _windowReadyCompletionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly Dictionary<string, UserControl> _shellSectionControls = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, TaskCompletionSource<bool>> _shellSectionLoadedCompletionSources = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _materializedShellSections = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MainWindowShellSectionDefinition> _shellSectionDefinitions;
+    private readonly MainWindowShellSectionController _shellSections;
     private readonly UISettings _uiSettings = new();
     private DataPackageView? _activeDragDataView;
     private bool? _activeDragContainsSupportedScript;
+    private string _activeShellSectionTag = MainShellSections.Dashboard;
     private bool _isWindowReady;
     private bool _hasCompletedInitialization;
     private bool _isPersistingSettings;
@@ -81,6 +81,8 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
         _launchActivation = launchActivation;
         _localAppSettingsService = localAppSettingsService;
         InitializeComponent();
+        _shellSectionDefinitions = BuildShellSectionDefinitions();
+        _shellSections = new MainWindowShellSectionController(ShellContentHost, CreateShellSectionControl, OnShellSectionLoaded);
         SetupGuideOverlay.Host = this;
 
         RootLayout.DataContext = ViewModel;
@@ -154,6 +156,10 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
             PrepareForClose();
             Close();
         }
+        catch (Exception ex)
+        {
+            await ReportNonFatalWindowExceptionAsync("Failed to close main window", ViewModel.Texts.CloseRunningJobsTitle, ex);
+        }
         finally
         {
             _isCloseConfirmationInProgress = false;
@@ -165,197 +171,141 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
         Activated -= MainWindow_Activated;
         ApplyEmbeddedAppIcon();
         _isWindowReady = true;
-        UpdateAdaptiveLayout(RootLayout.ActualWidth);
-        await Task.Yield();
-        await ViewModel.InitializeAsync();
-        await ShowRecoveredSettingsNoticeIfNeededAsync();
-        ApplyTheme(ViewModel.SettingsModule.CurrentThemePreference);
-        ApplyVapourSynthWorkspacePresentationIfLoaded();
-        if (_launchActivation.HasRequestedVapourSynthFile)
+        try
         {
-            SelectNavigationItem(MainShellSections.VapourSynthWorkspace);
-        }
+            UpdateAdaptiveLayout(RootLayout.ActualWidth);
+            await Task.Yield();
+            await ViewModel.InitializeAsync();
+            await ShowRecoveredSettingsNoticeIfNeededAsync();
+            ApplyTheme(ViewModel.SettingsModule.CurrentThemePreference);
+            ApplyVapourSynthWorkspacePresentationIfLoaded();
+            if (_launchActivation.HasRequestedVapourSynthFile)
+            {
+                SelectNavigationItem(MainShellSections.VapourSynthWorkspace);
+            }
 
-        InitializeTemplateLibrarySelectionIfLoaded();
-        _hasCompletedInitialization = true;
-        _windowReadyCompletionSource.TrySetResult(true);
+            InitializeTemplateLibrarySelectionIfLoaded();
+            _hasCompletedInitialization = true;
+        }
+        catch (Exception ex)
+        {
+            await ReportNonFatalWindowExceptionAsync("Failed to initialize main window", ViewModel.Texts.ErrorSaveFailedTitle, ex);
+        }
+        finally
+        {
+            _windowReadyCompletionSource.TrySetResult(true);
+        }
     }
 
     private void InitializeShellSections()
     {
-        EnsureShellSectionControl(MainShellSections.Dashboard);
-        EnsureShellSectionControl(MainShellSections.Overview);
-        ShowShellSection(ViewModel.ActiveShellSectionTag);
+        EnsureShellSectionControl(_activeShellSectionTag);
+        ShowShellSection(_activeShellSectionTag);
     }
 
     private T? GetShellSectionControl<T>(string tag) where T : UserControl
     {
-        return _shellSectionControls.TryGetValue(MainShellSections.Normalize(tag), out var control)
-            ? control as T
-            : null;
+        return _shellSections.GetControl<T>(tag);
     }
 
     private UserControl EnsureShellSectionControl(string tag)
     {
         var normalizedTag = MainShellSections.Normalize(tag);
-        if (_shellSectionControls.TryGetValue(normalizedTag, out var existingControl))
-        {
-            return existingControl;
-        }
-
-        var control = CreateShellSectionControl(normalizedTag);
-        control.Visibility = Visibility.Collapsed;
-        control.Loaded += (_, _) => OnShellSectionLoaded(normalizedTag);
-        _shellSectionControls[normalizedTag] = control;
-        GetShellSectionLoadedCompletionSource(normalizedTag);
-        ShellContentHost.Children.Add(control);
-        ApplyAdaptiveLayoutToSection(normalizedTag, RootLayout.ActualWidth, CreateShellContentPadding(RootLayout.ActualWidth), RootLayout.ActualWidth < 1000, RootLayout.ActualWidth < 700);
+        var control = _shellSections.EnsureControl(normalizedTag);
+        ApplyAdaptiveLayoutToSection(
+            normalizedTag,
+            RootLayout.ActualWidth,
+            CreateShellContentPadding(RootLayout.ActualWidth),
+            RootLayout.ActualWidth < 1000,
+            RootLayout.ActualWidth < 700);
         return control;
     }
 
     private UserControl CreateShellSectionControl(string tag)
     {
-        return tag switch
-        {
-            MainShellSections.Dashboard => CreateDashboardPanel(),
-            MainShellSections.BluRayDemux => CreateBluRayDemuxPanel(),
-            MainShellSections.VapourSynthWorkspace => CreateVapourSynthWorkspacePanel(),
-            MainShellSections.Overview => CreateOverviewPanel(),
-            MainShellSections.Templates => CreateTemplatesPanel(),
-            MainShellSections.AudioProcessing => CreateAudioProcessingPanel(),
-            MainShellSections.AutoCompression => CreateAutoCompressionPanel(),
-            MainShellSections.Settings => CreateSettingsPanel(),
-            _ => throw new ArgumentOutOfRangeException(nameof(tag), tag, "Unknown shell section.")
-        };
-    }
-
-    private DashboardView CreateDashboardPanel()
-    {
-        var panel = new DashboardView
-        {
-            DataContext = ViewModel.DashboardModule
-        };
-        panel.Host = this;
-        return panel;
-    }
-
-    private OverviewView CreateOverviewPanel()
-    {
-        var panel = new OverviewView
-        {
-            DataContext = ViewModel.OverviewModule
-        };
-        panel.Host = this;
-        return panel;
-    }
-
-    private TemplatesView CreateTemplatesPanel()
-    {
-        var panel = new TemplatesView
-        {
-            DataContext = ViewModel.TemplatesModule
-        };
-        panel.Host = this;
-        return panel;
-    }
-
-    private AutoCompressionView CreateAutoCompressionPanel()
-    {
-        return new AutoCompressionView
-        {
-            DataContext = ViewModel.AutoCompressionModule
-        };
-    }
-
-    private AudioProcessingView CreateAudioProcessingPanel()
-    {
-        return new AudioProcessingView
-        {
-            DataContext = ViewModel.AudioProcessingModule
-        };
-    }
-
-    private BluRayDemuxView CreateBluRayDemuxPanel()
-    {
-        return new BluRayDemuxView
-        {
-            DataContext = ViewModel.BluRayDemuxModule
-        };
-    }
-
-    private SettingsView CreateSettingsPanel()
-    {
-        var panel = new SettingsView
-        {
-            DataContext = ViewModel.SettingsModule
-        };
-        panel.Host = this;
-        return panel;
-    }
-
-    private VapourSynthWorkspaceView CreateVapourSynthWorkspacePanel()
-    {
-        return new VapourSynthWorkspaceView();
-    }
-
-    private TaskCompletionSource<bool> GetShellSectionLoadedCompletionSource(string tag)
-    {
         var normalizedTag = MainShellSections.Normalize(tag);
-        if (_shellSectionLoadedCompletionSources.TryGetValue(normalizedTag, out var completionSource))
+        if (_shellSectionDefinitions.TryGetValue(normalizedTag, out var definition))
         {
-            return completionSource;
+            return definition.CreateControl();
         }
 
-        completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (_materializedShellSections.Contains(normalizedTag))
+        throw new ArgumentOutOfRangeException(nameof(tag), tag, "Unknown shell section.");
+    }
+
+    private Dictionary<string, MainWindowShellSectionDefinition> BuildShellSectionDefinitions()
+    {
+        return new Dictionary<string, MainWindowShellSectionDefinition>(StringComparer.Ordinal)
         {
-            completionSource.TrySetResult(true);
+            [MainShellSections.Dashboard] = new(
+                ShellSectionLifetime.Sticky,
+                () => CreateSectionView<DashboardView>(ViewModel.DashboardModule, view => view.Host = this),
+                static (control, width, contentPadding, _, _) => ((DashboardView)control).ApplyLayout(width, contentPadding)),
+            [MainShellSections.BluRayDemux] = new(
+                ShellSectionLifetime.Recreatable,
+                () => CreateSectionView<BluRayDemuxView>(ViewModel.BluRayDemuxModule),
+                static (control, _, contentPadding, stackedWorkspace, compactForms) => ((BluRayDemuxView)control).ApplyLayout(stackedWorkspace, compactForms, contentPadding)),
+            [MainShellSections.VapourSynthWorkspace] = new(
+                ShellSectionLifetime.Sticky,
+                () => CreateSectionView<VapourSynthWorkspaceView>(),
+                null,
+                (_, window) => window.ApplyVapourSynthWorkspacePresentationIfLoaded()),
+            [MainShellSections.Overview] = new(
+                ShellSectionLifetime.Sticky,
+                () => CreateSectionView<OverviewView>(ViewModel.OverviewModule, view => view.Host = this),
+                static (control, width, contentPadding, _, _) => ((OverviewView)control).ApplyLayout(width, contentPadding)),
+            [MainShellSections.Templates] = new(
+                ShellSectionLifetime.Sticky,
+                () => CreateSectionView<TemplatesView>(ViewModel.TemplatesModule, view => view.Host = this),
+                static (control, _, contentPadding, stackedWorkspace, compactForms) => ((TemplatesView)control).ApplyLayout(stackedWorkspace, compactForms, contentPadding),
+                (_, window) => window.InitializeTemplateLibrarySelectionIfLoaded()),
+            [MainShellSections.AudioProcessing] = new(
+                ShellSectionLifetime.Recreatable,
+                () => CreateSectionView<AudioProcessingView>(ViewModel.AudioProcessingModule),
+                static (control, _, contentPadding, stackedWorkspace, compactForms) => ((AudioProcessingView)control).ApplyLayout(stackedWorkspace, compactForms, contentPadding)),
+            [MainShellSections.AutoCompression] = new(
+                ShellSectionLifetime.Recreatable,
+                () => CreateSectionView<AutoCompressionView>(ViewModel.AutoCompressionModule),
+                static (control, width, contentPadding, _, compactForms) => ((AutoCompressionView)control).ApplyLayout(compactForms, width, contentPadding)),
+            [MainShellSections.Settings] = new(
+                ShellSectionLifetime.Sticky,
+                () => CreateSectionView<SettingsView>(ViewModel.SettingsModule, view => view.Host = this),
+                static (control, _, contentPadding, _, compactForms) => ((SettingsView)control).ApplyLayout(compactForms, contentPadding),
+                null,
+                static async (_, window) => await window.ViewModel.SetupGuideModule.EnsureCardsAsync())
+        };
+    }
+
+    private static TView CreateSectionView<TView>(object? dataContext = null, Action<TView>? configure = null)
+        where TView : UserControl, new()
+    {
+        var view = new TView();
+        if (dataContext is not null)
+        {
+            view.DataContext = dataContext;
         }
 
-        _shellSectionLoadedCompletionSources[normalizedTag] = completionSource;
-        return completionSource;
+        configure?.Invoke(view);
+        return view;
     }
 
     private void OnShellSectionLoaded(string tag)
     {
         var normalizedTag = MainShellSections.Normalize(tag);
-        _materializedShellSections.Add(normalizedTag);
-        GetShellSectionLoadedCompletionSource(normalizedTag).TrySetResult(true);
-
-        switch (normalizedTag)
+        if (_shellSectionDefinitions.TryGetValue(normalizedTag, out var definition))
         {
-            case MainShellSections.VapourSynthWorkspace:
-                ApplyVapourSynthWorkspacePresentationIfLoaded();
-                break;
-            case MainShellSections.Templates:
-                InitializeTemplateLibrarySelectionIfLoaded();
-                break;
+            definition.OnLoaded?.Invoke(normalizedTag, this);
         }
     }
 
-    private async Task WaitForShellSectionMaterializedAsync(string tag)
+    private async Task<bool> WaitForShellSectionMaterializedAsync(string tag)
     {
-        var normalizedTag = MainShellSections.Normalize(tag);
-        EnsureShellSectionControl(normalizedTag);
-        if (_materializedShellSections.Contains(normalizedTag))
-        {
-            return;
-        }
-
-        await GetShellSectionLoadedCompletionSource(normalizedTag).Task;
+        return await _shellSections.WaitForMaterializedAsync(tag);
     }
 
     private void ShowShellSection(string tag)
     {
-        var normalizedTag = MainShellSections.Normalize(tag);
-        EnsureShellSectionControl(normalizedTag);
-
-        foreach (var sectionEntry in _shellSectionControls)
-        {
-            sectionEntry.Value.Visibility = string.Equals(sectionEntry.Key, normalizedTag, StringComparison.Ordinal)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-        }
+        _activeShellSectionTag = MainShellSections.Normalize(tag);
+        _shellSections.Show(_activeShellSectionTag);
     }
 
     private void ApplyVapourSynthWorkspacePresentationIfLoaded()
@@ -419,24 +369,31 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
 
     private async void RootLayout_Drop(object sender, DragEventArgs e)
     {
-        if (!e.DataView.Contains(StandardDataFormats.StorageItems))
+        try
         {
-            return;
+            if (!e.DataView.Contains(StandardDataFormats.StorageItems))
+            {
+                return;
+            }
+
+            var storageItems = await e.DataView.GetStorageItemsAsync();
+            var file = storageItems
+                .OfType<StorageFile>()
+                .FirstOrDefault(static item => AppLaunchActivation.IsSupportedScriptExtension(item.Path));
+
+            if (file is null)
+            {
+                return;
+            }
+
+            e.AcceptedOperation = DataPackageOperation.Copy;
+            ResetActiveDragState();
+            await HandleExternalVapourSynthOpenAsync(file.Path);
         }
-
-        var storageItems = await e.DataView.GetStorageItemsAsync();
-        var file = storageItems
-            .OfType<StorageFile>()
-            .FirstOrDefault(static item => AppLaunchActivation.IsSupportedScriptExtension(item.Path));
-
-        if (file is null)
+        catch (Exception ex)
         {
-            return;
+            await ReportNonFatalWindowExceptionAsync("Failed to handle dropped VapourSynth script", ViewModel.Texts.ErrorSelectionFailedTitle, ex);
         }
-
-        e.AcceptedOperation = DataPackageOperation.Copy;
-        ResetActiveDragState();
-        await HandleExternalVapourSynthOpenAsync(file.Path);
     }
 
     private void RootLayout_DragLeave(object sender, DragEventArgs e)
@@ -468,13 +425,17 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
             await _windowReadyCompletionSource.Task;
             ActivateAndBringToFront();
             SelectNavigationItem(MainShellSections.VapourSynthWorkspace);
-            await WaitForShellSectionMaterializedAsync(MainShellSections.VapourSynthWorkspace);
-            if (VapourSynthWorkspacePanel is not null)
+            if (await WaitForShellSectionMaterializedAsync(MainShellSections.VapourSynthWorkspace)
+                && VapourSynthWorkspacePanel is not null)
             {
                 await VapourSynthWorkspacePanel.OpenExternalDocumentAsync(normalizedPath);
             }
 
             ActivateAndBringToFront();
+        }
+        catch (Exception ex)
+        {
+            await ReportNonFatalWindowExceptionAsync("Failed to open external VapourSynth script", ViewModel.Texts.ErrorSelectionFailedTitle, ex);
         }
         finally
         {
@@ -484,25 +445,17 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
 
     private async void ShellNavigationView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        var tag = args.SelectedItemContainer?.Tag?.ToString()
-            ?? (ShellNavigationView.SelectedItem as NavigationViewItem)?.Tag?.ToString()
-            ?? MainShellSections.Dashboard;
-        var normalizedTag = MainShellSections.Normalize(tag);
-        var needsMaterialization = ViewModel.ActivateShellSection(normalizedTag);
-        EnsureShellSectionControl(normalizedTag);
-        ShowShellSection(normalizedTag);
-
-        if (normalizedTag == MainShellSections.Settings)
+        try
         {
-            await ViewModel.SetupGuideModule.EnsureCardsAsync();
+            var tag = args.SelectedItemContainer?.Tag?.ToString()
+                ?? (ShellNavigationView.SelectedItem as NavigationViewItem)?.Tag?.ToString()
+                ?? MainShellSections.Dashboard;
+            await NavigateToShellSectionAsync(tag);
         }
-
-        if (needsMaterialization || !_materializedShellSections.Contains(normalizedTag))
+        catch (Exception ex)
         {
-            await WaitForShellSectionMaterializedAsync(normalizedTag);
+            await ReportNonFatalWindowExceptionAsync("Failed to navigate shell section", ViewModel.Texts.ErrorSelectionFailedTitle, ex);
         }
-
-        UpdateAdaptiveLayout(RootLayout.ActualWidth);
     }
 
     private void RootLayout_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -521,7 +474,7 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
         var compactForms = width < 700;
         var contentPadding = CreateShellContentPadding(width);
 
-        foreach (var sectionTag in _shellSectionControls.Keys.ToArray())
+        foreach (var sectionTag in _shellSections.GetSectionTagsSnapshot())
         {
             ApplyAdaptiveLayoutToSection(sectionTag, width, contentPadding, stackedWorkspace, compactForms);
         }
@@ -550,30 +503,20 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
         bool stackedWorkspace,
         bool compactForms)
     {
-        switch (MainShellSections.Normalize(tag))
+        var normalizedTag = MainShellSections.Normalize(tag);
+        if (!_shellSectionDefinitions.TryGetValue(normalizedTag, out var definition)
+            || definition.ApplyLayout is null)
         {
-            case MainShellSections.Dashboard when DashboardPanel is not null:
-                DashboardPanel.ApplyLayout(width, contentPadding);
-                break;
-            case MainShellSections.Overview when OverviewPanel is not null:
-                OverviewPanel.ApplyLayout(width, contentPadding);
-                break;
-            case MainShellSections.Templates when TemplatesPanel is not null:
-                TemplatesPanel.ApplyLayout(stackedWorkspace, compactForms, contentPadding);
-                break;
-            case MainShellSections.AutoCompression when AutoCompressionPanel is not null:
-                AutoCompressionPanel.ApplyLayout(compactForms, width, contentPadding);
-                break;
-            case MainShellSections.AudioProcessing when AudioProcessingPanel is not null:
-                AudioProcessingPanel.ApplyLayout(stackedWorkspace, compactForms, contentPadding);
-                break;
-            case MainShellSections.BluRayDemux when BluRayDemuxPanel is not null:
-                BluRayDemuxPanel.ApplyLayout(stackedWorkspace, compactForms, contentPadding);
-                break;
-            case MainShellSections.Settings when SettingsPanel is not null:
-                SettingsPanel.ApplyLayout(compactForms, contentPadding);
-                break;
+            return;
         }
+
+        var control = _shellSections.GetControl(normalizedTag);
+        if (control is null)
+        {
+            return;
+        }
+
+        definition.ApplyLayout(control, width, contentPadding, stackedWorkspace, compactForms);
     }
 
     private async Task HandleAppUpdateAsync()
@@ -664,11 +607,60 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
         ShellNavigationView.SelectedItem = navigationItem;
     }
 
+    private async Task NavigateToShellSectionAsync(string tag)
+    {
+        var normalizedTag = MainShellSections.Normalize(tag);
+        var previousTag = _activeShellSectionTag;
+        var wasMaterialized = _shellSections.IsMaterialized(normalizedTag);
+        ReleaseRecreatableSectionsExcept(normalizedTag);
+        EnsureShellSectionControl(normalizedTag);
+        ShowShellSection(normalizedTag);
+
+        if (_shellSectionDefinitions.TryGetValue(normalizedTag, out var definition) && definition.OnActivated is not null)
+        {
+            await definition.OnActivated(normalizedTag, this);
+        }
+
+        if (!wasMaterialized || !_shellSections.IsMaterialized(normalizedTag))
+        {
+            var materialized = await WaitForShellSectionMaterializedAsync(normalizedTag);
+            if (!materialized || !string.Equals(_activeShellSectionTag, normalizedTag, StringComparison.Ordinal))
+            {
+                return;
+            }
+        }
+
+        if (!string.Equals(previousTag, normalizedTag, StringComparison.Ordinal)
+            && !string.Equals(_activeShellSectionTag, normalizedTag, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        UpdateAdaptiveLayout(RootLayout.ActualWidth);
+    }
+
     private NavigationViewItem? FindNavigationItem(string tag)
     {
         return ShellNavigationView.MenuItems
             .OfType<NavigationViewItem>()
             .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), tag, StringComparison.Ordinal));
+    }
+
+    private void ReleaseRecreatableSectionsExcept(string activeTag)
+    {
+        foreach (var sectionTag in _shellSections.GetSectionTagsSnapshot())
+        {
+            if (string.Equals(sectionTag, activeTag, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (_shellSectionDefinitions.TryGetValue(sectionTag, out var definition)
+                && definition.Lifetime == ShellSectionLifetime.Recreatable)
+            {
+                _shellSections.Release(sectionTag);
+            }
+        }
     }
 
     private async Task OpenSetupGuideAsync()
@@ -719,6 +711,12 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
                 recoveryInfo.BackupPath,
                 recoveryInfo.LoadError,
                 recoveryInfo.BackupError));
+    }
+
+    private async Task ReportNonFatalWindowExceptionAsync(string operationName, string errorTitle, Exception ex)
+    {
+        TryWriteWindowDiagnostic($"{operationName}. {ex.GetType().Name}: {ex.Message}");
+        await ShowMessageAsync(errorTitle, ex.Message);
     }
 
     private static void OpenPath(string path)
@@ -979,8 +977,8 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
     async Task IOverviewViewHost.SaveCurrentTemplateAsync()
     {
         EnsureShellSectionControl(MainShellSections.Templates);
-        await WaitForShellSectionMaterializedAsync(MainShellSections.Templates);
-        if (TemplatesPanel is not null)
+        if (await WaitForShellSectionMaterializedAsync(MainShellSections.Templates)
+            && TemplatesPanel is not null)
         {
             await TemplatesPanel.SaveCurrentTemplateAsync();
         }
@@ -1149,11 +1147,7 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
         _uiSettings.ColorValuesChanged -= UiSettings_ColorValuesChanged;
         AppWindow.Closing -= AppWindow_Closing;
         ReleaseWindowIcons();
-        if (VapourSynthWorkspacePanel is not null)
-        {
-            VapourSynthWorkspacePanel.Dispose();
-        }
-
+        _shellSections.ReleaseAll();
         _externalVapourSynthOpenLock.Dispose();
         ViewModel.Dispose();
     }
@@ -1169,4 +1163,19 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
     [DllImport("User32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindow(IntPtr windowHandle);
+
+    private enum ShellSectionLifetime
+    {
+        Sticky,
+        Recreatable
+    }
+
+    private sealed record MainWindowShellSectionDefinition(
+        ShellSectionLifetime Lifetime,
+        Func<UserControl> CreateControl,
+        Action<UserControl, double, Thickness, bool, bool>? ApplyLayout,
+        Action<string, MainWindow>? OnLoaded = null,
+        Func<string, MainWindow, Task>? OnActivated = null)
+    {
+    }
 }

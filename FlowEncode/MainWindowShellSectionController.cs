@@ -1,0 +1,158 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+
+namespace FlowEncode;
+
+internal sealed class MainWindowShellSectionController
+{
+    private readonly Panel _host;
+    private readonly Func<string, UserControl> _controlFactory;
+    private readonly Action<string>? _sectionLoadedCallback;
+    private readonly Dictionary<string, UserControl> _controls = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCompletionSource<bool>> _loadedCompletionSources = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _materializedSections = new(StringComparer.Ordinal);
+
+    public MainWindowShellSectionController(
+        Panel host,
+        Func<string, UserControl> controlFactory,
+        Action<string>? sectionLoadedCallback = null)
+    {
+        _host = host;
+        _controlFactory = controlFactory;
+        _sectionLoadedCallback = sectionLoadedCallback;
+    }
+
+    public T? GetControl<T>(string tag) where T : UserControl
+    {
+        return _controls.TryGetValue(MainShellSections.Normalize(tag), out var control)
+            ? control as T
+            : null;
+    }
+
+    public UserControl? GetControl(string tag)
+    {
+        return _controls.TryGetValue(MainShellSections.Normalize(tag), out var control)
+            ? control
+            : null;
+    }
+
+    public UserControl EnsureControl(string tag)
+    {
+        var normalizedTag = MainShellSections.Normalize(tag);
+        if (_controls.TryGetValue(normalizedTag, out var existingControl))
+        {
+            return existingControl;
+        }
+
+        var control = _controlFactory(normalizedTag);
+        control.Visibility = Visibility.Collapsed;
+        RoutedEventHandler? loadedHandler = null;
+        loadedHandler = (_, _) =>
+        {
+            control.Loaded -= loadedHandler;
+            OnControlLoaded(normalizedTag);
+        };
+        control.Loaded += loadedHandler;
+        _controls[normalizedTag] = control;
+        GetLoadedCompletionSource(normalizedTag);
+        _host.Children.Add(control);
+        return control;
+    }
+
+    public bool IsMaterialized(string tag)
+    {
+        return _materializedSections.Contains(MainShellSections.Normalize(tag));
+    }
+
+    public async Task<bool> WaitForMaterializedAsync(string tag)
+    {
+        var normalizedTag = MainShellSections.Normalize(tag);
+        EnsureControl(normalizedTag);
+        if (_materializedSections.Contains(normalizedTag))
+        {
+            return true;
+        }
+
+        return await GetLoadedCompletionSource(normalizedTag).Task;
+    }
+
+    public void Show(string tag)
+    {
+        var normalizedTag = MainShellSections.Normalize(tag);
+        EnsureControl(normalizedTag);
+
+        foreach (var sectionEntry in _controls)
+        {
+            sectionEntry.Value.Visibility = string.Equals(sectionEntry.Key, normalizedTag, StringComparison.Ordinal)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+    }
+
+    public string[] GetSectionTagsSnapshot()
+    {
+        var tags = new string[_controls.Count];
+        _controls.Keys.CopyTo(tags, 0);
+        return tags;
+    }
+
+    public void Release(string tag)
+    {
+        var normalizedTag = MainShellSections.Normalize(tag);
+        if (!_controls.Remove(normalizedTag, out var control))
+        {
+            return;
+        }
+
+        _materializedSections.Remove(normalizedTag);
+        if (_loadedCompletionSources.Remove(normalizedTag, out var completionSource))
+        {
+            completionSource.TrySetResult(false);
+        }
+
+        _host.Children.Remove(control);
+
+        if (control is IDisposable disposableControl)
+        {
+            disposableControl.Dispose();
+        }
+    }
+
+    public void ReleaseAll()
+    {
+        foreach (var tag in _controls.Keys.ToArray())
+        {
+            Release(tag);
+        }
+    }
+
+    private TaskCompletionSource<bool> GetLoadedCompletionSource(string tag)
+    {
+        var normalizedTag = MainShellSections.Normalize(tag);
+        if (_loadedCompletionSources.TryGetValue(normalizedTag, out var completionSource))
+        {
+            return completionSource;
+        }
+
+        completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (_materializedSections.Contains(normalizedTag))
+        {
+            completionSource.TrySetResult(true);
+        }
+
+        _loadedCompletionSources[normalizedTag] = completionSource;
+        return completionSource;
+    }
+
+    private void OnControlLoaded(string tag)
+    {
+        var normalizedTag = MainShellSections.Normalize(tag);
+        _materializedSections.Add(normalizedTag);
+        GetLoadedCompletionSource(normalizedTag).TrySetResult(true);
+        _sectionLoadedCallback?.Invoke(normalizedTag);
+    }
+}
