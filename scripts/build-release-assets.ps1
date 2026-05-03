@@ -2,7 +2,6 @@ param(
     [string]$Version,
     [string]$Configuration = "Release",
     [string]$Platform = "x64",
-    [string]$RuntimeIdentifier = "win-x64",
     [string]$OutputRoot,
     [string[]]$SatelliteLanguageDirectories = @("en-us", "zh-cn")
 )

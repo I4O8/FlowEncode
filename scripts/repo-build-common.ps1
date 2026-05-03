@@ -76,16 +76,3 @@ function Resolve-MsBuildPath {
 
     throw "MSBuild.exe was not found. Use Visual Studio MSBuild for this WinUI project."
 }
-
-function Resolve-RepositoryPath {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$RelativeOrAbsolutePath
-    )
-
-    if ([System.IO.Path]::IsPathRooted($RelativeOrAbsolutePath)) {
-        return $RelativeOrAbsolutePath
-    }
-
-    return (Join-Path (Get-RepositoryRoot) $RelativeOrAbsolutePath)
-}

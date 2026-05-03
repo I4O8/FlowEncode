@@ -6,27 +6,6 @@ $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "repo-build-common.ps1")
 
-function Update-ContentIfNeeded {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path,
-        [Parameter(Mandatory = $true)]
-        [string]$ExpectedContent
-    )
-
-    $currentContent = Get-Content -Path $Path -Raw
-    if ([string]::Equals($currentContent, $ExpectedContent, [System.StringComparison]::Ordinal)) {
-        return $false
-    }
-
-    if ($Check) {
-        throw "Version metadata is out of sync: $Path"
-    }
-
-    Set-Content -Path $Path -Value $ExpectedContent -NoNewline
-    return $true
-}
-
 function Update-ReadmeBadge {
     param(
         [Parameter(Mandatory = $true)]
