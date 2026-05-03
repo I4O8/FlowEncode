@@ -166,7 +166,26 @@ Build notes:
 - Release scripts: `scripts/`
 - Installer script: `installer/`
 
-This project has WinUI XAML compiler requirements. If plain `dotnet build` triggers Windows App SDK XAML compiler failures on your machine, build from the matching Visual Studio MSBuild environment.
+Official entry points:
+
+```powershell
+./scripts/build.ps1
+./scripts/test.ps1
+```
+
+Common commands:
+
+```powershell
+./scripts/build.ps1 -Configuration Release
+./scripts/build.ps1 -Configuration Release -RunTests
+./scripts/build-release-assets.ps1
+```
+
+Notes:
+
+- `scripts/build.ps1` automatically locates Visual Studio `MSBuild.exe` and validates repository version metadata before building.
+- `scripts/test.ps1` is the single test entry point for `FlowEncode.Domain.Tests`.
+- The WinUI XAML compiler path still officially targets Visual Studio `MSBuild.exe`; `dotnet build` remains intentionally guarded to avoid misleading build results on unstable environments.
 
 ## Feedback and License
 

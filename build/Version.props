@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <FlowEncodeVersion>1.7.0</FlowEncodeVersion>
+    <FlowEncodeVersionInfo>1.7.0.0</FlowEncodeVersionInfo>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Version>$(FlowEncodeVersion)</Version>
+    <AssemblyVersion>$(FlowEncodeVersionInfo)</AssemblyVersion>
+    <FileVersion>$(FlowEncodeVersionInfo)</FileVersion>
+    <InformationalVersion>$(FlowEncodeVersion)</InformationalVersion>
+    <PackageVersion>$(FlowEncodeVersion)</PackageVersion>
+  </PropertyGroup>
+</Project>

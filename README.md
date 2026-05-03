@@ -166,7 +166,26 @@ FlowEncode 默认面向本地工作流：
 - 发布脚本位于 `scripts/`
 - 安装器脚本位于 `installer/`
 
-当前工程对 WinUI XAML 编译器有环境要求。若普通 `dotnet build` 在本机触发 Windows App SDK XAML 编译问题，请使用 Visual Studio 对应的 MSBuild 环境构建。
+官方构建入口：
+
+```powershell
+./scripts/build.ps1
+./scripts/test.ps1
+```
+
+常用命令：
+
+```powershell
+./scripts/build.ps1 -Configuration Release
+./scripts/build.ps1 -Configuration Release -RunTests
+./scripts/build-release-assets.ps1
+```
+
+说明：
+
+- `scripts/build.ps1` 会自动定位 Visual Studio `MSBuild.exe`，并在构建前校验仓库版本元数据是否同步。
+- `scripts/test.ps1` 统一执行 `FlowEncode.Domain.Tests`。
+- 当前 WinUI XAML 编译链路仍以 Visual Studio `MSBuild.exe` 为官方入口；`dotnet build` 继续保留保护性失败，避免在不稳定环境下产出误导性的构建结果。
 
 ## 反馈与许可
 

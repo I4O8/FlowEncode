@@ -2,5 +2,6 @@
   <Project Path="FlowEncode.Application/FlowEncode.Application.csproj" />
   <Project Path="FlowEncode.csproj" />
   <Project Path="FlowEncode.Domain/FlowEncode.Domain.csproj" />
+  <Project Path="FlowEncode.Domain.Tests/FlowEncode.Domain.Tests.csproj" />
   <Project Path="FlowEncode.Infrastructure/FlowEncode.Infrastructure.csproj" />
 </Solution>

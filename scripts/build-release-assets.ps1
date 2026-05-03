@@ -9,54 +9,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Resolve-MsBuildPath {
-    $command = Get-Command MSBuild.exe -ErrorAction SilentlyContinue
-    if ($null -ne $command) {
-        return $command.Source
-    }
-
-    $vswherePath = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-    if (Test-Path $vswherePath) {
-        $installationPath = & $vswherePath -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-        if (-not [string]::IsNullOrWhiteSpace($installationPath)) {
-            $candidate = Join-Path $installationPath "MSBuild\Current\Bin\MSBuild.exe"
-            if (Test-Path $candidate) {
-                return $candidate
-            }
-        }
-    }
-
-    $candidates = @(
-        "E:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe",
-        "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe",
-        "C:\Program Files\Microsoft Visual Studio\18\BuildTools\MSBuild\Current\Bin\MSBuild.exe"
-    )
-
-    foreach ($candidate in $candidates) {
-        if (Test-Path $candidate) {
-            return $candidate
-        }
-    }
-
-    throw "MSBuild.exe was not found. Use Visual Studio MSBuild for this WinUI project."
-}
-
-function Get-ProjectVersion {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$ProjectPath
-    )
-
-    [xml]$projectXml = Get-Content $ProjectPath -Raw
-    $propertyGroups = @($projectXml.Project.PropertyGroup)
-    foreach ($group in $propertyGroups) {
-        if ($group.Version -and -not [string]::IsNullOrWhiteSpace($group.Version)) {
-            return $group.Version.Trim()
-        }
-    }
-
-    throw "Could not resolve <Version> from $ProjectPath"
-}
+. (Join-Path $PSScriptRoot "repo-build-common.ps1")
 
 function Remove-DirectoryIfExists {
     param([string]$Path)
@@ -98,6 +51,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $projectPath = Join-Path $repoRoot "FlowEncode\FlowEncode.csproj"
 $commonScript = Join-Path $repoRoot "scripts\release-artifact-common.ps1"
 $installerBuildScript = Join-Path $repoRoot "scripts\build-installer.ps1"
+$versionSyncScript = Join-Path $repoRoot "scripts\sync-version-metadata.ps1"
 $msbuildPath = Resolve-MsBuildPath
 
 if (-not (Test-Path $projectPath)) {
@@ -114,7 +68,11 @@ if (-not (Test-Path $installerBuildScript)) {
 
 . $commonScript
 
-$projectVersion = Get-ProjectVersion -ProjectPath $projectPath
+$versionInfo = Get-FlowEncodeVersionInfo
+$projectVersion = $versionInfo.Version
+
+& $versionSyncScript -Check
+
 $resolvedVersion = if ([string]::IsNullOrWhiteSpace($Version)) {
     $projectVersion
 }
