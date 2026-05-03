@@ -12,6 +12,7 @@ namespace FlowEncode.ViewModels;
 
 public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
 {
+    private readonly IAppSettingsService _settingsService;
     private AppText _texts;
     private string _windowTitle;
     private string _statusText;
@@ -43,15 +44,20 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
     private int _sourceFrameWidth;
     private int _sourceFrameHeight;
     private string _snapshotTemplate;
+    private string _scalingAlgorithm;
     private VapourSynthPreviewOutputOption? _selectedOutput;
     private StringChoiceOption? _selectedZoomMode;
     private StringChoiceOption? _selectedTimelineMode;
     private StringChoiceOption? _selectedCropMode;
     private StringChoiceOption? _selectedOutputSyncMode;
+    private StringChoiceOption? _selectedScalingAlgorithmMode;
 
     public VapourSynthPreviewWindowViewModel(IAppSettingsService settingsService)
     {
-        _texts = new AppText(settingsService.Load().Language);
+        _settingsService = settingsService;
+        var settings = settingsService.Load();
+        _texts = new AppText(settings.Language);
+        _scalingAlgorithm = settings.PreviewScalingAlgorithm;
         _windowTitle = _texts.VapourSynthPreviewWindowTitle(_texts.VapourSynthWorkspaceTitle);
         _statusText = _texts.VapourSynthPreviewIdleStatus;
         _currentTimeText = _texts.VapourSynthPreviewUnknownTime;
@@ -90,6 +96,8 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
     public ObservableCollection<StringChoiceOption> CropModes { get; }
 
     public ObservableCollection<StringChoiceOption> OutputSyncModes { get; }
+
+    public ObservableCollection<StringChoiceOption> ScalingAlgorithmModes { get; } = [];
 
     public ObservableCollection<VapourSynthPreviewChapterOption> Chapters { get; } = [];
 
@@ -342,6 +350,20 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
         set => SetProperty(ref _selectedOutputSyncMode, value);
     }
 
+    public StringChoiceOption? SelectedScalingAlgorithmMode
+    {
+        get => _selectedScalingAlgorithmMode;
+        set
+        {
+            if (SetProperty(ref _selectedScalingAlgorithmMode, value))
+            {
+                _scalingAlgorithm = _selectedScalingAlgorithmMode?.Value ?? "nearest";
+            }
+        }
+    }
+
+    public string ScalingAlgorithm => _selectedScalingAlgorithmMode?.Value ?? "nearest";
+
     public bool IsAbsoluteCropMode => string.Equals(_selectedCropMode?.Value, "absolute", StringComparison.OrdinalIgnoreCase);
 
     public Visibility CustomZoomVisibility => IsCustomZoomVisible ? Visibility.Visible : Visibility.Collapsed;
@@ -487,6 +509,20 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
         RaiseTimelinePropertyChanges();
     }
 
+    public void SaveScalingAlgorithmPreference()
+    {
+        var currentSettings = _settingsService.Load();
+        if (string.Equals(currentSettings.PreviewScalingAlgorithm, ScalingAlgorithm, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _settingsService.Save(currentSettings with
+        {
+            PreviewScalingAlgorithm = ScalingAlgorithm
+        });
+    }
+
     public void UpdateStatus(string statusText)
     {
         StatusText = statusText;
@@ -551,6 +587,12 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
         OutputSyncModes.Add(new StringChoiceOption("time", Texts.VapourSynthPreviewOutputSyncTimestamp));
         OutputSyncModes.Add(new StringChoiceOption("timeline", Texts.VapourSynthPreviewOutputSyncTimeline));
         SelectedOutputSyncMode = OutputSyncModes.FirstOrDefault(option => option.Value == previousOutputSyncValue) ?? OutputSyncModes[0];
+
+        var previousScalingAlgoValue = _selectedScalingAlgorithmMode?.Value ?? _scalingAlgorithm;
+        ScalingAlgorithmModes.Clear();
+        ScalingAlgorithmModes.Add(new StringChoiceOption("nearest", Texts.VapourSynthPreviewScalingAlgorithmNearest));
+        ScalingAlgorithmModes.Add(new StringChoiceOption("bilinear", Texts.VapourSynthPreviewScalingAlgorithmBilinear));
+        SelectedScalingAlgorithmMode = ScalingAlgorithmModes.FirstOrDefault(option => option.Value == previousScalingAlgoValue) ?? ScalingAlgorithmModes[0];
     }
 
     private string FormatTimestamp(int frameNumber, int fpsNumerator, int fpsDenominator)

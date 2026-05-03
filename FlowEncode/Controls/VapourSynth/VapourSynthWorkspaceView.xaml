@@ -89,6 +89,17 @@
                     <AppBarButton.Icon>
                         <SymbolIcon Symbol="Play" />
                     </AppBarButton.Icon>
+                    <AppBarButton.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="F5" />
+                    </AppBarButton.KeyboardAccelerators>
+                </AppBarButton>
+                <AppBarButton x:Name="EncodeButton" Click="EncodeButton_Click" Label="{Binding Texts.VapourSynthEncodeButton}">
+                    <AppBarButton.Icon>
+                        <SymbolIcon Symbol="Video" />
+                    </AppBarButton.Icon>
+                    <AppBarButton.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="F9" />
+                    </AppBarButton.KeyboardAccelerators>
                 </AppBarButton>
             </CommandBar>
 

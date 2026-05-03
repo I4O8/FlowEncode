@@ -259,7 +259,7 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
                         GetInt(root, "charCount", 0));
                     break;
                 case "hostCommand":
-                    await HandleHostCommandAsync(GetString(root, "command"));
+                    await RunUiActionAsync(() => HandleHostCommandAsync(GetString(root, "command")));
                     break;
                 case "languageRequest":
                     await HandleLanguageRequestAsync(root);
@@ -308,6 +308,9 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
             case "preview":
                 await ShowPreviewDeferredAsync();
                 break;
+            case "encode":
+                await StartEncodeAsync();
+                break;
         }
     }
 
@@ -355,9 +358,37 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
         await RunUiActionAsync(ShowPreviewDeferredAsync);
     }
 
+    private async void EncodeButton_Click(object sender, RoutedEventArgs e)
+    {
+        await RunUiActionAsync(StartEncodeAsync);
+    }
+
     private void ClearLogButton_Click(object sender, RoutedEventArgs e)
     {
         ViewModel.ClearPreviewLog();
+    }
+
+    private async Task StartEncodeAsync()
+    {
+        await CaptureEditorStateAsync();
+
+        var sourcePath = ViewModel.CurrentFilePath;
+        if (string.IsNullOrWhiteSpace(sourcePath) || ViewModel.HasUnsavedChanges)
+        {
+            if (!await SaveCurrentDocumentAsync())
+            {
+                return;
+            }
+        }
+
+        sourcePath = ViewModel.CurrentFilePath;
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            return;
+        }
+
+        var mainWindow = App.GetService<MainWindow>();
+        mainWindow.NavigateToEncodingPage(sourcePath);
     }
 
     private async void UndoButton_Click(object sender, RoutedEventArgs e)
