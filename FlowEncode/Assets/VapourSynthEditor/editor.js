@@ -815,6 +815,9 @@ function registerHostCommands() {
     editorInstance.addCommand(monaco.KeyCode.F5, () => {
         dispatchHostCommand("preview");
     });
+    editorInstance.addCommand(monaco.KeyCode.F9, () => {
+        dispatchHostCommand("encode");
+    });
 
     editorInstance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
         void executeCommand("find");

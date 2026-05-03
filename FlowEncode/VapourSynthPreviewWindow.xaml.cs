@@ -61,7 +61,6 @@ public sealed partial class VapourSynthPreviewWindow : Window
     private byte[]? _reusableDisplayedFramePixels;
     private int _displayedFrameHeight;
     private int _displayedFrameWidth;
-    private WriteableBitmap? _originalFrameBitmap;
     private readonly List<TextBox> _attachedPreviewNumberBoxEditors = [];
     private XamlRoot? _observedXamlRoot;
     private Point _previewPanOrigin;
@@ -229,7 +228,6 @@ public sealed partial class VapourSynthPreviewWindow : Window
         _displayedFrameWidth = 0;
         _displayedFrameHeight = 0;
         _bitmapSurface.Reset();
-        _originalFrameBitmap = null;
         SyncControls();
 
         try
@@ -472,7 +470,6 @@ public sealed partial class VapourSynthPreviewWindow : Window
             displayPayload.Width,
             displayPayload.Height,
             displayPayload.ResolutionText);
-        _originalFrameBitmap = displayPayload.Bitmap;
         ApplyPreviewScalingAlgorithm();
         UpdatePreviewImageSurface();
         SaveCurrentOutputState();

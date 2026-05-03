@@ -509,12 +509,6 @@ public sealed class VapourSynthPreviewWindowViewModel : ObservableObject
         RaiseTimelinePropertyChanges();
     }
 
-    public void SetCurrentFrameBitmap(WriteableBitmap bitmap)
-    {
-        _currentFrameBitmap = bitmap;
-        OnPropertyChanged(nameof(CurrentFrameBitmap));
-    }
-
     public void SaveScalingAlgorithmPreference()
     {
         var currentSettings = _settingsService.Load();
