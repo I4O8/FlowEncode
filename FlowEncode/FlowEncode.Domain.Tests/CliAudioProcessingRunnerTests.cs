@@ -126,7 +126,7 @@ public sealed class CliAudioProcessingRunnerTests
     {
         var sourcePath = EnsureSmokeWav();
         var outputPath = Path.Combine(AudioSmokeRoot, "invalid-eac3to.flac");
-        var runner = CreateRunner(new StubToolProbeService(GetDetectedPath("eac3to.exe")));
+        var runner = CreateRunner(new StubToolProbeService(RequireDetectedPath("eac3to.exe")));
         var request = new AudioProcessingRequest(
             Guid.NewGuid(),
             sourcePath,
@@ -165,10 +165,10 @@ public sealed class CliAudioProcessingRunnerTests
         Directory.CreateDirectory(outputDirectory);
         var runner = CreateRunner(new StubToolProbeService(new Dictionary<RegisteredToolKind, string>
         {
-            [RegisteredToolKind.Deew] = GetDetectedPath("deew.exe"),
-            [RegisteredToolKind.Dee] = GetDetectedPath("dee.exe"),
-            [RegisteredToolKind.Ffmpeg] = GetDetectedPath("ffmpeg.exe"),
-            [RegisteredToolKind.Ffprobe] = GetDetectedPath("ffprobe.exe")
+            [RegisteredToolKind.Deew] = RequireDetectedPath("deew.exe"),
+            [RegisteredToolKind.Dee] = RequireDetectedPath("dee.exe"),
+            [RegisteredToolKind.Ffmpeg] = RequireDetectedPath("ffmpeg.exe"),
+            [RegisteredToolKind.Ffprobe] = RequireDetectedPath("ffprobe.exe")
         }));
 
         var request = CreateDdpRequest(sourcePath, outputDirectory);
@@ -204,10 +204,10 @@ public sealed class CliAudioProcessingRunnerTests
         Directory.CreateDirectory(outputDirectory);
         var runner = CreateRunner(new StubToolProbeService(new Dictionary<RegisteredToolKind, string>
         {
-            [RegisteredToolKind.Deew] = GetDetectedPath("deew.exe"),
-            [RegisteredToolKind.Dee] = GetDetectedPath("dee.exe"),
-            [RegisteredToolKind.Ffmpeg] = GetDetectedPath("ffmpeg.exe"),
-            [RegisteredToolKind.Ffprobe] = GetDetectedPath("ffprobe.exe")
+            [RegisteredToolKind.Deew] = RequireDetectedPath("deew.exe"),
+            [RegisteredToolKind.Dee] = RequireDetectedPath("dee.exe"),
+            [RegisteredToolKind.Ffmpeg] = RequireDetectedPath("ffmpeg.exe"),
+            [RegisteredToolKind.Ffprobe] = RequireDetectedPath("ffprobe.exe")
         }));
 
         var request = CreateDdpRequest(sourcePath, outputDirectory);
@@ -359,9 +359,9 @@ allowed. Valid value(s): 1,2,6.
 
         var runner = CreateRunner(new StubToolProbeService(new Dictionary<RegisteredToolKind, string>
         {
-            [RegisteredToolKind.Ffmpeg] = GetDetectedPath("ffmpeg.exe"),
-            [RegisteredToolKind.Ffprobe] = GetDetectedPath("ffprobe.exe"),
-            [RegisteredToolKind.OpusExt] = GetDetectedPath("opusenc.exe")
+            [RegisteredToolKind.Ffmpeg] = RequireDetectedPath("ffmpeg.exe"),
+            [RegisteredToolKind.Ffprobe] = RequireDetectedPath("ffprobe.exe"),
+            [RegisteredToolKind.OpusExt] = RequireDetectedPath("opusenc.exe")
         }));
         var request = CreateRequest(
             useOpusMappingFamily1: false,
@@ -438,7 +438,7 @@ allowed. Valid value(s): 1,2,6.
             return sourcePath;
         }
 
-        var ffmpegPath = GetDetectedPath("ffmpeg.exe");
+        var ffmpegPath = RequireDetectedPath("ffmpeg.exe");
         var process = Process.Start(new ProcessStartInfo
         {
             FileName = ffmpegPath,
@@ -481,7 +481,7 @@ allowed. Valid value(s): 1,2,6.
             return sourcePath;
         }
 
-        var ffmpegPath = GetDetectedPath("ffmpeg.exe");
+        var ffmpegPath = RequireDetectedPath("ffmpeg.exe");
         var process = Process.Start(new ProcessStartInfo
         {
             FileName = ffmpegPath,
@@ -550,6 +550,19 @@ allowed. Valid value(s): 1,2,6.
         }
 
         return path;
+    }
+
+    private static string RequireDetectedPath(string executableName)
+    {
+        try
+        {
+            return GetDetectedPath(executableName);
+        }
+        catch (Exception ex)
+        {
+            Assert.Inconclusive($"Smoke test requires {executableName}: {ex.Message}");
+            throw;
+        }
     }
 
     private static int CountOccurrences(string text, string value)

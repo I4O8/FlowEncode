@@ -389,6 +389,7 @@ public sealed class LocalEncodingJobRunnerSmokeTests
     private static LocalEncodingJobRunner CreateRunner(EncoderKind kind, string executablePath)
     {
         Directory.CreateDirectory(SmokeRoot);
+        RequireFile(executablePath, $"Smoke test requires {Path.GetFileName(executablePath)}");
         var paths = new LocalAppPaths();
         var discovery = new FakeEncoderDiscoveryService(kind, executablePath);
         var settings = new FakeAppSettingsService(AppSettings.Default with
@@ -434,9 +435,11 @@ public sealed class LocalEncodingJobRunnerSmokeTests
             return mp4Path;
         }
 
+        const string ffmpegPath = @"E:\cmct_encode\tools\ffmpeg.exe";
+        RequireFile(ffmpegPath, "Smoke test requires ffmpeg.exe");
         var process = Process.Start(new ProcessStartInfo
         {
-            FileName = @"E:\cmct_encode\tools\ffmpeg.exe",
+            FileName = ffmpegPath,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -467,6 +470,14 @@ public sealed class LocalEncodingJobRunnerSmokeTests
         }
 
         return mp4Path;
+    }
+
+    private static void RequireFile(string path, string requirement)
+    {
+        if (!File.Exists(path))
+        {
+            Assert.Inconclusive($"{requirement}: missing '{path}'.");
+        }
     }
 
     private static string EnsureSmokeVpy()
