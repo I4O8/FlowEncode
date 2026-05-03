@@ -12,7 +12,8 @@ public sealed record AppSettings(
     IReadOnlyDictionary<string, string>? ManualToolPaths = null,
     bool HasRunInitialVsPluginDependencyUpdate = false,
     int MaxConcurrentEncodingJobs = 1,
-    QueueCompletionAction QueueCompletionAction = QueueCompletionAction.None)
+    QueueCompletionAction QueueCompletionAction = QueueCompletionAction.None,
+    string PreviewScalingAlgorithm = "nearest")
 {
     public static AppSettings Default { get; } = new(
         PreferSystemEncoders: true,

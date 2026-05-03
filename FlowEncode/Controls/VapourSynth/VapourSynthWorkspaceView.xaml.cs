@@ -355,6 +355,32 @@ public sealed partial class VapourSynthWorkspaceView : UserControl, IDisposable
         await RunUiActionAsync(ShowPreviewDeferredAsync);
     }
 
+    private async void EncodeButton_Click(object sender, RoutedEventArgs e)
+    {
+        await RunUiActionAsync(async () =>
+        {
+            await CaptureEditorStateAsync();
+
+            var sourcePath = ViewModel.CurrentFilePath;
+            if (string.IsNullOrWhiteSpace(sourcePath) || ViewModel.HasUnsavedChanges)
+            {
+                if (!await SaveCurrentDocumentAsync())
+                {
+                    return;
+                }
+            }
+
+            sourcePath = ViewModel.CurrentFilePath;
+            if (string.IsNullOrWhiteSpace(sourcePath))
+            {
+                return;
+            }
+
+            var mainWindow = App.GetService<MainWindow>();
+            mainWindow.NavigateToEncodingPage(sourcePath);
+        });
+    }
+
     private void ClearLogButton_Click(object sender, RoutedEventArgs e)
     {
         ViewModel.ClearPreviewLog();

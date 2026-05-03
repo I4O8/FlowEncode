@@ -61,6 +61,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
     private byte[]? _reusableDisplayedFramePixels;
     private int _displayedFrameHeight;
     private int _displayedFrameWidth;
+    private WriteableBitmap? _originalFrameBitmap;
     private readonly List<TextBox> _attachedPreviewNumberBoxEditors = [];
     private XamlRoot? _observedXamlRoot;
     private Point _previewPanOrigin;
@@ -145,6 +146,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         _hasEverActivated = true;
         EnsurePreferredWindowPresentation();
         RefreshDisplayScale();
+        ApplyPreviewScalingAlgorithm();
         return true;
     }
 
@@ -227,6 +229,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         _displayedFrameWidth = 0;
         _displayedFrameHeight = 0;
         _bitmapSurface.Reset();
+        _originalFrameBitmap = null;
         SyncControls();
 
         try
@@ -469,6 +472,8 @@ public sealed partial class VapourSynthPreviewWindow : Window
             displayPayload.Width,
             displayPayload.Height,
             displayPayload.ResolutionText);
+        _originalFrameBitmap = displayPayload.Bitmap;
+        ApplyPreviewScalingAlgorithm();
         UpdatePreviewImageSurface();
         SaveCurrentOutputState();
     }
@@ -803,6 +808,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
 
         SaveCurrentOutputState();
         SyncControls();
+        ApplyPreviewScalingAlgorithm();
     }
 
     private void ZoomRatioBox_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
@@ -814,6 +820,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
 
         ViewModel.ZoomRatio = Math.Max(5, sender.Value) / 100.0;
         SaveCurrentOutputState();
+        ApplyPreviewScalingAlgorithm();
     }
 
     private void TimelineModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -938,6 +945,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
         ViewModel.UpdateViewport(
             Math.Max(0, e.NewSize.Width - 16),
             Math.Max(0, e.NewSize.Height - 16));
+        ApplyPreviewScalingAlgorithm();
     }
 
     private void PreviewScrollViewer_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
@@ -2406,6 +2414,12 @@ public sealed partial class VapourSynthPreviewWindow : Window
             ItemsSource = ViewModel.OutputSyncModes,
             SelectedItem = ViewModel.SelectedOutputSyncMode
         };
+        var scalingAlgorithmComboBox = new ComboBox
+        {
+            DisplayMemberPath = nameof(StringChoiceOption.Label),
+            ItemsSource = ViewModel.ScalingAlgorithmModes,
+            SelectedItem = ViewModel.SelectedScalingAlgorithmMode
+        };
         var silentSnapshotToggle = new ToggleSwitch
         {
             Header = ViewModel.Texts.VapourSynthPreviewSilentSnapshotHeader,
@@ -2443,6 +2457,11 @@ public sealed partial class VapourSynthPreviewWindow : Window
                         Text = ViewModel.Texts.VapourSynthPreviewOutputSyncHeader
                     },
                     outputSyncComboBox,
+                    new TextBlock
+                    {
+                        Text = ViewModel.Texts.VapourSynthPreviewScalingAlgorithmHeader
+                    },
+                    scalingAlgorithmComboBox,
                     silentSnapshotToggle,
                     snapshotTemplateTextBox,
                     new TextBlock
@@ -2465,9 +2484,27 @@ public sealed partial class VapourSynthPreviewWindow : Window
 
         ViewModel.SelectedOutputSyncMode = outputSyncComboBox.SelectedItem as StringChoiceOption
             ?? ViewModel.OutputSyncModes.FirstOrDefault();
+        ViewModel.SelectedScalingAlgorithmMode = scalingAlgorithmComboBox.SelectedItem as StringChoiceOption
+            ?? ViewModel.ScalingAlgorithmModes.FirstOrDefault();
         ViewModel.SilentSnapshotEnabled = silentSnapshotToggle.IsOn;
         ViewModel.SnapshotTemplate = snapshotTemplateTextBox.Text?.Trim() ?? string.Empty;
+        ViewModel.SaveScalingAlgorithmPreference();
+        ApplyPreviewScalingAlgorithm();
         SetStatusText(ViewModel.Texts.VapourSynthPreviewAdvancedSettingsSavedStatus);
+    }
+
+    private void ApplyPreviewScalingAlgorithm()
+    {
+        EnsurePreviewImageVisual();
+        if (_previewImageBrush is null)
+        {
+            return;
+        }
+
+        _previewImageBrush.BitmapInterpolationMode =
+            string.Equals(ViewModel.ScalingAlgorithm, "nearest", StringComparison.OrdinalIgnoreCase)
+                ? CompositionBitmapInterpolationMode.NearestNeighbor
+                : CompositionBitmapInterpolationMode.Linear;
     }
 
     private void StopPlayback(bool updateStatus = false)
@@ -2835,6 +2872,7 @@ public sealed partial class VapourSynthPreviewWindow : Window
 
         SaveCurrentOutputState();
         SyncControls();
+        ApplyPreviewScalingAlgorithm();
     }
 
     private void RestorePreviewScrollAnchor(
@@ -3018,9 +3056,10 @@ public sealed partial class VapourSynthPreviewWindow : Window
             return;
         }
 
-        if (e.Key == VirtualKey.Escape && _isFullScreenActive)
+        if (e.Key == VirtualKey.Escape)
         {
-            e.Handled = TryRestoreWindowedPresentation();
+            e.Handled = true;
+            Close();
             return;
         }
 

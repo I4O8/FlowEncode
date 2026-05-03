@@ -54,6 +54,16 @@ public partial class App : Microsoft.UI.Xaml.Application
         launchActivation.SetRequestedVapourSynthFilePath(ResolveRequestedVapourSynthFilePath());
         _window = GetService<MainWindow>();
         _window.Closed += MainWindow_Closed;
+
+        try
+        {
+            var shellIntegration = GetService<IVapourSynthShellIntegrationService>();
+            shellIntegration.RegisterNewVpyFileMenu();
+        }
+        catch
+        {
+        }
+
         _window.Activate();
     }
 
@@ -107,6 +117,7 @@ public partial class App : Microsoft.UI.Xaml.Application
         services.AddSingleton<IVapourSynthWorkspaceService, VapourSynthWorkspaceService>();
         services.AddSingleton<IVapourSynthWorkspaceLanguageService, VapourSynthWorkspaceLanguageService>();
         services.AddSingleton<IVapourSynthPreviewService, VapourSynthPreviewService>();
+        services.AddSingleton<IVapourSynthShellIntegrationService, WindowsShellIntegrationService>();
         services.AddSingleton<MainWindowViewModel>();
         services.AddSingleton<VapourSynthWorkspaceViewModel>();
         services.AddTransient<VapourSynthPreviewWindowViewModel>();

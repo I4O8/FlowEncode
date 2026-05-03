@@ -1162,7 +1162,8 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
                 new Dictionary<string, string>(_manualToolPaths, StringComparer.OrdinalIgnoreCase),
                 _hasRunInitialVsPluginDependencyUpdate,
                 GetMaxConcurrentEncodingJobCount(),
-                QueueCompletionAction);
+                QueueCompletionAction,
+                _settingsService.Load().PreviewScalingAlgorithm);
 
             _settingsService.Save(settings);
             _encoderDiscoveryService.InvalidateCache();

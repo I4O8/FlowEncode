@@ -443,6 +443,13 @@ public sealed partial class MainWindow : Window, ISettingsViewHost, IShellNaviga
         }
     }
 
+    public void NavigateToEncodingPage(string sourcePath)
+    {
+        ViewModel.SourcePath = sourcePath;
+        SelectNavigationItem("overview");
+        ActivateAndBringToFront();
+    }
+
     private async void ShellNavigationView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
         try

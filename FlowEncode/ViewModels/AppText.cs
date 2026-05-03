@@ -179,6 +179,7 @@ public sealed class AppText
     public string VapourSynthUndoButton => Pick("撤销", "Undo");
     public string VapourSynthRedoButton => Pick("重做", "Redo");
     public string VapourSynthPreviewButton => Pick("预览 F5", "Preview F5");
+    public string VapourSynthEncodeButton => Pick("压制 F9", "Encode F9");
     public string VapourSynthLogTitle => "Log";
     public string VapourSynthClearLogButton => Pick("清空日志", "Clear Log");
     public string VapourSynthLogEmptyPlaceholder => Pick(
@@ -353,6 +354,9 @@ public sealed class AppText
     public string VapourSynthPreviewSnapshotTemplateHint => Pick(
         "可用占位符：{scriptName} {output} {frame} {time} {ext}。",
         "Placeholders: {scriptName} {output} {frame} {time} {ext}.");
+    public string VapourSynthPreviewScalingAlgorithmHeader => Pick("缩放算法", "Scaling Algorithm");
+    public string VapourSynthPreviewScalingAlgorithmNearest => Pick("Nearest Neighbor", "Nearest Neighbor");
+    public string VapourSynthPreviewScalingAlgorithmBilinear => Pick("Bilinear", "Bilinear");
     public string VapourSynthPreviewAdvancedSettingsSavedStatus => Pick("预览高级设置已更新。", "Preview advanced settings updated.");
     public string VapourSynthPreviewAdvancedSettingsFailedStatus(string detail) =>
         IsChinese ? $"打开预览高级设置失败：{detail}" : $"Opening preview advanced settings failed: {detail}";
