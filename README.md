@@ -191,8 +191,9 @@ FlowEncode 默认面向本地工作流：
 
 1. 更新 `build/Version.props` 中的版本号。
 2. 运行 `./scripts/sync-version-metadata.ps1`，确认 `README`、`Package.appxmanifest` 与 `app.manifest` 已同步。
-3. 提交版本变更后，在目标提交上创建并推送 `v<version>` tag。
-4. GitHub Actions `Release` 工作流会校验 tag 与仓库版本一致，然后自动构建安装包并发布 GitHub release。
+3. 编写 `.github/release-notes/v<version>.md`，按双语用户向格式明确列出本次更新内容。
+4. 提交版本变更后，在目标提交上创建并推送 `v<version>` tag。
+5. GitHub Actions `Release` 工作流会校验 tag、版本元数据和 release note 文件，然后自动构建安装包并发布 GitHub release。
 
 ## 反馈与许可
 

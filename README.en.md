@@ -191,8 +191,9 @@ Release flow:
 
 1. Update the version in `build/Version.props`.
 2. Run `./scripts/sync-version-metadata.ps1` and confirm that `README`, `Package.appxmanifest`, and `app.manifest` are synchronized.
-3. Commit the version change, then create and push a `v<version>` tag on the target commit.
-4. The GitHub Actions `Release` workflow validates the tag against repository metadata, then builds the installer and publishes the GitHub release automatically.
+3. Write `.github/release-notes/v<version>.md` using the bilingual, user-facing release note format.
+4. Commit the version change, then create and push a `v<version>` tag on the target commit.
+5. The GitHub Actions `Release` workflow validates the tag, version metadata, and release note file, then builds the installer and publishes the GitHub release automatically.
 
 ## Feedback and License
 
