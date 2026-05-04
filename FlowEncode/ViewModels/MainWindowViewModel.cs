@@ -3122,6 +3122,24 @@ public partial class MainWindowViewModel : CommunityToolkit.Mvvm.ComponentModel.
             : string.Empty;
     }
 
+    internal string? ImportHdrParametersFromText(string rawText)
+    {
+        if (SelectedEncoder?.Value != EncoderKind.X265)
+        {
+            return Texts.HdrImportFailedStatus;
+        }
+
+        var result = HdrTextImportParser.Parse(rawText);
+        if (!result.Success)
+        {
+            return Texts.HdrImportFailedStatus;
+        }
+
+        DraftUhdParameters = result.Arguments;
+        StatusText = Texts.HdrParametersImportedStatus;
+        return null;
+    }
+
     private void LoadSettings()
     {
         var settings = _settingsService.Load();

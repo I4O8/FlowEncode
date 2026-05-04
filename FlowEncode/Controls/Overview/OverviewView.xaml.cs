@@ -268,6 +268,46 @@ public sealed partial class OverviewView : UserControl
         }
     }
 
+    private async void ImportHdrButton_Click(object sender, RoutedEventArgs e)
+    {
+        var composerViewModel = ComposerViewModel;
+        if (composerViewModel is null)
+        {
+            return;
+        }
+
+        var inputTextBox = new TextBox
+        {
+            Header = composerViewModel.Texts.ImportHdrDialogDescription,
+            AcceptsReturn = true,
+            MinHeight = 180,
+            PlaceholderText = composerViewModel.Texts.ImportHdrDialogPlaceholder,
+            TextWrapping = TextWrapping.Wrap
+        };
+
+        var dialog = new ContentDialog
+        {
+            Title = composerViewModel.Texts.ImportHdrDialogTitle,
+            Content = inputTextBox,
+            PrimaryButtonText = composerViewModel.Texts.ImportButton,
+            CloseButtonText = composerViewModel.Texts.CancelButton,
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = XamlRoot,
+            RequestedTheme = ActualTheme
+        };
+
+        if (await WindowInteractionHelper.ShowContentDialogAsync(dialog, nameof(OverviewView)) != ContentDialogResult.Primary)
+        {
+            return;
+        }
+
+        var error = composerViewModel.ImportHdrParametersFromText(inputTextBox.Text);
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            await ShowMessageAsync(composerViewModel.Texts.ErrorImportFailedTitle, error);
+        }
+    }
+
     private async void SavedTemplatesQuickSelect_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         var composerViewModel = ComposerViewModel;

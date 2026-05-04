@@ -151,4 +151,9 @@ public sealed class OverviewComposerViewModel : ModuleViewModelBase
     {
         return Owner.QueueCurrentJobAsync(startImmediately, preflight);
     }
+
+    public string? ImportHdrParametersFromText(string rawText)
+    {
+        return Owner.ImportHdrParametersFromText(rawText);
+    }
 }

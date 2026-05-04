@@ -78,6 +78,13 @@ public sealed class AppText
     public string UhdArgumentsPlaceholder => Pick(
         "例如：--master-display \"G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)\"",
         "Example: --master-display \"G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1)\"");
+    public string ImportHdrButton => Pick("导入HDR", "Import HDR");
+    public string ImportHdrToolTip => Pick("从 BDInfo / MediaInfo 文本解析 HDR 参数", "Parse HDR arguments from BDInfo / MediaInfo text");
+    public string ImportHdrDialogTitle => Pick("导入 HDR 信息", "Import HDR Information");
+    public string ImportHdrDialogDescription => Pick("粘贴 BDInfo 或 MediaInfo 的 HDR 相关文本。", "Paste the HDR-related text from BDInfo or MediaInfo.");
+    public string ImportHdrDialogPlaceholder => Pick("支持常见的 BDInfo / MediaInfo 英文文本格式。", "Supports common BDInfo / MediaInfo English text formats.");
+    public string HdrParametersImportedStatus => Pick("已写入 HDR 参数。", "HDR arguments were imported.");
+    public string HdrImportFailedStatus => Pick("未识别到可用的 HDR 信息。", "No usable HDR information was detected.");
     public string SavedTemplateHeader => Pick("载入已保存模板", "Saved Template");
     public string LoadTemplateButton => Pick("载入模板", "Load Template");
     public string TemplateNameHeader => Pick("模板名称", "Template Name");

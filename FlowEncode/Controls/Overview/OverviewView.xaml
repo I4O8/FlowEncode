@@ -218,14 +218,30 @@
                             <StackPanel x:Name="OverviewAdvancedOptionsPanel" Grid.Row="2" Grid.ColumnSpan="2" Spacing="12">
                                 <InfoBar HorizontalAlignment="Stretch" IsClosable="False" IsOpen="True" Message="{Binding DraftConstraintWarningText}" Severity="Warning" Visibility="{Binding DraftConstraintWarningVisibility}" />
 
-                                <TextBox
-                                    Header="{Binding Texts.UhdArgumentsHeader}"
-                                    AcceptsReturn="True"
-                                    MinHeight="72"
-                                    PlaceholderText="{Binding Texts.UhdArgumentsPlaceholder}"
-                                    Text="{Binding DraftUhdParameters, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                    TextWrapping="Wrap"
-                                    Visibility="{Binding X265UhdVisibility}" />
+                                <StackPanel Spacing="8" Visibility="{Binding X265UhdVisibility}">
+                                    <Grid ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" Text="{Binding Texts.UhdArgumentsHeader}" />
+                                        <Button
+                                            Grid.Column="1"
+                                            MinHeight="32"
+                                            Padding="12,0"
+                                            Click="ImportHdrButton_Click"
+                                            ToolTipService.ToolTip="{Binding Texts.ImportHdrToolTip}">
+                                            <TextBlock Text="{Binding Texts.ImportHdrButton}" />
+                                        </Button>
+                                    </Grid>
+
+                                    <TextBox
+                                        AcceptsReturn="True"
+                                        MinHeight="72"
+                                        PlaceholderText="{Binding Texts.UhdArgumentsPlaceholder}"
+                                        Text="{Binding DraftUhdParameters, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                        TextWrapping="Wrap" />
+                                </StackPanel>
                             </StackPanel>
                         </Grid>
 
