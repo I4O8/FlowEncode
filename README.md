@@ -14,7 +14,7 @@
 
   <p>
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20x64-0078d4">
-    <img alt="Version" src="https://img.shields.io/badge/version-1.7.0-167a7f">
+    <img alt="Version" src="https://img.shields.io/badge/version-1.7.1-167a7f">
     <img alt="Framework" src="https://img.shields.io/badge/.NET-8.0-512bd4">
     <img alt="UI" src="https://img.shields.io/badge/UI-WinUI%203-0d6efd">
     <img alt="License" src="https://img.shields.io/github/license/frankie1024/FlowEncode">
@@ -186,6 +186,13 @@ FlowEncode 默认面向本地工作流：
 - `scripts/build.ps1` 会自动定位 Visual Studio `MSBuild.exe`，并在构建前校验仓库版本元数据是否同步。
 - `scripts/test.ps1` 统一执行 `FlowEncode.Domain.Tests`。
 - 当前 WinUI XAML 编译链路仍以 Visual Studio `MSBuild.exe` 为官方入口；`dotnet build` 继续保留保护性失败，避免在不稳定环境下产出误导性的构建结果。
+
+发布流程：
+
+1. 更新 `build/Version.props` 中的版本号。
+2. 运行 `./scripts/sync-version-metadata.ps1`，确认 `README`、`Package.appxmanifest` 与 `app.manifest` 已同步。
+3. 提交版本变更后，在目标提交上创建并推送 `v<version>` tag。
+4. GitHub Actions `Release` 工作流会校验 tag 与仓库版本一致，然后自动构建安装包并发布 GitHub release。
 
 ## 反馈与许可
 

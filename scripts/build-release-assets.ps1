@@ -80,7 +80,7 @@ else {
 }
 
 if (-not [string]::Equals($resolvedVersion, $projectVersion, [System.StringComparison]::Ordinal)) {
-    throw "Explicit -Version '$resolvedVersion' does not match project version '$projectVersion'. Update FlowEncode.csproj first or omit -Version."
+    throw "Explicit -Version '$resolvedVersion' does not match project version '$projectVersion'. Update build\\Version.props first or omit -Version."
 }
 
 $resolvedOutputRoot = if ([string]::IsNullOrWhiteSpace($OutputRoot)) {

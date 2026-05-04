@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    steps:
+      - name: Resolve ref
+        id: resolve_ref
+        shell: pwsh
+        run: |
+          $ref = if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "refs/tags/${{ inputs.tag }}"
+          }
+          else {
+            "${{ github.ref }}"
+          }
+          "ref=$ref" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve_ref.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Verify version metadata
+        shell: pwsh
+        run: ./scripts/sync-version-metadata.ps1 -Check
+
+      - name: Verify release tag
+        shell: pwsh
+        run: ./scripts/assert-release-tag.ps1 -TagRef "${{ steps.resolve_ref.outputs.ref }}"
+
+      - name: Build
+        shell: pwsh
+        run: ./scripts/build.ps1 -Configuration Release
+
+      - name: Test
+        shell: pwsh
+        run: ./scripts/test.ps1 -Configuration Release
+
+      - name: Resolve release version
+        shell: pwsh
+        run: |
+          $tagRef = "${{ steps.resolve_ref.outputs.ref }}"
+          $tagName = $tagRef.Substring("refs/tags/".Length)
+          . ./scripts/repo-build-common.ps1
+          $versionInfo = Get-FlowEncodeVersionInfo
+          if (-not [string]::Equals($tagName, "v$($versionInfo.Version)", [System.StringComparison]::Ordinal)) {
+            throw "Tag '$tagName' does not match repository version '$($versionInfo.Version)'."
+          }
+          "FLOWENCODE_VERSION=$($versionInfo.Version)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build release assets
+        shell: pwsh
+        run: ./scripts/build-release-assets.ps1
+
+      - name: Generate checksum
+        shell: pwsh
+        run: |
+          $version = $env:FLOWENCODE_VERSION
+          $releaseRoot = Join-Path $PWD "artifacts\release\v$version"
+          $installerPath = Join-Path $releaseRoot "FlowEncode_Setup_v$version.exe"
+          if (-not (Test-Path $installerPath)) {
+            throw "Installer artifact was not found: $installerPath"
+          }
+
+          $checksumPath = "$installerPath.sha256"
+          $hash = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "{0} *{1}" -f $hash, [System.IO.Path]::GetFileName($installerPath) | Set-Content -Path $checksumPath -NoNewline
+
+          "FLOWENCODE_INSTALLER_PATH=$installerPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "FLOWENCODE_CHECKSUM_PATH=$checksumPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.FLOWENCODE_VERSION }}
+          name: FlowEncode ${{ env.FLOWENCODE_VERSION }}
+          files: |
+            ${{ env.FLOWENCODE_INSTALLER_PATH }}
+            ${{ env.FLOWENCODE_CHECKSUM_PATH }}
+          generate_release_notes: true
+          overwrite_files: true

@@ -6,6 +6,39 @@ function Get-VersionPropsPath {
     return Join-Path (Get-RepositoryRoot) "build\Version.props"
 }
 
+function ConvertTo-VersionInfo {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Version
+    )
+
+    if ($Version -match '^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)(?:\.(?<revision>\d+))?$') {
+        $revision = if ($Matches["revision"]) { $Matches["revision"] } else { "0" }
+        return [string]::Format(
+            "{0}.{1}.{2}.{3}",
+            $Matches["major"],
+            $Matches["minor"],
+            $Matches["patch"],
+            $revision)
+    }
+
+    throw "FlowEncodeVersion must use 'major.minor.patch' or 'major.minor.patch.revision': $Version"
+}
+
+function Assert-FlowEncodeVersionInfoConsistency {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Version,
+        [Parameter(Mandatory = $true)]
+        [string]$VersionInfo
+    )
+
+    $expectedVersionInfo = ConvertTo-VersionInfo -Version $Version
+    if (-not [string]::Equals($VersionInfo, $expectedVersionInfo, [System.StringComparison]::Ordinal)) {
+        throw "FlowEncodeVersionInfo '$VersionInfo' does not match FlowEncodeVersion '$Version'. Expected '$expectedVersionInfo'."
+    }
+}
+
 function Get-FlowEncodeVersionInfo {
     param(
         [string]$VersionPropsPath = (Get-VersionPropsPath)
@@ -38,6 +71,8 @@ function Get-FlowEncodeVersionInfo {
     if ([string]::IsNullOrWhiteSpace($versionInfo)) {
         throw "FlowEncodeVersionInfo was not found in $VersionPropsPath"
     }
+
+    Assert-FlowEncodeVersionInfoConsistency -Version $version -VersionInfo $versionInfo
 
     return [pscustomobject]@{
         Version = $version

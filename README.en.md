@@ -14,7 +14,7 @@
 
   <p>
     <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20x64-0078d4">
-    <img alt="Version" src="https://img.shields.io/badge/version-1.7.0-167a7f">
+    <img alt="Version" src="https://img.shields.io/badge/version-1.7.1-167a7f">
     <img alt="Framework" src="https://img.shields.io/badge/.NET-8.0-512bd4">
     <img alt="UI" src="https://img.shields.io/badge/UI-WinUI%203-0d6efd">
     <img alt="License" src="https://img.shields.io/github/license/frankie1024/FlowEncode">
@@ -186,6 +186,13 @@ Notes:
 - `scripts/build.ps1` automatically locates Visual Studio `MSBuild.exe` and validates repository version metadata before building.
 - `scripts/test.ps1` is the single test entry point for `FlowEncode.Domain.Tests`.
 - The WinUI XAML compiler path still officially targets Visual Studio `MSBuild.exe`; `dotnet build` remains intentionally guarded to avoid misleading build results on unstable environments.
+
+Release flow:
+
+1. Update the version in `build/Version.props`.
+2. Run `./scripts/sync-version-metadata.ps1` and confirm that `README`, `Package.appxmanifest`, and `app.manifest` are synchronized.
+3. Commit the version change, then create and push a `v<version>` tag on the target commit.
+4. The GitHub Actions `Release` workflow validates the tag against repository metadata, then builds the installer and publishes the GitHub release automatically.
 
 ## Feedback and License
 
